@@ -1,0 +1,44 @@
+Command: node node_modules/vitest/vitest.mjs run
+Exit: 0
+
+
+ RUN  v4.1.10 /workspace/verified-run
+
+ ✓ src/lib/useServerClock.test.ts (15 tests) 13ms
+ ✓ src/lib/gameSocket.test.ts (36 tests) 48ms
+ ✓ src/lib/callSignalling.test.ts (18 tests) 20ms
+ ✓ src/server/onlinePlay.regression.test.ts (8 tests) 39ms
+stdout | src/server/gameRecordsManager.test.ts > game record persistence > recovers the sequence in month 9 without a sequence file
+[GameRecords] Initialized with sequence #43, 1 records, 0 series.
+
+stdout | src/server/gameRecordsManager.test.ts > game record persistence > recovers the sequence in month 10 without a sequence file
+[GameRecords] Initialized with sequence #43, 1 records, 0 series.
+
+stdout | src/server/gameRecordsManager.test.ts > game record persistence > recovers the sequence in month 11 without a sequence file
+[GameRecords] Initialized with sequence #43, 1 records, 0 series.
+
+stdout | src/server/gameRecordsManager.test.ts > game record persistence > recovers the sequence in month 12 without a sequence file
+[GameRecords] Initialized with sequence #43, 1 records, 0 series.
+
+ ✓ src/server/gameRecordsManager.test.ts (9 tests) 62ms
+ ✓ src/server/infrastructure.test.ts (12 tests) 375ms
+ ✓ src/lib/roomState.test.ts (7 tests) 9ms
+ ✓ src/lib/callStateMachine.test.ts (12 tests) 13ms
+ ✓ src/lib/kenEngine.test.ts (10 tests) 23ms
+ ✓ src/server/coinsService.test.ts (24 tests) 27ms
+ ✓ src/lib/fastResume.test.ts (12 tests) 12ms
+ ✓ src/rules.test.ts (18 tests) 1971ms
+     ✓ hold at every ply of 40 full games  1025ms
+     ✓ every move proposed by scan_nigerian matches a legal move in generateLegalMoves  925ms
+ ✓ src/rules.regression.test.ts (16 tests) 14ms
+ ✓ src/server/serverReliability.test.ts (10 tests) 8ms
+ ✓ src/server/engineRequest.test.ts (28 tests) 17ms
+ ✓ src/lib/voiceNoteMime.test.ts (7 tests) 7ms
+ ✓ src/lib/analysis.test.ts (4 tests) 12ms
+
+ Test Files  17 passed (17)
+      Tests  246 passed (246)
+   Start at  20:49:05
+   Duration  3.03s (transform 868ms, setup 0ms, import 1.43s, tests 2.67s, environment 3ms)
+
+

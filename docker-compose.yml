@@ -1,0 +1,26 @@
+# Convenience wrapper around the Dockerfile. Put your values in a .env file
+# next to this compose file (compose reads it automatically):
+#
+#   VITE_SUPABASE_URL=https://YOURPROJECT.supabase.co
+#   VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+#   SUPABASE_URL=https://YOURPROJECT.supabase.co
+#   SUPABASE_SECRET_KEY=sb_secret_...
+#   SUPABASE_DB_URL=postgresql://postgres:PASSWORD@db.YOURPROJECT.supabase.co:5432/postgres
+#   BOOTSTRAP_ADMIN_USERNAME=yourname
+#
+# then:  docker compose up -d --build
+services:
+  draught:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
+    ports:
+      - "3000:3000"
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      SUPABASE_DB_URL: ${SUPABASE_DB_URL:-}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+    restart: unless-stopped

@@ -1,0 +1,43 @@
+{
+  "node": "v26.10.0",
+  "checks": [
+    {
+      "check": "final-engine-bootstrap",
+      "exit": 0,
+      "log": "final-engine-bootstrap.txt"
+    },
+    {
+      "check": "final-typecheck",
+      "exit": 0,
+      "log": "final-typecheck.txt"
+    },
+    {
+      "check": "final-tests",
+      "exit": 0,
+      "log": "final-tests.txt"
+    },
+    {
+      "check": "final-client-build",
+      "exit": 0,
+      "log": "final-client-build.txt"
+    },
+    {
+      "check": "final-sw-assets",
+      "exit": 0,
+      "log": "final-sw-assets.txt"
+    },
+    {
+      "check": "final-server-build",
+      "exit": 0,
+      "log": "final-server-build.txt"
+    },
+    {
+      "check": "production-startup-and-engine-warmup",
+      "passed": true,
+      "http_browser_verified": false
+    }
+  ],
+  "all_executable_checks_passed": true,
+  "network_end_to_end": "blocked: localhost TCP Network is unreachable",
+  "live_services_tested": false
+}

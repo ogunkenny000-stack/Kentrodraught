@@ -1,0 +1,5 @@
+Command: node scripts/build-engine.cjs
+Exit: 0
+
+[build:engine] Native engine initialized and completed a search.
+

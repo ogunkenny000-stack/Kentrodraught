@@ -1,0 +1,20 @@
+EXE = scan_nigerian
+OBJS = bb_base.o bb_comp.o bb_index.o bit.o book.o common.o eval.o \
+       fen.o game.o gen.o hash.o hub.o libmy.o list.o main.o move.o pos.o \
+       score.o search.o sort.o thread.o tt.o util.o var.o
+
+all: $(EXE)
+clean:
+	$(RM) $(OBJS) $(EXE)
+
+CXX = g++
+CXXFLAGS = -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter
+CXXFLAGS += -std=c++14 -fno-rtti -O3 -march=native -mpopcnt -DNDEBUG
+CXXFLAGS += -flto -funroll-loops -ffast-math
+LDFLAGS = -pthread -O3 -march=native -flto
+
+$(EXE): $(OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $(OBJS)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<

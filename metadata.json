@@ -1,0 +1,6 @@
+{
+  "name": "Nigerian Draughts",
+  "description": "Play 10x10 Nigerian Draughts against the SCAN engine, with multiplayer rooms, Grandmaster Lounge messaging, and real-time peer-to-peer voice and HD video calling.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

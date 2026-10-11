@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────
+#  Nigerian International Draughts — SCAN 3.1 Engine
+#  macOS Makefile  (Intel i5 / clang++)
+#  Usage:  make -f Makefile_macos
+# ─────────────────────────────────────────────────────────
+
+EXE  = scan_nigerian
+
+OBJS = bb_base.o bb_comp.o bb_index.o bit.o book.o common.o eval.o \
+       fen.o game.o gen.o hash.o hub.o libmy.o list.o main.o move.o pos.o \
+       score.o search.o sort.o thread.o tt.o util.o var.o
+
+CXX      = clang++
+CXXFLAGS = -pthread
+LDFLAGS  = -pthread
+
+CXXFLAGS += -Wall -Wextra -Wno-unused -Wno-unused-parameter
+CXXFLAGS += -std=c++14 -fno-rtti
+CXXFLAGS += -O3 -march=native -mpopcnt -flto
+LDFLAGS  += -O3 -flto
+CXXFLAGS += -DNDEBUG
+
+all: $(EXE)
+
+clean:
+	$(RM) $(OBJS) $(EXE)
+
+$(EXE): $(OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $(OBJS)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+.depend:
+	$(CXX) $(CXXFLAGS) -MM *.cpp > $@
+
+-include .depend

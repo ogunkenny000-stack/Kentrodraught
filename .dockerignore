@@ -1,0 +1,23 @@
+# Rebuilt inside the image -- never ship the host's versions
+node_modules
+dist
+nd_upgraded/scan_nigerian
+nd_upgraded/*.o
+
+# Secrets & local state
+.env
+.env.*
+*.log
+
+# VCS / editor noise
+.git
+.gitignore
+.vscode
+.idea
+
+# Docs & assets that have no business in the build context
+README.md
+doc
+*.zip
+# The shipped engine sources and evaluation data are required during build.
+!nd_upgraded.zip

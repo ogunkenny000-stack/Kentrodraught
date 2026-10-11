@@ -1,0 +1,448 @@
+{
+  "date": "2026-10-06",
+  "original_upload_sha256": "5f64c7d075aff0a139e942139748fa7ee4718aeb8724e463d180a987c682872b",
+  "original_project_root_prefix": "",
+  "validated_source_zip_sha256": "8f107437a09c8e33d0f55d08ed2d4c135f71cae327c7d941b43fcaef2c8a902d",
+  "native_executable_sha256": "575d7f206fef339b8f4336dfb78458b4c44b51c5e11ceaf8829841c5513e7d05",
+  "source_file_count": 235,
+  "original_project_files_removed": [],
+  "dependency_manifests_unchanged": true,
+  "unchanged_original_file_count": 202,
+  "modified_files": [
+    {
+      "path": ".dockerignore",
+      "before_sha256": "5f199566b68208fa74915129992cddebcda0f354239e2fe310d3312603ea5823",
+      "after_sha256": "c99935003d472392d451fd8206f02f2516d668fbf4400d7d50fe43f01ba691ff"
+    },
+    {
+      "path": "coinsService.ts",
+      "before_sha256": "819acbc58f877773629e0652e3fb3e009be4fe51851e6e4ab86b75cefb40a3dd",
+      "after_sha256": "6cb0be6907aab0829be6caaa30da77fe333ccd5e69f7f99433d14dcedcb51c1f"
+    },
+    {
+      "path": "nd_upgraded.zip",
+      "before_sha256": "05c7bbac85229f58cbdcd34e7970df8bdb0666622b8215660812d55b982137c5",
+      "after_sha256": "ed018c20997525dce288cbe473cbf1daebfe45cfa2161def23b9438cbde8b913"
+    },
+    {
+      "path": "public/sw.js",
+      "before_sha256": "1ac56714f73d5eb1acfbec18e73de2b03fd89bbe8d7e3dcbf2e147e02ed9bd2a",
+      "after_sha256": "1a329dbc93bc5b5adb1cd0d1f61201ff7c15e24d9801c1f2e7b60e3ab67c257c"
+    },
+    {
+      "path": "scripts/build-engine.cjs",
+      "before_sha256": "a4fd6017156cddc3db5bd24d1a9b8a579f92ea576971560e518a9b5c8318d68e",
+      "after_sha256": "1a97380006d1c229c26c57f8c1c0c2cbb655207dd967eb759155fe917df1e14f"
+    },
+    {
+      "path": "scripts/inject-sw-assets.cjs",
+      "before_sha256": "b0e5d8f5e6f156932274af7c9bcefb04c0f34141252957d47fd55c92d6d8aadf",
+      "after_sha256": "12d5364676b7d5d34603c67b20055755c7d6e8100ea6715580e49e46c9175446"
+    },
+    {
+      "path": "server.ts",
+      "before_sha256": "69144200b802234710f860c70ea59213168faef414ec4411b14a5556f4e8a401",
+      "after_sha256": "6fd54385945ec08a278253b7a792736cf34d769f0c24a05d9d7ce450b2bc7c56"
+    },
+    {
+      "path": "src/App.tsx",
+      "before_sha256": "31d2c3479a7f6240886d83b8c7148693cdcc3aa6bb385fe16bd33c49ee9d60c2",
+      "after_sha256": "8a60c9afb2a78a2b1d605950a3c4ca9ebac1e7fc5069c41b511e2a26a86dddde"
+    },
+    {
+      "path": "src/gameLogic.ts",
+      "before_sha256": "171865b3d537c1ca5e5d916fecf4b8499e64867fbe678afd08670bc843aca801",
+      "after_sha256": "7012cae0fd3af8de54292025e6976cceba095c354da219ac243dda1a37975c60"
+    },
+    {
+      "path": "src/lib/analysis.ts",
+      "before_sha256": "511f7c53fe14efca3989ba8fbdeb7e9f2d4c6ceca28674fdb09a4b8bd320e843",
+      "after_sha256": "53303b3b07d6fff05028f8cf1d08c372cb4b3503e7505a4969ee6a86930e9416"
+    },
+    {
+      "path": "src/lib/fastResume.ts",
+      "before_sha256": "d0f810491bf9bafe4f19f8b88f144983f94a6e9291e0bd9a49064fbdef42f3fa",
+      "after_sha256": "6bbe24e8519c9e2ae198fc7499215c4e38987733b31edcb0b93e32aa68e10c62"
+    },
+    {
+      "path": "src/lib/gameSocket.test.ts",
+      "before_sha256": "53b23495bc9f655285d5273a81a7865e583a2208998ab5cc1886e9c40839586e",
+      "after_sha256": "b0cc5185a8040611937582cc69170963171961af8962eeccc7bbbeae390b29af"
+    },
+    {
+      "path": "src/lib/gameSocket.ts",
+      "before_sha256": "43538126d4e4ff0a1b1fd955f7b2469a7fd5031831a6dfc98ebe076a9fd44818",
+      "after_sha256": "4f2746d73bd2983f39cb7d2edd591b457010aae106098fec99475ea4d5242655"
+    },
+    {
+      "path": "src/lib/kenEngine.ts",
+      "before_sha256": "f92c0ad7138379c65cbe1714bbc409b0b88872c50837222c039cd37305bd792b",
+      "after_sha256": "08980fa5e2bae7dd30c3c281ff3a70462a4b6819859d92e5b1b5f80e9aed9f3c"
+    },
+    {
+      "path": "src/lib/roomState.test.ts",
+      "before_sha256": "0401374fe31b4618376418c18e3f5c125a57662e75a2003ced46b52127607880",
+      "after_sha256": "8f78c38164c2e4a07fb824ac0c432ec8cdc02b774fb1a4e19803b65336635017"
+    },
+    {
+      "path": "src/lib/roomState.ts",
+      "before_sha256": "fabdca2f2992908b8bb440ee4df82c9cc7f20e3531815beb7e4c301bbd77fc20",
+      "after_sha256": "a32788eb455f010814e49efee0a46bae8f57bd772552f0d3ddedf48d3cdbfb64"
+    },
+    {
+      "path": "src/rules.test.ts",
+      "before_sha256": "772dab15e81ac8189e8ffa58d30cfb87c36351b7d1ebd4f80217057b9c92b8be",
+      "after_sha256": "feea76b08cf9d2a64190fcd57bfa1599fb0584453422524a5e0625b1f853505e"
+    },
+    {
+      "path": "src/server/gameRecordsManager.ts",
+      "before_sha256": "ec68461ff75518119728f584399fbd4cff1bee38321e993fa01046e7cb50b89e",
+      "after_sha256": "55897be03335a32dc7d390cb5ef15b42754652237dffe463c7670b82f389925e"
+    },
+    {
+      "path": "src/server/onlinePlay.ts",
+      "before_sha256": "958eac430c9bf6301c7b2fcee17743f8416ff2e5023df58dd5e28bcc0d9ebbc0",
+      "after_sha256": "c361301c87114fb10e60a5d9bca1121296499d81484178d621f46241a07c2e57"
+    },
+    {
+      "path": "src/server/roomClock.ts",
+      "before_sha256": "2ea4719961326ff2d09e0f0c11b0638024e4fd8326e2fd03de31e3ba2cf7db04",
+      "after_sha256": "097ab634a1dac7270b3b4990c8746ccc3b5a3493dc2128ad3aa9ef482d8f477b"
+    },
+    {
+      "path": "src/server/wsValidation.ts",
+      "before_sha256": "97f292fdc8d46cb5da85b65b1d30bf2e2c4f1330356abfd450f6f4ac511ed350",
+      "after_sha256": "517818dffcfd86db885e88ad71ad28f40e15f0b37b887f22afa2c621115d62d1"
+    }
+  ],
+  "added_source_files": [
+    {
+      "path": "Dockerfile",
+      "sha256": "099a2de56c59ba7244107927499c1b688a85dc1d2de5b3b697d41cdd65139daf"
+    },
+    {
+      "path": "src/lib/analysis.test.ts",
+      "sha256": "879f1d4cb0215ae7c57c45747f884100991f91ce219c08279152c26469a91390"
+    },
+    {
+      "path": "src/lib/fastResume.test.ts",
+      "sha256": "4c22f3247e643ecc03c3c8068e024e2a011be59891d7ad3c01233efe10105f30"
+    },
+    {
+      "path": "src/lib/kenEngine.test.ts",
+      "sha256": "01cb7df07d563eaf0f084f5a4633c0a556308914388a40f0ce6f96fe05ab73d4"
+    },
+    {
+      "path": "src/rules.regression.test.ts",
+      "sha256": "fb14d079cfbf106d463a726b38dbd5eb3a361442c7b07d33ce9823cd720dec65"
+    },
+    {
+      "path": "src/server/coinsService.test.ts",
+      "sha256": "93c46f2e4a9f40587319e34cef55fc6d550c61670c5b531706441ca049dde410"
+    },
+    {
+      "path": "src/server/engineRequest.test.ts",
+      "sha256": "9d31b873e2745dd94eac6c6ea52b0d26f035d43f85597a7a937b86d281e3102b"
+    },
+    {
+      "path": "src/server/engineRequest.ts",
+      "sha256": "0b786f42a41e8d6de5a0bed5206398f642d86cd0fff9e17bb524db378a80c79e"
+    },
+    {
+      "path": "src/server/gameRecordsManager.test.ts",
+      "sha256": "c5b3935e8da02b6e5d92816fb463ff1d3395bef3c4b435db2cc0df8772088b74"
+    },
+    {
+      "path": "src/server/infrastructure.test.ts",
+      "sha256": "a32c24cd0bbc0a214f9c696dbee7cfeb810ae608d96ba8b1f90c85c76ad1ac88"
+    },
+    {
+      "path": "src/server/onlinePlay.regression.test.ts",
+      "sha256": "db5aa5caf7454cfebfc742d93e9db707beebdb3b13e96bc9a69c104fa37efef6"
+    },
+    {
+      "path": "src/server/serverReliability.test.ts",
+      "sha256": "cbc59ee324fcb71b72f37d46293f985e12eaf28320335c1792e5b65865d4b3fe"
+    }
+  ],
+  "included_source_hashes": {
+    ".dockerignore": "c99935003d472392d451fd8206f02f2516d668fbf4400d7d50fe43f01ba691ff",
+    ".env.example": "5d9a9f242cd70b2fbb4c397e990455a507ca07a012a877c0fbaa5b86b891bdcf",
+    ".gitignore": "4c09291adab8048f9d4b7284de5b957fdb0f4df9ae658608ea4501e8ba324696",
+    "Dockerfile": "099a2de56c59ba7244107927499c1b688a85dc1d2de5b3b697d41cdd65139daf",
+    "README.md": "d6e1865a1bae1007f49e147db03ed7ef47c96ded87a3ee90bdb4d11317d82aa5",
+    "adminService.ts": "981a9fc93c67d7131e89ab51f417629035827171a1e2026f4c37a84fa6a6343b",
+    "bun.lock": "06bb962d69442799020edf3c8f9bd3d10f710add30c7605137287371be2b0f65",
+    "coinsService.ts": "6cb0be6907aab0829be6caaa30da77fe333ccd5e69f7f99433d14dcedcb51c1f",
+    "docker-compose.yml": "4124d30acd863eb01466492b93d8fc0c97f1a412e578a06651e4d30f41722cce",
+    "docs/ONLINE_PLAY_PROTOCOL.md": "4ed5aecf5c23543640848d82b6417564a5c07c7dd7e14b6ccf0755fa4a3eab31",
+    "index.html": "53903d5b3fcf369f2f787e9f597e1e1d05e146ed0fcacf4a059011c7f73fa016",
+    "metadata.json": "9ffe84d16b03e96071fbcd96f1e09c83c549f643079aa6c9ef9388becfca4cc3",
+    "nd_upgraded.zip": "ed018c20997525dce288cbe473cbf1daebfe45cfa2161def23b9438cbde8b913",
+    "nd_upgraded/.depend": "d7d88a5d5733c4512e9a8e5d2aa6092e162f1e921ae6e00016c04054de31fc58",
+    "nd_upgraded/LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "nd_upgraded/Makefile_linux": "25c82088cc408702e8047619ce30192d83d35403928111ac0719f63736a4b556",
+    "nd_upgraded/Makefile_macos": "a7a3f42daccb9d3246dc7021bb5acc3caa00f24fd4fc12e9b14cc6442d7f341f",
+    "nd_upgraded/README.md": "b5dfe1e7fe3a77d71e7045d0435154226b166a5d00cad941a60eb451e6457c69",
+    "nd_upgraded/bb_base.cpp": "8572c2db138d8be41e8ea6751818c281d5ec21fbdebda3d17a293e064a0c54ce",
+    "nd_upgraded/bb_base.hpp": "bf54c2eaf75e79ca809a5eba02a370bac0302da279c37692dddd07c1ef62275f",
+    "nd_upgraded/bb_comp.cpp": "e922cb4b3abe4cbea239d24f4f74d713dec2c1bce0c1e07256eca5114fdb82dc",
+    "nd_upgraded/bb_comp.hpp": "070bcecbbf5dd0bd1b07162c02ae0a48195d1a6b206d9b068e0fd9a982440702",
+    "nd_upgraded/bb_index.cpp": "afba05f2b90b10e3dd196452fb6737151371bc662102b93e829af8831eee7755",
+    "nd_upgraded/bb_index.hpp": "2e5070a12f27fbfa35c98bb94dde1e4fe85b318c24f4e952dfb090aabec0c203",
+    "nd_upgraded/bit.cpp": "ac538ab61c8cbc4d18e8ae7f60e41966aac2fbdc1ef8dbcc800087d6dc4a0e90",
+    "nd_upgraded/bit.hpp": "302c0b3469e518eefbd86eebfdeb240b05764addce04ab888232a733e296185d",
+    "nd_upgraded/book.cpp": "ca8a11f265f11eec863c698c9c3544cbfa0bec7b764e7e8629858767016317f0",
+    "nd_upgraded/book.hpp": "7f461065cb4be0af8ed31345499e81fa0f55831c90e00471e3fff6e1a91cc99a",
+    "nd_upgraded/common.cpp": "f8c63a115f7a819c1bef58199fce3dc3497d25fdbb745ab64af2df2c9bf0b890",
+    "nd_upgraded/common.hpp": "55fa28e9fed90b6a9f94327cfc6859960f7508d8e48c18325b65be69fefc39c4",
+    "nd_upgraded/eval.cpp": "1b099033949f618e158f63949c0031e6913fb8ab86fe9c650ceb4525ecf4e74e",
+    "nd_upgraded/eval.hpp": "ad21938aea2cfe8f508de43316611ff0798bab94ab672f5c75e089236991c8f9",
+    "nd_upgraded/fen.cpp": "99b01f1079c973de841a41e941b489eb90aa143e15bdce825a69fb7411405e32",
+    "nd_upgraded/fen.hpp": "f68f15dff2c8676f45eac8cb5a4bd14b53a0d7ee531bc5c8bb6c90ffcab74ee8",
+    "nd_upgraded/game.cpp": "e2ffaf0d0c6cca33af51f1113534495ad9682e4bca77b55b24d6b2336c003f03",
+    "nd_upgraded/game.hpp": "e5cecb88820dce60d067bd50782e646626a5b8fae159877aa3074083e2bda6fa",
+    "nd_upgraded/gen.cpp": "55d7ad39448f0b4a7fb337e06d864b36dff6c8b7027713c6665158e4d152ffce",
+    "nd_upgraded/gen.hpp": "401b6afc43ad175b4c24dcc1e284e08b86580246a547fa1e4563f6e45848fe82",
+    "nd_upgraded/hash.cpp": "c1b9896c092f65d06313d33ba25cf898d0e1e2e7cff437ee510e4e9ce6f2d389",
+    "nd_upgraded/hash.hpp": "4e871c921db8368233b7a5b10a0e3e27673fbda3d15a3825f4043b6be434e3d8",
+    "nd_upgraded/hub.cpp": "74634b3935ab907c18b8d4480af93100be133e116c63553c70f22cba0673c3de",
+    "nd_upgraded/hub.hpp": "6c23f230710921d994857edd8799ad66fc1369d42c6c713bade09618661f7da4",
+    "nd_upgraded/libmy.cpp": "4904eeec888b2e87a5c2b68f22cdc97b16f395a13cecca1fc43ff32ff0525f6f",
+    "nd_upgraded/libmy.hpp": "a3bf4cd208e6dd1648997e01c4180503df96880c3b59d65eef8597feb4da28d1",
+    "nd_upgraded/list.cpp": "425cdd0332db94b40fe1557c821fc6290a3558061ac2bb4b4896e6f8907627b9",
+    "nd_upgraded/list.hpp": "12007cbcb2cd81695f5d1be97ffb247f3b25c5575a17714efb8d27995736e6c0",
+    "nd_upgraded/main.cpp": "29242044727ff847a879222b9f1fb7add8fa603805a5b384cb883ae9192f2545",
+    "nd_upgraded/move.cpp": "6f63735241b1dbcf3fe0a1ee3e147c77d7c687b5072e3d5beaad4d5d16a36e5a",
+    "nd_upgraded/move.hpp": "020e11fc54f467cbf9e537aaf5d92dfbc97201db367bc2320adcbe694ac9e807",
+    "nd_upgraded/nigerian_draughts.py": "d4d141bd248499ce2c1998d48aefaf8081719959389dd4d21d98eec46f82e3ad",
+    "nd_upgraded/pos.cpp": "4bb563400fea438657514852440ad7a69bbaf90d4f6c0761ab521e2c812e9515",
+    "nd_upgraded/pos.hpp": "7ab9c17b97283ca1817881471702074c8d42f8138c361e016f757aece0e278a2",
+    "nd_upgraded/run.sh": "5e6d1437c338bcee92cd3b19a427e9e7fde0fbea8e975d7012b4127c090f9b79",
+    "nd_upgraded/scan.ini": "00f7c8f93fd1968b4143f5a0ec4cc412f46be4501384265d72b8ccf2dee5c8da",
+    "nd_upgraded/score.cpp": "164f4b6956cd2eef5138bf8a53189dfd5130cd84d3f326aa777244e6c6d1c527",
+    "nd_upgraded/score.hpp": "c1e77f4b7188a66ed2ed8063b3a3ba5c1905bad5531a653f4e0ff7a926805e74",
+    "nd_upgraded/search.cpp": "a02c092b44df43f99e6fb03498966521e7884c3ea9a8e61f78aac1f0afa1a53d",
+    "nd_upgraded/search.hpp": "66b66032ea690e41534f80386ba34839abcd703bdc78d5cb13abe24b77079130",
+    "nd_upgraded/sort.cpp": "4b8dcc7d1a3e59a1941c746f412a7a9b6b98ad8905528a025ccb1dc79f452453",
+    "nd_upgraded/sort.hpp": "bd43cf162d8e1317e696fdd706c99aa18c0bd4008936165b9a6d8116ec27a9ee",
+    "nd_upgraded/thread.cpp": "cb3ec27a8a97fda6aaf85d5e24310f8ad596fc7299e16ec53ad53c5243c8a564",
+    "nd_upgraded/thread.hpp": "333ffaab75f5eb659788f84701ac89bb45b0313d5e5399414f3b1d9980046a97",
+    "nd_upgraded/tt.cpp": "421d1ec503f45ffe24ebadc2114037c3681b940d6913a5d015d845b617bff729",
+    "nd_upgraded/tt.hpp": "5ca419f2d005cafedb4369a66aca0bbfb77ddb77febec09ad61567810f94ddc1",
+    "nd_upgraded/util.cpp": "a1d1adb86cb40cc3ca3623a6f117f5c34b0ef81c3e9e312fc830912490272bbe",
+    "nd_upgraded/util.hpp": "af04a353a58da2719a609d51542fcd8bbe00de167bfa80bdb4033792871d9493",
+    "nd_upgraded/var.cpp": "1cfdf5896dbefdd273f5cbb94255247f9e6395dab119d1e5491d86dbff18926d",
+    "nd_upgraded/var.hpp": "6d0075455aac21f405f060d306db42eaf8fd021821a2314513a2d1c3e9affd67",
+    "package-lock.json": "5841f9fa93415a007b84a42844be7f1c93b6cf3e6ea27399702222e25597eee9",
+    "package.json": "7400b416a74af4342fde016876fb240a75977e4d9982e599964303cac62721d0",
+    "public/apple-touch-icon.png": "59572c508f789a021a22527afb52ad385f948b9fe5e61ae1b27d35a98dbbc5c3",
+    "public/favicon-16.png": "09f160690d6439f0202e2129e81e559a7b242d57edd946f30392567fdbe3c4b3",
+    "public/favicon-32.png": "996cd23a127d64d5bf6c3169887373e21585bc4501aecc318b28b0275e35ddcd",
+    "public/icon-192.png": "0e8abdda59c244fee5765686c9fa041db22e662a7029fd5a8a87bf179abcc7f2",
+    "public/icon-512.png": "cd81f3542bd4af0cdfd39dbe1c513046eefeaa27a759741f35594251f1c712a0",
+    "public/icon-maskable-512.png": "e39fc6cdf13c85e1d5c1f942db68528459b36bdd8f7cae86f35cb689efad8bdb",
+    "public/manifest.json": "06eafe91d43639fdd9ad285c4beb6b62657691953c5e32a6a232c5d6de51d165",
+    "public/sw.js": "1a329dbc93bc5b5adb1cd0d1f61201ff7c15e24d9801c1f2e7b60e3ab67c257c",
+    "scan.ini": "c8c49340abbd7f240135b639f8ac6504b6b01aea8c13b156e3cbfa4b295930c5",
+    "scripts/build-engine.cjs": "1a97380006d1c229c26c57f8c1c0c2cbb655207dd967eb759155fe917df1e14f",
+    "scripts/e2e/harness.ts": "21bcbe56ec5b5e16bef33d7d53903bc60c54263cebe1a6c2fd8b9856f87ef7ac",
+    "scripts/e2e/pvp.e2e.ts": "a13cfad5329b5530441416d2699487b6d6f211c8e67df77263f4b2d6e7edb5d5",
+    "scripts/inject-sw-assets.cjs": "12d5364676b7d5d34603c67b20055755c7d6e8100ea6715580e49e46c9175446",
+    "scripts/pvp-smoke.ts": "52f34489a5ada89fc399cb0d057473829af0d3ad5dfae438deca724b3405603b",
+    "scripts/trap-repro.ts": "bf73516a624505a3a24f410d8b3151e64898d2d4640f2ad35e45b4ab9ff2200f",
+    "scripts/ws-bench.ts": "fbae36c76770348f41af309e87211df721658113d20b9c31fa81b2538d1ac3c9",
+    "server.ts": "6fd54385945ec08a278253b7a792736cf34d769f0c24a05d9d7ce450b2bc7c56",
+    "src/AdminPanel.tsx": "928b6291cd1901938055f56121ec9ededc81a99e027d6b6cd54b2f8d78e1a120",
+    "src/App.tsx": "8a60c9afb2a78a2b1d605950a3c4ca9ebac1e7fc5069c41b511e2a26a86dddde",
+    "src/AuthScreen.tsx": "bcfeb08d2ca35baaa3dbb0a84c2d2a1aa674137c9408753c71b893ce5032aa5f",
+    "src/InstallAppPrompt.tsx": "70fde0f91332d35ba12ac206dfffab02f36449d564b84bf616b43b75a588b088",
+    "src/apiClient.ts": "35745125ad364a67c573969b70e31c22e617df139001d48548b12de7c3efdabc",
+    "src/assets/images/bring_your_plate_sticker_1783328602603.jpg": "cbf6980d6dcddd5d423df38f408564984ff723c56e7c4d6c837b4fcdbef95c10",
+    "src/assets/images/egg_zactly_sticker_1783328613445.jpg": "0f30fd2422f33547096cc89f2abc62c391ad9b0b159c5bdacbdfd7fddebc811c",
+    "src/assets/images/gbemidebe_sticker_1783328591091.jpg": "7f3b0c8ed53b0e0e526f5e9993072992dbe545edc17d7674b31ed69e48191546",
+    "src/assets/images/idiot_goat_sticker_1783328576437.jpg": "32efaf26b86ad8e84b2d99969288fea5667c6a140fa0d3c420e3fc22d577cd87",
+    "src/assets/images/kentro_coin_stack_1787044217748.jpg": "1578325d24d94333146419bb65521196854f00dae44e487fc7fc2dd479c155ca",
+    "src/assets/images/kentro_gold_coin_1787044207657.jpg": "30fd7d93810c62c23556b5bbe78b271bfda070c98f2379e29755dc351267c511",
+    "src/assets/images/ok_noted_sticker_1783328622945.jpg": "0dc45f360f28b705df29957e2c6c5b0dfa9fd33865cb5b08a5479fec3e200648",
+    "src/assets/images/take_time_sticker_1783328542659.jpg": "fd4ecd19abe624afa0ca9de1479735aa292f682acdbe3916722c405b3e0f8e88",
+    "src/assets/images/talk_am_again_sticker_1783328563690.jpg": "7c9af490cc4c073202dd543bbd16dc2a2e9ebac8961f9538ac49732992870181",
+    "src/assets/images/you_say_sticker_1783328552772.jpg": "10181f7e143fe8b0aff7130c0fef7cf34db9f9a9b7a7beb80db31c5c0b2dc0af",
+    "src/components/BestMoveArrow.tsx": "9524ad45418586c465d9e1964b0eae7f2b2fc0535342688547b8b8d496520d64",
+    "src/components/ChessClock.tsx": "03bdae774029343d44eb29373d40541fb6c23d5a597cd3a4fede15618358a41f",
+    "src/components/ComingSoonPane.tsx": "8499a533d4feac51a9a69d8784404532b7e97572677ed862c3a9b93dd535ce6c",
+    "src/components/EnginePanel.tsx": "076695229b49cd9df7acb37806ba28746088daebf8406ddab4814a0b50cc664b",
+    "src/components/ErrorBoundary.tsx": "db7f525769251442245410841ba289b8b508ddf100089dae183135d0a9383ff0",
+    "src/components/EvaluationBar.tsx": "33de665ea8ab27131bee6f446e00bedc72dd5eb14b6eba97416fb32f5349f8fb",
+    "src/components/FriendsPage.tsx": "5fa984fba1606751081ebafe8bbeb752b1981d090dd179f207d439e37511c4ae",
+    "src/components/GlobalChatLounge.tsx": "0fd94e22bb78cc68d50edeaebac12bbec3083528ff09e7bc89c2d3d7257df498",
+    "src/components/HomeLobby.tsx": "c8d617e63dcf0b3de57aa5ee5f25c042a0ecb49dd3a2b92103675783dd58c3ef",
+    "src/components/InstallAppCard.tsx": "40c12c27c305da856cf2083cfd095939f7b42b25d61ec91d599edb2999043e59",
+    "src/components/LobbyDashboard.tsx": "e381e63f0ea6880dff03e1ed617fff62666a83596bac5f39050ba696483a80e5",
+    "src/components/MenuSidebar.tsx": "7935bd29c9edadd57ee97e9ed37e1b220b4d1aea5ceeff316aac159930f572f8",
+    "src/components/OpeningExplorer.tsx": "5654e64d319d2d45a2fdd1d61b985c68c3eea68e186053cf91c7051285581cfa",
+    "src/components/ProfilePage.tsx": "5513770923ddac8f46cc44e204190bd39ea11b9eef5f66144de07fcebf58c66e",
+    "src/components/TournamentDashboard.tsx": "52c7ffaad6bbe2782ff76d77efce0ec2c7c2075512525d13279888777258b241",
+    "src/components/admin/AdminUserProfileModal.tsx": "d179b88c6681c06757ccea67612c40bf71c3dbb963a01e72b54a3eb367043b0d",
+    "src/components/admin/GamesTab.tsx": "e9f26f930a07a58fa7cca41ef88ef5a3f19d98fd0d032f4f664863c0e4627277",
+    "src/components/admin/Ken8TrainingLabTab.tsx": "7e5c9e79c9d4e54d4e316fd09187743aaeb62838d43150418176a55fe55f8d6e",
+    "src/components/admin/ModerationTab.tsx": "cb325ad4881cc15f305c4982e8ae3caecad4efe52737c59a566b009a766a2323",
+    "src/components/admin/PuzzleCreatorTab.tsx": "8d7e84ffa0ec19675a3ec528082da73a155b66b44a10217e2c04965aebe76ff7",
+    "src/components/admin/TournamentsTab.tsx": "2b93e08cf729bb01a04d00583cc6f7571227bee930107b1e4f9fc6b7000d4feb",
+    "src/components/game/FloatingVideoCall.tsx": "d6f2edafb04ab619ce0d670beb5ebff1045669823888710ffcd0e0c95d3de1cc",
+    "src/components/game/GameScreen.tsx": "013440c6929b1a2a270e35adad32ea8691515b446a99444918d70906f3e6fa36",
+    "src/components/game/MobileBoardDock.tsx": "759bcdb3bc5b0443dcb98bdf944586dc5f11e698b309a9ce93dcc5edd20cd0b9",
+    "src/components/game/NetworkQualityBadge.tsx": "df04a40b8e38cdf36c967162219f49bc9feccb62d37358729a6c4d73347fd7cd",
+    "src/components/layout/MobileDrawers.tsx": "71b2c0a3567c1eb0bd35f01bdc6123ad7115c94a2f9921fa57af669d18c0ce0c",
+    "src/components/layout/MobileTabBar.tsx": "e171f40c9494a92205eca3759c74c00913d9841c49dc60ca54922bb67cb5a313",
+    "src/components/layout/TopNav.tsx": "b3896ad0f16c49ec32495c0b03cfa20101134b91e436e2b2db4ab6ddd1fd1e81",
+    "src/components/lounge/ChatArea.tsx": "c3c33818537b39d2442e4f73d5773fa13c8bd8e43fd2e35ccceb92c1e30eb512",
+    "src/components/lounge/ConversationList.tsx": "5463eda593feba500c0a4807174ef1fd4cc2933b01fff1024514e930815452ea",
+    "src/components/lounge/CreateGroupModal.tsx": "5c106a9ddf0175efe7c42c88baeb0874aff9a5193c327d039f63b42fab072be0",
+    "src/components/lounge/ForwardModal.tsx": "7b4c8579fba242b8ec6d0387a4a7f0f1849cee5a507a825590d503caf763d192",
+    "src/components/lounge/GroupInfoModal.tsx": "0dc0f87ddb6a4f84dd37ac83c0c70a7b4d2b8378dd862898324c403d75b7e86b",
+    "src/components/lounge/LoungeHeader.tsx": "ed86b456410b2cfffd053b8c03985b5b62199f5eafa7bca29e9d682bafa9692b",
+    "src/components/lounge/NewChatModal.tsx": "4094407eb6e3aa95c7e3b342cdc15153490b57a944fb52fdd15f8427813d7414",
+    "src/components/lounge/RecentGamesModal.tsx": "5de3128106882ba389a4955c0a90c560a42fa8728b8b18bc2ab582dde670a242",
+    "src/components/lounge/ReportModal.tsx": "c4197bdd2c8b97c4e296e9fca681047a67b579bdcc717519c58d41e5be95b03f",
+    "src/components/lounge/UserProfileModal.tsx": "19f9a04a38a1b1c1910f2e7875d6558a831bb2817ec9e704df1576b62f79e6ea",
+    "src/components/lounge/VoiceCallModal.tsx": "dde57c6d9e031b8145b83f242e8e467b8648c52542587687ccc9b8c751e0eadf",
+    "src/components/lounge/VoicePlayer.tsx": "0435613da759b47197363fe80a6b02ebdf1cd096f70d273eccd247f361b9d948",
+    "src/components/lounge/constants.ts": "4170a15aa3eddef9b88acb24b62be263dbba58a4232476bb539bc18cd3ad8505",
+    "src/components/lounge/types.ts": "612d6428adccac53dc5d15b198f78b2a986d4b80e4f92e9c3a3b38fff8d330a4",
+    "src/components/lounge/useLoungeData.ts": "3f36f5987bf2d3635b0f18a9f157cb77139ef86f27c9b0e179d35619de6cc6e7",
+    "src/components/modals/ActionMenuSheet.tsx": "599da6a5a9834bd96eaa6474965bd2e25ba63e079a3b7f1682b66d3dcf5d420e",
+    "src/components/modals/AnalysisLabModal.tsx": "571e034de554d7e6e02f85239d2e70ffd4157cc1c9767661d59c189b1c475c79",
+    "src/components/modals/AnalysisSetupModal.tsx": "4e3f597235ede5663db73df2b92b5ba42f00e56453309774384eb94580632271",
+    "src/components/modals/AppGuideModal.tsx": "33b82ab84dce9fc6139a248fdbb5642d0da71dda60097da5a4f07eebd3490e59",
+    "src/components/modals/CoinsPurchaseModal.tsx": "09552723b079f8a50f3234af8f2162075a509e63141fbe637c65427f8901e3f2",
+    "src/components/modals/ComputerConfigModal.tsx": "2605a680d0537882743b2326257776b22bd847d69118469117d51a79c2ea9d9c",
+    "src/components/modals/DrawOfferModal.tsx": "f303c0efed4c22be89b4889e773830fd810045674f3349cac34ad687132aa024",
+    "src/components/modals/GameOverModal.tsx": "f459858f67aef98e859c8dff6423b33f2fdde5defcc0eb21b99858a7d8fd808d",
+    "src/components/modals/GameResultDetailModal.tsx": "7494672e6722615ddf26ae89ead75d726c10864c1644050a28426c29ce06753e",
+    "src/components/modals/GameSearchModal.tsx": "76f232e4b188e5c5489ff229ee6716cc33d507245c8c623c7c4f249fe1f0f2d4",
+    "src/components/modals/PastGamesModal.tsx": "9e25fd30696382811c8f7f1cdfe0c96cd7e72f45e29ec4e591dbcf3d3ca9e3e2",
+    "src/components/modals/PdnImportModal.tsx": "05736803be25f061b74259f7c1658063e079b58f5429d8d8bbad6e40086af553",
+    "src/components/modals/PlayerDirectoryModal.tsx": "df848e1249636a028d17e0f01105204c43e2a4e466f802827810fa7df60f1c22",
+    "src/components/modals/ResignConfirmModal.tsx": "cebacdc43e8e8ef139a73fe271d08f0c70ac7e26fc6602e39633f164d6d9e0a4",
+    "src/components/modals/RulesModal.tsx": "4decb5a1bbd3c6c883e767bfc5df52e9a8c165a5c3c99c702b56e59a2276f0c7",
+    "src/components/modals/SandboxPlayChoiceModal.tsx": "22e2e913bbb100e32dafef5c2f0b886f8de24c99acb31c43d434b17c2b4c1e78",
+    "src/components/modals/SettingsModal.tsx": "ca52ee17abe7341e1df1650689ac16b5c01390e303fd96604453530527587453",
+    "src/components/panels/AnalysisSidebar.tsx": "b9e4ac5ffe464fa3e9bb3ce86123f4cd0650302a6a11e855697e3cd87a5e9c75",
+    "src/components/panels/GameSidebar.tsx": "9c2f6dd96f1f084b6d2832f295143f89c1dc9f35a9c9c01384e224db20e706a4",
+    "src/components/panels/MultiplayerPanel.tsx": "e2cd9a1fa8c0452770d24058ea3f883cc414f137c0a0abcd51efe48a4dc9919c",
+    "src/components/panels/PuzzlesPane.tsx": "7a5a578e4ad39bacbff7f8a213bf50d873f82b042114ecfbd031a656368892b1",
+    "src/components/splash/KentroSplashScreen.tsx": "e037dfc1c2a30ed076b75b51d1b5de88c6768285b16436ba5a30cc1614f67e05",
+    "src/components/ui/Avatar.tsx": "f64d838fe62071a310a54e28a9ab6a6dbe7ed0a2644afe91519faaff83caa405",
+    "src/components/ui/KentroCoin.tsx": "80afc8fdc7edd5b0ca2caf3cc1d1c417989352b6f331f9967478b6f06d0455cf",
+    "src/components/ui/ModalShell.tsx": "d04196269105e9809ea9a49a6a9472919f86eff260be29b0e623b330e486e6e6",
+    "src/gameLogic.ts": "7012cae0fd3af8de54292025e6976cceba095c354da219ac243dda1a37975c60",
+    "src/index.css": "7a89cbee082f16832e8816ed49ecb9773be3780982e4a8e4e012973184f4b09c",
+    "src/lib/adminProfileContext.tsx": "10141dc71f52aa2ba18feb0773d75218543438565ae9685fd5abf55a92e19065",
+    "src/lib/analysis.test.ts": "879f1d4cb0215ae7c57c45747f884100991f91ce219c08279152c26469a91390",
+    "src/lib/analysis.ts": "53303b3b07d6fff05028f8cf1d08c372cb4b3503e7505a4969ee6a86930e9416",
+    "src/lib/audio.ts": "230595eb960f8d392831be0d12878247ddf475ad78fbe902fb2c221e9a9fbea1",
+    "src/lib/avatarCache.ts": "a5d245b2d3e2a4eb98a87eac3a77477becd9735f057baf3e35563384a0968d61",
+    "src/lib/callSignalling.test.ts": "5ce459c403c794d624460183488da318c83773162086a2a4c507f2adcdf0328f",
+    "src/lib/callSignalling.ts": "8d3e4a47f699832d98d254d5bccb268f742f4d69c591348b83e9f84754132092",
+    "src/lib/callStateMachine.test.ts": "ba30fe4b41b1bb551accc7fd48878ce0394f39197bfaf20379e28356e1103f2e",
+    "src/lib/callStateMachine.ts": "db2d8ad4b9f6080242394aa37ed1ff87b25fb7e8383fcc016747bd19f922dfb7",
+    "src/lib/constants.ts": "21d03edf4ecb7635f0655be1ebb68b3a3becc3ef53fefa3a3172e5bb8e22f785",
+    "src/lib/fastResume.test.ts": "4c22f3247e643ecc03c3c8068e024e2a011be59891d7ad3c01233efe10105f30",
+    "src/lib/fastResume.ts": "6bbe24e8519c9e2ae198fc7499215c4e38987733b31edcb0b93e32aa68e10c62",
+    "src/lib/gameSocket.test.ts": "b0cc5185a8040611937582cc69170963171961af8962eeccc7bbbeae390b29af",
+    "src/lib/gameSocket.ts": "4f2746d73bd2983f39cb7d2edd591b457010aae106098fec99475ea4d5242655",
+    "src/lib/geminiKenTrainingLab.ts": "adab34777fa559a0bb23c3eb1986ad3228591c40e348a4b80a075092a6746065",
+    "src/lib/kenEngine.test.ts": "01cb7df07d563eaf0f084f5a4633c0a556308914388a40f0ce6f96fe05ab73d4",
+    "src/lib/kenEngine.ts": "08980fa5e2bae7dd30c3c281ff3a70462a4b6819859d92e5b1b5f80e9aed9f3c",
+    "src/lib/puzzles.ts": "2064629d0ae947ce5753943d66f680178f79a02d7c77218afb6a8fb339a3d9cb",
+    "src/lib/roomState.test.ts": "8f78c38164c2e4a07fb824ac0c432ec8cdc02b774fb1a4e19803b65336635017",
+    "src/lib/roomState.ts": "a32788eb455f010814e49efee0a46bae8f57bd772552f0d3ddedf48d3cdbfb64",
+    "src/lib/useServerClock.test.ts": "038761b361b015aff69ac15574e2cf34bf76fcdbfef38281fd8d57025bc9accf",
+    "src/lib/useServerClock.ts": "78baa904853f301b24f88929df12a270fe34f959662a4fb2de57a64b5cdc699d",
+    "src/lib/useWebRTCCall.ts": "7a7264daced2705cfb8d4fa52bb763f8b4d4fd833948f38f6f343b3be20a8c5a",
+    "src/lib/voiceNoteMime.test.ts": "61a24ae9e1b30bbabf8af074c9b7444dee49514e033c8f998f08417fae59d77a",
+    "src/lib/voiceNoteMime.ts": "19aa9a058e7a64e0bc7f1bb9aa3df84508dbfc53066b7949fa0b53a92bcc21bf",
+    "src/main.tsx": "37b7936fafaa2a025b117e7b8f0d908fe99dcf052fc1bedbfe60bae458f83b1f",
+    "src/memoUtils.ts": "f77ef4ada4ec79b5b642000ab950ce3b052e21df1df5a0299bc74a1981e1f9ee",
+    "src/rating.ts": "83fd507d66005f374a1b31994ea45da940f113a5267927c4b002ee406129689d",
+    "src/rules.regression.test.ts": "fb14d079cfbf106d463a726b38dbd5eb3a361442c7b07d33ce9823cd720dec65",
+    "src/rules.test.ts": "feea76b08cf9d2a64190fcd57bfa1599fb0584453422524a5e0625b1f853505e",
+    "src/server/coinsService.test.ts": "93c46f2e4a9f40587319e34cef55fc6d550c61670c5b531706441ca049dde410",
+    "src/server/engineRequest.test.ts": "9d31b873e2745dd94eac6c6ea52b0d26f035d43f85597a7a937b86d281e3102b",
+    "src/server/engineRequest.ts": "0b786f42a41e8d6de5a0bed5206398f642d86cd0fff9e17bb524db378a80c79e",
+    "src/server/gameEnd.ts": "a925ecf3baa44427a7d9b21c369b32313cb8c57dc52fd4f90e35a61944e88502",
+    "src/server/gameRecordsManager.test.ts": "c5b3935e8da02b6e5d92816fb463ff1d3395bef3c4b435db2cc0df8772088b74",
+    "src/server/gameRecordsManager.ts": "55897be03335a32dc7d390cb5ef15b42754652237dffe463c7670b82f389925e",
+    "src/server/infrastructure.test.ts": "a32c24cd0bbc0a214f9c696dbee7cfeb810ae608d96ba8b1f90c85c76ad1ac88",
+    "src/server/onlinePlay.regression.test.ts": "db5aa5caf7454cfebfc742d93e9db707beebdb3b13e96bc9a69c104fa37efef6",
+    "src/server/onlinePlay.ts": "c361301c87114fb10e60a5d9bca1121296499d81484178d621f46241a07c2e57",
+    "src/server/roomClock.ts": "097ab634a1dac7270b3b4990c8746ccc3b5a3493dc2128ad3aa9ef482d8f477b",
+    "src/server/serverReliability.test.ts": "cbc59ee324fcb71b72f37d46293f985e12eaf28320335c1792e5b65865d4b3fe",
+    "src/server/sessions.ts": "64c73ea5aa9f0cbcf02549891f13de6f444babd3dbb5c37f72af7b0a26237b67",
+    "src/server/wsValidation.ts": "517818dffcfd86db885e88ad71ad28f40e15f0b37b887f22afa2c621115d62d1",
+    "src/shared/protocol.ts": "61651a528d135f8aa41b2f7c786a354609d8df26e2218a87e979082ab1e556f2",
+    "src/supabase.ts": "32bbcfd04e3de0e9230e75e740439c721a9c0ab0ba84fd364f6b1f80b5c7301f",
+    "src/types.ts": "e3f012092f772855f09a8853548ad4a2763e1f06e39573f71cc33d8839528481",
+    "src/types/gameRecords.ts": "d1f4fa18cdce90ab5d49d90e2ad036fabd7f1c6467ab2d3637f6767d4607d8a1",
+    "src/vite-env.d.ts": "dd77fd204de318bd21beb6f741b7eb98f4d25961e02aaf713808ab3b6af3b91a",
+    "supabase/all_migrations_combined.sql": "bb04ceaabc50cf00bc69049ccafa53c45b763fa8d4297286c4f7e1d07284a3e1",
+    "supabase/migrations/2026-07-22_tournament_admin_gate.sql": "eeefc02e0cc1be10bb7abe3f3bdaf2bd588599e0de47abc8ed88e411e5e70025",
+    "supabase/migrations/2026-07-23_signup_profile_fix.sql": "eb21824349f848439a780ec310a12bc654edc38f96e358ee59534340d460e495",
+    "supabase/migrations/2026-07-24_reserve_house_wallet.sql": "fd3c91a742725a846c778292d46deccce2ce8bebe4485d4f2b4ae469005a1013",
+    "supabase/migrations/2026-07-24_tournament_prize_pool.sql": "579352f4e3a8f1812c0d5662efe16fa6199e07f12774e7d9909c3da8416a3d22",
+    "supabase/migrations/2026-07-24_withdrawal_requests.sql": "e86262d9d2b08277d8207ab108e51792f2bf586f120c119a6883e0bd4135c154",
+    "supabase/migrations/2026-07-25_profile_avatar_column.sql": "2a00f35a7f103247a6faf636402036d99b0e6aef9caf03f64e61fcbd374f640e",
+    "supabase/migrations/2026-07-27_puzzles.sql": "8509893a7df26def517d7c8efac23f5741a765a069412632e7b1c61eb357716e",
+    "supabase/migrations/2026-07-27_tournament_hardening.sql": "3eaacebe104485ed83ec2bab8c478f1bd1f6edfb6d23f840f013739ff02f0594",
+    "supabase/migrations/2026-07-28_fix_debit_wallet_ambiguous.sql": "e53cf8c0bdcc4c75b930feb5d6d8036309ab9a9e6ccd455c645b5d6c009f8f1f",
+    "supabase/reset_all_data.sql": "bfa3a5201d36c40c9b0f11f8b6c75086e3dd0588cfef2fe1d93e3148a4d21141",
+    "supabase/schema.sql": "59f8cc9d77f42a9ae7e5052bb7cfe86500a3c245659a3e54f4f32d7d7d53c189",
+    "supabaseAdmin.ts": "472b074407ac8d13c16278404ede475273535bc49717e67d76796e2de2a01793",
+    "tsconfig.json": "cb276b3fa1553d6f25d34c0cb74cf483de68db385dfe261a8a8171f4bf5b8fe0",
+    "vite.config.ts": "2a6c2269d1419b5efd2b3f40e4d8841e041141879bef86caf5e29b64cce3d3a5"
+  },
+  "checks": {
+    "node": "v26.10.0",
+    "checks": [
+      {
+        "check": "final-engine-bootstrap",
+        "exit": 0,
+        "log": "final-engine-bootstrap.txt"
+      },
+      {
+        "check": "final-typecheck",
+        "exit": 0,
+        "log": "final-typecheck.txt"
+      },
+      {
+        "check": "final-tests",
+        "exit": 0,
+        "log": "final-tests.txt"
+      },
+      {
+        "check": "final-client-build",
+        "exit": 0,
+        "log": "final-client-build.txt"
+      },
+      {
+        "check": "final-sw-assets",
+        "exit": 0,
+        "log": "final-sw-assets.txt"
+      },
+      {
+        "check": "final-server-build",
+        "exit": 0,
+        "log": "final-server-build.txt"
+      },
+      {
+        "check": "production-startup-and-engine-warmup",
+        "passed": true,
+        "http_browser_verified": false
+      }
+    ],
+    "all_executable_checks_passed": true,
+    "network_end_to_end": "blocked: localhost TCP Network is unreachable",
+    "live_services_tested": false
+  }
+}

@@ -1,0 +1,19 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Compiled engine artifacts -- always built fresh per deploy (see
+# scripts/build-engine.cjs), never shipped/committed. A binary compiled on
+# one machine can silently fail or crash on a different CPU architecture.
+nd_upgraded/*.o
+nd_upgraded/scan_nigerian
+nd_upgraded/scan_nigerian.exe
+scripts/e2e/out/
+
+# Server runtime data (game records, sequence counter) -- never commit
+data/

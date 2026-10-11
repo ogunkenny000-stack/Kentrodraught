@@ -1,0 +1,149 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Brand rebrand: replaces Tailwind's default bright amber/gold scale
+     (used ~490 times across the app as the primary accent -- buttons,
+     borders, highlights, icons) with a muted bronze/brass palette. Reads
+     as a premium wooden game-piece or trophy tone rather than a "flashy"
+     saturated yellow. Every existing `amber-*` utility class anywhere in
+     the codebase picks this up automatically; nothing else needed to
+     change per-component. */
+  --color-amber-50: #FAF6ED;
+  --color-amber-100: #F3EAD3;
+  --color-amber-200: #E6D3A6;
+  --color-amber-300: #D4B673;
+  --color-amber-400: #C29A4C;
+  --color-amber-500: #A67C38;
+  --color-amber-600: #8A6329;
+  --color-amber-700: #6E4F23;
+  --color-amber-800: #563E1D;
+  --color-amber-900: #423017;
+  --color-amber-950: #281C0D;
+
+  /* yellow-* is used interchangeably with amber-* in a few places (King
+     piece icons, medal/rank badges, the promotion toast) -- kept in sync
+     with the same bronze scale so there's one consistent "gold" tone
+     throughout instead of two slightly different ones clashing. */
+  --color-yellow-50: #FAF6ED;
+  --color-yellow-100: #F3EAD3;
+  --color-yellow-200: #E6D3A6;
+  --color-yellow-300: #D4B673;
+  --color-yellow-400: #C29A4C;
+  --color-yellow-500: #A67C38;
+  --color-yellow-600: #8A6329;
+  --color-yellow-700: #6E4F23;
+  --color-yellow-800: #563E1D;
+  --color-yellow-900: #423017;
+  --color-yellow-950: #281C0D;
+}
+
+/* Custom background animations and subtle styles */
+body {
+  background-color: #0c0f17;
+  color: #f3f4f6;
+  font-family: var(--font-sans);
+}
+
+/* Custom scrollbars for logs */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(166, 124, 56, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(166, 124, 56, 0.45);
+}
+
+/* ============================================================
+   Mobile / PWA platform polish (Android + iOS + desktop)
+   ============================================================ */
+
+/* Kill the grey/blue tap flash on Android & iOS -- our components render
+   their own pressed states. */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Stop pull-to-refresh / rubber-band from yanking the app shell around in
+   the installed PWA; individual panels opt back in with overflow-y-auto. */
+html, body {
+  overscroll-behavior: none;
+  height: 100%;
+}
+
+/* Buttons and board squares respond instantly to taps (no 300ms zoom
+   delay heuristics) while pinch-zoom stays available on regular content. */
+button, [role="button"], input[type="range"], input[type="checkbox"], [id^="square-"], .draughts-square, .board-container {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The app root uses select-none for a native feel; anything the user
+   genuinely needs to copy (room codes, payment refs, chat inputs) opts
+   back in with these. */
+.select-text, input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Consistent, brand-colored range sliders on WebKit (Android Chrome
+   ignores accent-color styling nuances on some versions). */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #C29A4C;
+  border: 2px solid #281C0D;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #C29A4C;
+  border: 2px solid #281C0D;
+  cursor: pointer;
+}
+
+/* Subtle bronze aurora behind everything -- gives the dark shell depth on
+   large desktop monitors without distracting from the board.
+   Desktop-only on purpose: `background-attachment: fixed` pinned under our
+   nested `overflow-y-auto` panels (rounded cards scrolling independently of
+   body) is a known Android/Chrome-WebView compositor bug -- it corrupts the
+   scrolling area into RGB "TV static" instead of repainting cleanly. Real
+   desktops (large viewport + precise pointer, i.e. not a touchscreen) don't
+   hit that bug, so gate it there and skip it everywhere else. */
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  body {
+    background-image:
+      radial-gradient(1200px 600px at 85% -10%, rgba(166, 124, 56, 0.07), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(166, 124, 56, 0.05), transparent 55%);
+    background-attachment: fixed;
+  }
+}
+
+/* Number inputs: hide spinners (they're tiny and useless on touch). */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

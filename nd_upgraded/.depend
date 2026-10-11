@@ -1,0 +1,42 @@
+bb_base.o: bb_base.cpp bb_base.hpp common.hpp libmy.hpp bb_comp.hpp \
+  bb_index.hpp gen.hpp list.hpp pos.hpp bit.hpp score.hpp var.hpp
+bb_comp.o: bb_comp.cpp bb_comp.hpp bb_index.hpp common.hpp libmy.hpp \
+  util.hpp
+bb_index.o: bb_index.cpp bb_index.hpp common.hpp libmy.hpp bit.hpp \
+  pos.hpp gen.hpp var.hpp
+bit.o: bit.cpp bit.hpp common.hpp libmy.hpp var.hpp
+book.o: book.cpp book.hpp common.hpp libmy.hpp gen.hpp hash.hpp list.hpp \
+  move.hpp pos.hpp bit.hpp score.hpp var.hpp
+common.o: common.cpp bit.hpp common.hpp libmy.hpp util.hpp
+eval.o: eval.cpp bit.hpp common.hpp libmy.hpp eval.hpp pos.hpp gen.hpp \
+  score.hpp var.hpp
+fen.o: fen.cpp bit.hpp common.hpp libmy.hpp fen.hpp pos.hpp gen.hpp \
+  util.hpp var.hpp
+game.o: game.cpp bb_base.hpp common.hpp libmy.hpp game.hpp pos.hpp \
+  bit.hpp gen.hpp score.hpp
+gen.o: gen.cpp bit.hpp common.hpp libmy.hpp gen.hpp list.hpp pos.hpp \
+  var.hpp
+hash.o: hash.cpp bit.hpp common.hpp libmy.hpp hash.hpp pos.hpp gen.hpp \
+  var.hpp
+hub.o: hub.cpp hub.hpp libmy.hpp thread.hpp util.hpp
+libmy.o: libmy.cpp libmy.hpp
+list.o: list.cpp bit.hpp common.hpp libmy.hpp list.hpp move.hpp pos.hpp \
+  gen.hpp var.hpp
+main.o: main.cpp bb_base.hpp common.hpp libmy.hpp bb_comp.hpp \
+  bb_index.hpp bit.hpp book.hpp eval.hpp fen.hpp game.hpp pos.hpp \
+  gen.hpp hash.hpp hub.hpp list.hpp move.hpp search.hpp score.hpp tt.hpp \
+  util.hpp sort.hpp thread.hpp var.hpp
+move.o: move.cpp bit.hpp common.hpp libmy.hpp gen.hpp list.hpp move.hpp \
+  pos.hpp util.hpp
+pos.o: pos.cpp bb_base.hpp common.hpp libmy.hpp bit.hpp gen.hpp move.hpp \
+  pos.hpp score.hpp util.hpp var.hpp
+score.o: score.cpp common.hpp libmy.hpp score.hpp search.hpp move.hpp \
+  pos.hpp bit.hpp gen.hpp tt.hpp util.hpp
+search.o: search.cpp bb_base.hpp common.hpp libmy.hpp book.hpp eval.hpp \
+  gen.hpp hash.hpp hub.hpp list.hpp move.hpp pos.hpp bit.hpp score.hpp \
+  search.hpp tt.hpp util.hpp sort.hpp thread.hpp var.hpp
+sort.o: sort.cpp common.hpp libmy.hpp list.hpp move.hpp sort.hpp
+thread.o: thread.cpp libmy.hpp thread.hpp
+tt.o: tt.cpp common.hpp libmy.hpp hash.hpp score.hpp tt.hpp
+util.o: util.cpp libmy.hpp util.hpp
+var.o: var.cpp common.hpp libmy.hpp var.hpp
