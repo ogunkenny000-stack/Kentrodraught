@@ -164,6 +164,12 @@ export async function resendVerificationEmail(): Promise<void> {
 }
 
 export async function signOutUser(): Promise<void> {
+  // Revoke this device's background subscription while the access token is
+  // still valid, so a shared phone doesn't receive the previous user's game alerts.
+  try {
+    const { disableBackgroundPush } = await import('./lib/pushSubscription');
+    await disableBackgroundPush();
+  } catch (error) { console.warn('Could not revoke push subscription on sign out:', error); }
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }

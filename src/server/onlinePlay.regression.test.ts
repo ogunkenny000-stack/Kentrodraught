@@ -78,6 +78,23 @@ afterEach(() => {
   vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
 
+describe("guest online trial admission", () => {
+  it("lets a guest join one free match but refuses subsequent room creation and rematches", async () => {
+    const f = await lobby(false);
+    const guest = new FakeSocket();
+    f.server.wss.clients.add(guest as any);
+    f.server.wss.emit("connection", guest);
+    await send(guest, { type: "login", username: "KGuest_0123456789abcdef0909" });
+    expect(guest.messages.some(m => m.type === "login-success")).toBe(true);
+    await send(guest, { type: "join-room-accept", roomId: f.room.id });
+    expect(f.room.phase).toBe("playing");
+    expect(guest.messages.some(m => m.type === "game-started")).toBe(true);
+    await send(guest, { type: "create-room", gameTime: 5, bestOf: 3, wagerAmount: 100 });
+    expect(guest.messages.some(m => m.type === "guest-limit-reached")).toBe(true);
+    expect(f.server.rooms.size).toBe(1);
+  });
+});
+
 describe("online game reliability", () => {
   it("resolves an expired clock before an offer can pause it", async () => {
     const f = await game();

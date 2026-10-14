@@ -16,7 +16,7 @@ import type { Server as HttpServer } from "http";
 import { applyMove, createInitialBoard } from "../gameLogic";
 import type { Board, Move } from "../gameLogic";
 import { debitMultipleWallets, settleMatchPot } from "../../coinsService";
-import { verifyAccessToken } from "../../supabaseAdmin";
+import { getSupabaseAdmin } from "../../supabaseAdmin";
 import { getNextGameCode, linkRematch, recordGameEnd, recordGameStart } from "./gameRecordsManager";
 import { checkGameEndFrom, normalizeBoard } from "./gameEnd";
 import {
@@ -31,6 +31,8 @@ import {
   type RoomClock,
 } from "./roomClock";
 import { SessionStore, type Session } from "./sessions";
+import { isOnlineGuest, guestHasOnlineTrial, claimOnlineGuestTrials } from "./guestQuota";
+import { notifyMatchEnded } from "./notifications";
 import { isCallMessageType, validateMessage } from "./wsValidation";
 import {
   CALL_PEER_DISCONNECT_GRACE_MS,
@@ -310,7 +312,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           const r = rooms.get(p.roomId);
           if (r && (r.phase === "playing" || r.phase === "setup")) continue;
         }
-        p.ws.send(payload);
+        // Lobby broadcasts are informational. Drop an obsolete snapshot
+        // rather than grow the outbound buffer of a congested mobile socket.
+        // Critical room/move traffic still uses sendToRoom separately.
+        if (p.ws.bufferedAmount > 256 * 1024) continue;
+        try { p.ws.send(payload); } catch { /* socket close handler cleans up */ }
       }
     };
     return {
@@ -708,7 +714,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       for (const pl of room.players) pl.ready = true;
       const gameCode = preallocatedGameCode ?? allocateGameCode(room);
 
-      if (!room.feesCharged && deps.coinsEnabled) {
+      if (!room.feesCharged && deps.coinsEnabled && !participants.some(p => isOnlineGuest(p.username))) {
         const coinSettings = await deps.getCoinSettings();
         if (!rosterIsCurrent()) {
           for (const pl of room.players) pl.ready = false;
@@ -758,6 +764,29 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         return;
       }
 
+      // The authoritative one-game quota is claimed once, immediately
+      // before the first match starts (never just for creating a lobby).
+      // Durable RPC performs an atomic all-or-none claim for both guests.
+      if (participants.some(p => isOnlineGuest(p.username))) {
+        let admitted = false;
+        try {
+          admitted = await claimOnlineGuestTrials(participants.map(p => p.username));
+        } catch (err) {
+          console.error("[Guest] Admission service failure", err);
+          sendToRoom(room, { type: "room-error", error: "Guest trial service is unavailable. Try again shortly." });
+          return;
+        }
+        if (!admitted) {
+          for (const p of participants) {
+            if (isOnlineGuest(p.username) && isLive(p.seat.ws)) {
+              sendJson(p.seat.ws, { type: "guest-limit-reached", mode: "online", message: "Your one free online game is finished. Sign in to play more." });
+            }
+          }
+          sendToRoom(room, { type: "room-error", error: "A guest has used their free online match. Sign in to play again." });
+          return;
+        }
+        if (!rosterIsCurrent()) return;
+      }
       if (!room.seriesId) room.seriesId = `series_${gameCode}`;
       room.seriesGameNumber = 1;
       beginGame(room, gameCode, room.bestOf > 1 ? `Game 1 of ${room.bestOf}: ` : "");
@@ -909,7 +938,8 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         blackPlayer,
         seriesId: room.seriesId,
         seriesGameNumber: room.seriesGameNumber,
-      }).catch((err) => console.error("[GameRecord] Failed to record game end:", err));
+      }).then(() => notifyMatchEnded(room.gameCode, whitePlayer, blackPlayer, winner))
+        .catch((err) => console.error("[GameRecord/Notifications] Failed to save game result or send alert:", err));
     }
 
     // ---- Classic single game ----
@@ -1707,9 +1737,25 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
 
           let userId: string | null = null;
           if (supabaseConfigured() && typeof data.accessToken === "string" && data.accessToken) {
-            try { userId = await verifyAccessToken(data.accessToken); } catch { userId = null; }
+            try {
+              const { data: verified, error } = await getSupabaseAdmin().auth.getUser(data.accessToken);
+              // A valid token does not let one account impersonate another
+              // username in the game-room protocol.
+              if (!error && verified?.user &&
+                  keyOf(String(verified.user.user_metadata?.username || "")) === key) {
+                userId = verified.user.id;
+              }
+            } catch { userId = null; }
           }
           if (!isLive(ws)) return; // closed while we were verifying
+          // Guests use distinct reserved names. Configured production never
+          // accepts an unsigned regular-user login (nickname spoofing).
+          if (supabaseConfigured()) {
+            if (isOnlineGuest(cleanedName) ? !!userId : !userId) {
+              sendError(ws, "not-logged-in", "Sign in to use your account, or choose Continue as Guest.");
+              return;
+            }
+          }
 
           const already = onlinePlayers.get(ws);
           if (already) {
@@ -1762,6 +1808,15 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           const player: OnlinePlayer = { ws, username: cleanedName, key, roomId: null, token: session.token };
           onlinePlayers.set(ws, player);
           sendJson(ws, { type: "login-success", username: cleanedName, sessionToken: session.token, serverNow: now(), onlineUsers: onlineUsernames() });
+          if (isOnlineGuest(cleanedName)) {
+            try {
+              const available = await guestHasOnlineTrial(cleanedName);
+              if (isLive(ws)) sendJson(ws, { type: "guest-quota", onlineRemaining: available ? 1 : 0 });
+            } catch (err) {
+              console.error("[Guest] Unable to load online allowance", err);
+              if (isLive(ws)) sendJson(ws, { type: "guest-quota", onlineRemaining: 0 });
+            }
+          }
           console.log(`[WS] Player logged in: ${cleanedName}${tokenMatches ? " (session resumed)" : ""}`);
 
           if (tokenMatches) {
@@ -1829,6 +1884,18 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         case "create-room": {
           const player = requirePlayer(ws);
           if (!player) return;
+          if (isOnlineGuest(player.username)) {
+            try {
+              if (!await guestHasOnlineTrial(player.username)) {
+                sendJson(ws, { type: "guest-limit-reached", mode: "online", message: "Your free online game has been used. Sign in to keep playing." });
+                return;
+              }
+            } catch (err) {
+              console.error("[Guest] Failed to check room entitlement", err);
+              sendJson(ws, { type: "room-error", error: "Guest online play is temporarily unavailable. Try again shortly." });
+              return;
+            }
+          }
 
           let userOpenCount = 0;
           for (const r of rooms.values()) {
@@ -1850,8 +1917,9 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           const hostTime = typeof data.hostTime === "number" ? data.hostTime : gameTime;
           const guestTime = typeof data.guestTime === "number" ? data.guestTime : gameTime;
           const incrementSec = typeof data.increment === "number" ? Math.max(0, Math.round(data.increment)) : 0;
-          const wagerAmount = deps.sanitizeWagerAmount(data.wagerAmount) ?? undefined;
-          const bestOf = deps.sanitizeBestOf(data.bestOf);
+          // Guest matches are free and strictly one game per invitation.
+          const wagerAmount = isOnlineGuest(player.username) ? 0 : deps.sanitizeWagerAmount(data.wagerAmount) ?? undefined;
+          const bestOf = isOnlineGuest(player.username) ? 1 : deps.sanitizeBestOf(data.bestOf);
           const customBoard = deps.sanitizeCustomBoard(data.customBoard) ?? undefined;
           const customTurn = customBoard && (data.customTurn === "W" || data.customTurn === "B") ? data.customTurn : undefined;
           const color: Color = Math.random() > 0.5 ? "W" : "B";
@@ -1963,6 +2031,27 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             sendJson(ws, { type: "join-success", yourColor: host.color, roomId: room.id });
             sendDirect(room, ws, { ...roomInfoPayload(room), yourColor: host.color });
             return;
+          }
+
+          // Guests can join only free, single-game rooms. Check the server
+          // quota before seating them; startRoomMatch checks again atomically.
+          if (isOnlineGuest(player.username) || room.players.some(p => isOnlineGuest(p.username))) {
+            if (room.bestOf !== 1 || (room.wagerAmount ?? 0) > 0) {
+              sendJson(ws, { type: "room-error", error: "Guests can only play free single matches. Choose a free room or sign in." });
+              return;
+            }
+          }
+          if (isOnlineGuest(player.username)) {
+            try {
+              if (!await guestHasOnlineTrial(player.username)) {
+                sendJson(ws, { type: "guest-limit-reached", mode: "online", message: "Your free online game has been used. Sign in to continue." });
+                return;
+              }
+            } catch (err) {
+              console.error("[Guest] Failed to check join entitlement", err);
+              sendJson(ws, { type: "room-error", error: "Guest online play is temporarily unavailable. Try again shortly." });
+              return;
+            }
           }
 
           // 3. If room already has 2 active players:
@@ -2235,6 +2324,10 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!seat) return;
           if (!requirePhase(ws, room, ["ended"], "start a new game")) return;
           if (isSeriesUnderway(room)) { sendError(ws, "game-in-progress", "The series is still in progress — the next game starts automatically."); return; }
+          if (room.players.some(p => isOnlineGuest(p.username))) {
+            sendToRoom(room, { type: "room-error", error: "The guest free online game is complete. Sign in to play another match." });
+            return;
+          }
           resetRoomForRematch(room);
           sendToRoom(room, { type: "game-reset-by-opponent", players: playersPayload(room), phase: room.phase });
           sendRoomInfo(room);
@@ -2251,6 +2344,10 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!seat) return;
           if (!requirePhase(ws, room, ["ended"], "request a rematch")) return;
           if (isSeriesUnderway(room)) { sendError(ws, "game-in-progress", "The series is still in progress — the next game starts automatically."); return; }
+          if (room.players.some(p => isOnlineGuest(p.username))) {
+            sendToRoom(room, { type: "room-error", error: "Guests can play one free online match. Sign in before requesting a rematch." });
+            return;
+          }
           const opp = opponentOf(room, seat);
           if (!opp || !isLive(opp.ws)) { sendError(ws, "not-in-room", "Your opponent has left the room."); return; }
           if (room.pendingRematch) { sendError(ws, "busy", "A rematch request is already pending."); return; }
@@ -2296,6 +2393,10 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             return;
           }
           if (isSeriesUnderway(room)) { sendError(ws, "game-in-progress", "The series is still in progress."); return; }
+          if (room.players.some(p => isOnlineGuest(p.username))) {
+            sendToRoom(room, { type: "room-error", error: "Guests get one free online game. Sign in before playing a rematch." });
+            return;
+          }
           const previousGameCode = room.gameCode;
           resetRoomForRematch(room);
           const newGameCode = allocateGameCode(room);

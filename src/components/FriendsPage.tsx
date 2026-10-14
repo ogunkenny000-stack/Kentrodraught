@@ -15,6 +15,7 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
   const [contactsList, setContactsList] = useState<any[]>([]);
   const [addUsername, setAddUsername] = useState("");
   const [adding, setAdding] = useState(false);
+  const [friendError, setFriendError] = useState("");
 
   // Identical merge-by-id pattern to GlobalChatLounge.tsx's friends
   // subscription -- both read/write the exact same table and row shape, so
@@ -89,6 +90,7 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
     const clean = target.trim();
     if (!clean || clean.toLowerCase() === username.toLowerCase()) return;
     setAdding(true);
+    setFriendError("");
     try {
       const friendId = [username.toLowerCase(), clean.toLowerCase()].sort().join("_");
       const { error } = await supabase.from("friends").upsert({
@@ -104,6 +106,7 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
       setAddUsername("");
     } catch (err) {
       console.error("Failed to add friend:", err);
+      setFriendError("Could not add that friend. Check the username and try again.");
     } finally {
       setAdding(false);
     }
@@ -115,13 +118,14 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
       if (error) throw error;
     } catch (err) {
       console.error("Failed to remove friend:", err);
+      setFriendError("Could not remove that friend. Please try again.");
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/95 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label="Friends" className="k-friends-overlay fixed inset-0 bg-slate-950/95 z-50 flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-5 relative my-4">
-        <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 transition">
+        <button onClick={onClose} aria-label="Close friends" className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 transition">
           <X className="w-5 h-5" />
         </button>
 
@@ -135,6 +139,7 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
         {/* Add by username */}
         <div className="flex gap-2 mb-5">
           <input
+            aria-label="Friend username"
             value={addUsername}
             onChange={(e) => setAddUsername(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && addFriend(addUsername)}
@@ -142,6 +147,8 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
             className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-600 font-sans focus:outline-none focus:border-amber-500/60 transition"
           />
           <button
+            type="button"
+            aria-label="Add friend"
             onClick={() => addFriend(addUsername)}
             disabled={adding || !addUsername.trim()}
             className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 rounded-xl px-3 transition"
@@ -149,6 +156,8 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
             <UserPlus className="w-4 h-4" />
           </button>
         </div>
+
+        {friendError && <p role="alert" className="mb-4 text-xs text-rose-300">{friendError}</p>}
 
         {/* Frequent opponents -- real, derived from match history */}
         {frequentOpponents.length > 0 && (
@@ -192,10 +201,10 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
                   <div key={f.id} className="flex items-center justify-between bg-slate-950 border border-slate-800 rounded-xl px-3 py-2">
                     <AdminTappableName username={otherName} className="text-xs font-bold text-white font-sans" />
                     <div className="flex items-center gap-2">
-                      <button onClick={onOpenLounge} className="text-slate-500 hover:text-amber-400 transition" title="Message in the Grandmaster's Lounge">
+                      <button onClick={onOpenLounge} aria-label={`Message ${otherName}`} className="text-slate-500 hover:text-amber-400 transition" title="Message in the Grandmaster's Lounge">
                         <MessageSquare className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => removeFriend(f.id)} className="text-slate-600 hover:text-rose-400 transition" title="Remove friend">
+                      <button onClick={() => removeFriend(f.id)} aria-label={`Remove ${otherName} from friends`} className="text-slate-600 hover:text-rose-400 transition" title="Remove friend">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>

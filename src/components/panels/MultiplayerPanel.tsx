@@ -10,6 +10,7 @@ import { KENTRO_COINS_ENABLED, MIN_MATCH_WAGER, MAX_MATCH_WAGER, MATCH_WAGER_STE
 import { AdminTappableName } from "../../lib/adminProfileContext";
 import { getAudioContext } from "../../lib/audio";
 import { KentroCoin, CoinBadge } from "../ui/KentroCoin";
+import { copyInviteText, makeRoomInviteUrl } from "../../lib/roomInvite";
 
 export type SpecialRule = "none" | "short-one" | "short-two" | "short-three" | "crown-crown" | "no-kentrodraught";
 export type VoiceCallState = "idle" | "calling" | "ringing" | "connecting" | "connected" | "reconnecting" | "failed" | "failed-network" | "unsupported" | "ended";
@@ -261,26 +262,31 @@ export function MultiplayerPanel(props: MultiplayerPanelProps) {
     playingVoiceId, setPlayingVoiceId, onViewH2H,
   } = props;
 
-  // Local "copied" flash for the room-code copy button (replaces the old
-  // blocking alert() which looked broken inside the installed PWA).
   const [copiedInRoom, setCopiedInRoom] = useState(false);
+  const [copiedWhatsApp, setCopiedWhatsApp] = useState(false);
+  const [shareError, setShareError] = useState("");
 
-  const handleShareToWhatsApp = () => {
+  const handleCopyRoomCode = async () => {
     if (!roomId) return;
-    const inviteUrl = typeof window !== "undefined" ? window.location.origin : "https://draught.com";
-    const text = encodeURIComponent(
-      `Hey! Join my Kentro Draughts match! 🎲\n\nRoom Code: *${roomId}*\nPlay here: ${inviteUrl}`
-    );
-    if (typeof navigator !== "undefined" && navigator.share) {
-      navigator.share({
-        title: "Kentro Draughts Match",
-        text: `Join my live match! Room Code: ${roomId}`,
-        url: inviteUrl,
-      }).catch(() => {
-        window.open(`https://api.whatsapp.com/send?text=${text}`, "_blank");
-      });
-    } else if (typeof window !== "undefined") {
-      window.open(`https://api.whatsapp.com/send?text=${text}`, "_blank");
+    try {
+      await copyInviteText(roomId);
+      setCopiedInRoom(true);
+      setShareError("");
+      setTimeout(() => setCopiedInRoom(false), 2000);
+    } catch {
+      setShareError("Couldn't copy the room code. You can select it manually.");
+    }
+  };
+
+  const handleShareToWhatsApp = async () => {
+    if (!roomId) return;
+    try {
+      await copyInviteText(makeRoomInviteUrl(roomId, window.location.origin));
+      setCopiedWhatsApp(true);
+      setShareError("");
+      setTimeout(() => setCopiedWhatsApp(false), 2500);
+    } catch {
+      setShareError("Couldn't copy the game link. Try Copy Code instead.");
     }
   };
 
@@ -770,15 +776,11 @@ export function MultiplayerPanel(props: MultiplayerPanelProps) {
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider font-mono">ROOM NUMBER</span>
           <span className="text-[10px] text-slate-400 font-mono">10x10 ARENA</span>
         </div>
-        <div className="flex items-center justify-between bg-slate-950 px-4 py-3 rounded-xl border border-slate-900 gap-2">
+        <div className="flex flex-col bg-slate-950 px-4 py-3 rounded-xl border border-slate-900 gap-2">
           <span className="text-xl font-extrabold tracking-widest text-amber-400 font-mono select-all truncate">{roomId}</span>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center flex-wrap gap-1.5">
             <button
-              onClick={() => {
-                navigator.clipboard.writeText(roomId || "");
-                setCopiedInRoom(true);
-                setTimeout(() => setCopiedInRoom(false), 2000);
-              }}
+              onClick={handleCopyRoomCode}
               className={`text-[10px] border px-2.5 py-1.5 rounded-lg transition font-bold cursor-pointer flex items-center gap-1.5 ${
                 copiedInRoom
                   ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-400"
@@ -786,18 +788,20 @@ export function MultiplayerPanel(props: MultiplayerPanelProps) {
               }`}
             >
               {copiedInRoom ? <Check className="w-3 h-3 stroke-[3]" /> : <Copy className="w-3 h-3" />}
-              {copiedInRoom ? "Copied!" : "Copy"}
+              {copiedInRoom ? "Copied!" : "Copy Code"}
             </button>
             <button
               onClick={handleShareToWhatsApp}
               className="text-[10px] border px-2.5 py-1.5 rounded-lg transition font-bold cursor-pointer flex items-center gap-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300 shadow-sm active:scale-95"
-              title="Share Room Code on WhatsApp"
+              title="Copy a game invite link to paste into WhatsApp"
             >
               <Share2 className="w-3 h-3 text-emerald-400" />
-              <span>WhatsApp</span>
+              <span>{copiedWhatsApp ? "Link Copied!" : "Copy to WhatsApp"}</span>
             </button>
           </div>
         </div>
+        {copiedWhatsApp && <p role="status" className="text-[11px] text-emerald-300">Paste the copied link in WhatsApp. Your opponent taps it, then Start Game.</p>}
+        {shareError && <p role="alert" className="text-[11px] text-rose-300">{shareError}</p>}
         {multiplayerWagerAmount > 0 && (
           <div className="flex items-center justify-between mt-2 px-1 py-1 bg-amber-950/40 border border-amber-500/25 rounded-lg">
             <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider font-mono flex items-center gap-1">
@@ -1095,7 +1099,7 @@ export function MultiplayerPanel(props: MultiplayerPanelProps) {
                 className="w-full sm:w-auto px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-emerald-950/40 active:scale-95"
               >
                 <Share2 className="w-3.5 h-3.5 text-white" />
-                <span>Invite Opponent on WhatsApp</span>
+                <span>{copiedWhatsApp ? "Link Copied — Paste in WhatsApp" : "Copy to WhatsApp"}</span>
               </button>
               <span className="text-[10px] text-slate-500 font-mono">
                 Your room stays open while you send the code.

@@ -946,7 +946,7 @@ function TournamentDashboardImpl({
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto flex flex-col gap-5 text-slate-100 p-1.5 md:p-3 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+    <div className="k-tournament-hub w-full max-w-6xl mx-auto flex flex-col gap-5 text-slate-100 p-1.5 md:p-3 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
 
       <AnimatePresence>
         {toast && (

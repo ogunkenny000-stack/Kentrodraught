@@ -1,10 +1,11 @@
 import React, { useState } from "react";
+import { guestDisplayName } from "../lib/guestTrial";
 import { shallowEqualIgnoringFunctions } from "../memoUtils";
 import { 
   Swords, Plus, User, ArrowRight, RefreshCw, Copy, Check, MessageSquare, 
   Play, Cpu, Compass, BookOpen, Clock, Activity, LogOut, Sparkles, Wifi,
   Trophy, Percent, Award, ShieldAlert, ArrowLeft, Shield, Sliders, Timer, Zap,
-  Search, X, Users, Puzzle as PuzzleIcon, Crown, Target, Flame
+  Search, X, Users, Puzzle as PuzzleIcon, Crown, Target, Flame, Share2, ChevronRight, Radio, History
 } from "lucide-react";
 import { KentroCoin } from "./ui/KentroCoin";
 import { motion, AnimatePresence } from "motion/react";
@@ -12,6 +13,9 @@ import { PlayMode, PlayerStats } from "../types";
 import { MIN_MATCH_WAGER, MAX_MATCH_WAGER, MATCH_WAGER_STEP, ALLOWED_BEST_OF, BEST_OF_LABELS } from "../lib/constants";
 import { AdminTappableName } from "../lib/adminProfileContext";
 import { Avatar } from "./ui/Avatar";
+import { copyInviteText, makeRoomInviteUrl } from "../lib/roomInvite";
+import { supabase } from "../supabase";
+import { discoverChallenges, findQuickMatchRoom, QUICK_MATCH_TIMES, type ChallengeFilter } from "../lib/arenaDiscovery";
 
 interface LobbyDashboardProps {
   username: string;
@@ -26,6 +30,7 @@ interface LobbyDashboardProps {
   setRoomInput: (val: string) => void;
   ws: WebSocket | null;
   onSignOut: () => void;
+  isGuest?: boolean;
   onSelectMode: (mode: PlayMode) => void;
   chatInput: string;
   setChatInput: (val: string) => void;
@@ -39,6 +44,9 @@ interface LobbyDashboardProps {
   onReconnect: () => void;
   pendingHostMatch?: boolean;
   pendingJoinRoom?: string | null;
+  /** Room opened through a direct WhatsApp invitation. No search or code entry needed. */
+  inviteRoomCode?: string | null;
+  onDismissInvite?: () => void;
 
   // Preview properties
   pendingRoomPreview?: {
@@ -85,6 +93,7 @@ function LobbyDashboardImpl({
   setRoomInput,
   ws,
   onSignOut,
+  isGuest = false,
   onSelectMode,
   chatInput,
   setChatInput,
@@ -96,6 +105,8 @@ function LobbyDashboardImpl({
   onReconnect,
   pendingHostMatch,
   pendingJoinRoom,
+  inviteRoomCode,
+  onDismissInvite,
   pendingRoomPreview,
   onJoinRoomAccept,
   onJoinRoomRefuse,
@@ -106,11 +117,42 @@ function LobbyDashboardImpl({
   onOpenPlayers,
 }: LobbyDashboardProps) {
   const [copied, setCopied] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const [friendChallengeName, setFriendChallengeName] = useState("");
+  const [friendChallengeState, setFriendChallengeState] = useState("");
+  const [friendSuggestions, setFriendSuggestions] = useState<string[]>([]);
+  const [challengeSending, setChallengeSending] = useState(false);
+  React.useEffect(() => {
+    if (!roomId || isGuest) return;
+    let active = true;
+    supabase.from("friends").select("user1,user2,status").eq("status", "accepted")
+      .or(`user1.eq.${username},user2.eq.${username}`).limit(60)
+      .then(({data}) => { if (active) setFriendSuggestions((data || []).map(row => row.user1?.toLowerCase() === username.toLowerCase() ? row.user2 : row.user1).filter(Boolean)); });
+    return () => { active = false; };
+  }, [roomId, username, isGuest]);
+  const sendFriendChallenge = async () => {
+    if (!roomId || !friendChallengeName.trim() || challengeSending) return;
+    setChallengeSending(true);setFriendChallengeState("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session?.access_token) throw new Error("Sign in before inviting a friend.");
+      const response = await fetch("/api/notifications/challenge", { method:"POST", headers:{"Content-Type":"application/json", "Authorization": `Bearer ${data.session.access_token}`}, body: JSON.stringify({ roomId, friendUsername: friendChallengeName.trim() }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not deliver the challenge.");
+      setFriendChallengeState(`Challenge sent to ${friendChallengeName.trim()}!`);
+    } catch (e) { setFriendChallengeState(e instanceof Error ? e.message : "Invitation could not be sent."); }
+    finally {setChallengeSending(false);}
+  };
+
 
   // Online dashboard modals
   const [showAwaitingModal, setShowAwaitingModal] = useState(false);
   const [showFindGameModal, setShowFindGameModal] = useState(false);
-  const [showActiveGamesModal, setShowActiveGamesModal] = useState(false);
+  const [quickTime, setQuickTime] = useState<number>(5);
+  const [challengeFilter, setChallengeFilter] = useState<ChallengeFilter>('standard');
+  const [showAllChallenges, setShowAllChallenges] = useState(false);
+  const [showMoreArenaTools, setShowMoreArenaTools] = useState(false);
 
   // Modification Screen Setup State
   const [isHostingSetup, setIsHostingSetup] = useState(false);
@@ -128,11 +170,41 @@ function LobbyDashboardImpl({
     }
   }, [roomId]);
 
-  const handleCopyCode = () => {
+  // Match discovery uses the server's existing live room list. We only
+  // auto-join a free, standard, single game with the chosen clock.
+  const visibleChallenges = discoverChallenges(openRooms, username, isGuest, challengeFilter);
+  const joinableRoomCount = discoverChallenges(openRooms, username, isGuest, 'all').length;
+  const awaitingRooms = openRooms.filter(room => !isGuest || ((room.wagerAmount ?? 0) === 0 && (room.bestOf ?? 1) === 1));
+  const handleQuickMatch = () => {
+    if (connectionStatus !== 'connected' || pendingHostMatch || pendingJoinRoom) return;
+    const room = findQuickMatchRoom(openRooms, username, isGuest, quickTime);
+    if (room) onJoinRoom(room.id);
+    else onHostMatch(quickTime, 'none', quickTime, quickTime, 0, 1);
+  };
+
+  const handleCopyCode = async () => {
     if (!roomId) return;
-    navigator.clipboard.writeText(roomId);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await copyInviteText(roomId);
+      setCopied(true);
+      setCopyError("");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyError("Unable to copy. Please select the room number manually.");
+    }
+  };
+
+  const handleCopyWhatsAppLink = async () => {
+    if (!roomId) return;
+    try {
+      // Copy the direct URL, rather than sending the player to the homepage.
+      await copyInviteText(makeRoomInviteUrl(roomId, window.location.origin));
+      setInviteCopied(true);
+      setCopyError("");
+      setTimeout(() => setInviteCopied(false), 2500);
+    } catch {
+      setCopyError("Unable to copy the invitation link. Please try Copy Code.");
+    }
   };
 
   const handleCreateRoomClick = () => {
@@ -143,7 +215,7 @@ function LobbyDashboardImpl({
     setIsHostingSetup(false);
     const finalHostTime = setupUnevenTime ? setupHostTime : setupGameTime;
     const finalGuestTime = setupUnevenTime ? setupGuestTime : setupGameTime;
-    onHostMatch(setupGameTime, setupSpecialRule, finalHostTime, finalGuestTime, setupWager, setupBestOf);
+    onHostMatch(setupGameTime, setupSpecialRule, finalHostTime, finalGuestTime, isGuest ? 0 : setupWager, isGuest ? 1 : setupBestOf);
   };
 
   const handleGameTimeChange = (time: number) => {
@@ -252,7 +324,7 @@ function LobbyDashboardImpl({
   const winRate = totalGames > 0 ? ((profileStats.wins / totalGames) * 100).toFixed(1) : "0.0";
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-3 sm:p-4 md:p-6 text-slate-100 min-h-screen flex flex-col font-sans">
+    <div className="k-arena-lobby w-full max-w-7xl mx-auto p-3 sm:p-4 md:p-6 text-slate-100 min-h-screen flex flex-col font-sans">
       
       {/* ARENA HEADER BAR */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 mb-6 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
@@ -278,7 +350,7 @@ function LobbyDashboardImpl({
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Live Draughts 10x10 • Standard & Handicap Arenas
+              {isGuest ? "Guest trial · 1 free online match · no coins required" : "Live Draughts 10x10 • Standard & Handicap Arenas"}
             </p>
           </div>
         </div>
@@ -506,6 +578,11 @@ function LobbyDashboardImpl({
                 </div>
               </div>
 
+              {isGuest ? (
+                <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-xl p-4 text-emerald-200 text-xs">
+                  <strong>Guest Trial:</strong> Your online match is free and single-game. Sign in afterward for unlimited games and rematches.
+                </div>
+              ) : (<>
               {/* 3. Coin Wager */}
               <div className="bg-slate-950 p-4 border border-amber-500/25 rounded-xl">
                 <div className="flex items-center justify-between mb-2">
@@ -576,6 +653,7 @@ function LobbyDashboardImpl({
                 </div>
               </div>
 
+              </>)}
               {/* Submit */}
               <button
                 onClick={handleConfirmHost}
@@ -596,6 +674,41 @@ function LobbyDashboardImpl({
               </button>
 
             </div>
+          </motion.div>
+        )}
+
+        {/* Tapped WhatsApp invitation: the guest only needs to press Start Game. */}
+        {inviteRoomCode && roomId === null && !pendingRoomPreview && (
+          <motion.div
+            key="direct-room-invitation"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="max-w-lg w-full mx-auto bg-slate-900 border border-emerald-500/35 rounded-2xl p-6 md:p-8 shadow-2xl text-center"
+          >
+            <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+              <Swords className="w-6 h-6 text-emerald-300" />
+            </div>
+            <span className="text-[10px] uppercase font-mono tracking-widest font-bold text-emerald-300">Game invitation</span>
+            <h2 className="text-xl font-black text-white mt-2">You're invited to play!</h2>
+            <p className="text-slate-400 text-xs mt-2">Tap Start Game to join your opponent's online draughts match directly.</p>
+            <div className="bg-slate-950 border border-slate-800 rounded-xl py-4 my-5">
+              <span className="text-[10px] uppercase text-slate-500 font-mono block mb-1">Room Number</span>
+              <span className="font-mono text-xl font-black tracking-widest text-amber-400">{inviteRoomCode}</span>
+            </div>
+            {roomError && <p role="alert" className="text-rose-300 text-xs mb-3">{roomError}</p>}
+            {pendingJoinRoom && <p role="status" className="text-amber-300 text-xs mb-3">Connecting to the match…</p>}
+            <button
+              type="button"
+              onClick={() => onJoinRoom(inviteRoomCode)}
+              disabled={!!pendingJoinRoom}
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl cursor-pointer disabled:cursor-wait disabled:opacity-60 transition flex items-center justify-center gap-2"
+            >
+              {pendingJoinRoom ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+              {pendingJoinRoom ? "Joining Game…" : "Start Game"}
+            </button>
+            <button type="button" onClick={onDismissInvite} className="text-xs text-slate-400 hover:text-slate-200 mt-4 cursor-pointer">
+              Not now
+            </button>
           </motion.div>
         )}
 
@@ -669,7 +782,7 @@ function LobbyDashboardImpl({
         )}
 
         {/* CASE C: STANDARD LOBBY VIEWS */}
-        {!isHostingSetup && !pendingRoomPreview && (
+        {!isHostingSetup && !pendingRoomPreview && (!inviteRoomCode || roomId !== null) && (
           roomId === null ? (
             
             /* MAIN LOBBY DASHBOARD */
@@ -685,51 +798,107 @@ function LobbyDashboardImpl({
               {/* Left Feature Column (8 Cols) */}
               <div className="lg:col-span-8 flex flex-col gap-6">
                 
-                {/* HERO QUICK ACTION BANNER */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6">
-                  <div className="space-y-2 text-center md:text-left z-10">
-                    <div className="inline-flex items-center gap-2 bg-slate-800 border border-slate-700 px-3 py-1 rounded-full text-slate-300 text-xs font-mono font-medium">
-                      <Flame className="w-3.5 h-3.5 text-slate-400" />
-                      Nigeria 10x10 Official Rules
+                {/* Play-first hero: the only primary call to action. */}
+                <section className="k-arena-quick bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-5" aria-labelledby="arena-find-title">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-emerald-300 font-bold mb-2 flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-400"/> Nigerian Draughts · 10×10</p>
+                      <h2 id="arena-find-title" className="text-xl md:text-2xl font-bold text-white tracking-tight">Find your next match</h2>
+                      <p className="text-slate-400 text-sm mt-1">Choose your clock. Play a free standard game in one tap.</p>
                     </div>
-                    <h2 className="text-lg md:text-xl font-bold text-white uppercase tracking-tight font-sans">
-                      Play Live Multiplayer
-                    </h2>
-                    <p className="text-slate-400 text-xs max-w-md leading-relaxed">
-                      Host custom rooms with handicaps, challenge players with room codes, or jump into instant matchmaking.
-                    </p>
+                    <span className="self-start text-xs font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2">{joinableRoomCount} available challenge{joinableRoomCount === 1 ? '' : 's'}</span>
                   </div>
-
-                  <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto shrink-0 z-10">
-                    <button
-                      onClick={() => {
-                        const available = openRooms.find(r => r.creator !== username && r.hostName !== username);
-                        if (available) {
-                          onJoinRoom(available.id);
-                        } else {
-                          onHostMatch(5, "none", 5, 5, 0, 1);
-                        }
-                      }}
-                      className="px-5 py-3 bg-slate-100 hover:bg-white text-slate-950 font-bold text-xs uppercase tracking-wider rounded-xl transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Zap className="w-4 h-4 fill-slate-950" />
-                      <span>Quick Match</span>
+                  <div>
+                    <span className="text-xs font-semibold text-slate-300 mb-2 block">Minutes per player</span>
+                    <div className="grid grid-cols-4 gap-2" role="group" aria-label="Quick Match clock">
+                      {QUICK_MATCH_TIMES.map(minutes => (
+                        <button key={minutes} type="button" onClick={() => setQuickTime(minutes)} aria-pressed={quickTime === minutes}
+                          className={`k-arena-time-preset rounded-xl py-3 text-sm font-bold border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 ${quickTime === minutes ? 'bg-amber-300 text-slate-950 border-amber-200' : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'}`}>
+                          {minutes} min
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button type="button" onClick={handleQuickMatch}
+                      disabled={connectionStatus !== 'connected' || Boolean(pendingHostMatch || pendingJoinRoom)}
+                      className="k-arena-primary flex items-center justify-center gap-2 rounded-xl bg-amber-300 text-slate-950 py-3.5 px-5 font-bold text-sm hover:bg-amber-200 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300">
+                      {pendingHostMatch || pendingJoinRoom ? <RefreshCw className="w-4 h-4 animate-spin"/> : <Zap className="w-4 h-4"/>}
+                      {pendingHostMatch || pendingJoinRoom ? 'Connecting…' : `Play ${quickTime}-minute match`}
                     </button>
-
-                    <button
-                      onClick={handleCreateRoomClick}
-                      className="px-5 py-3 bg-slate-800 hover:bg-slate-750 text-slate-100 font-bold text-xs uppercase tracking-wider rounded-xl transition border border-slate-700 shadow-sm flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4 stroke-[2.5]" />
-                      <span>Create Room</span>
+                    <button type="button" onClick={handleCreateRoomClick}
+                      className="k-arena-secondary flex items-center justify-center gap-2 rounded-xl bg-slate-800 text-slate-100 py-3.5 px-5 font-bold text-sm border border-slate-700 hover:bg-slate-700">
+                      <Plus className="w-4 h-4"/> Custom game
                     </button>
                   </div>
+                  <p role="status" className="text-xs text-slate-400">Quick Match joins a compatible open room. If none exists, your free room waits for an opponent.</p>
+                </section>
+
+                {/* Discoverable live challenges, inspired by a challenge lobby rather than a code-only flow. */}
+                <section className="k-arena-challenges bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5" aria-labelledby="arena-challenges-heading">
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <div>
+                      <h3 id="arena-challenges-heading" className="text-base font-bold text-white">Open challenges</h3>
+                      <p className="text-xs text-slate-400 mt-1">Join someone already waiting to play.</p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 text-xs font-semibold">{visibleChallenges.length}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mb-4" role="group" aria-label="Challenge type">
+                    {([['standard','Standard · Free'], ['free','All free'], ['all','All games']] as const).map(([value,label]) => (
+                      <button type="button" key={value} onClick={() => { setChallengeFilter(value); setShowAllChallenges(false); }}
+                        aria-pressed={challengeFilter === value}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold border focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 ${challengeFilter === value ? 'border-amber-300/80 bg-amber-300/15 text-amber-200' : 'border-slate-700 text-slate-300 bg-slate-800 hover:bg-slate-700'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {visibleChallenges.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-700 text-center px-4 py-6">
+                      <Users className="w-6 h-6 text-slate-400 mx-auto mb-2"/>
+                      <p className="text-sm font-semibold text-slate-200">No matching challenges yet</p>
+                      <p className="text-xs text-slate-400 mt-1">Use Quick Match to create a waiting room, or choose another filter.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(showAllChallenges ? visibleChallenges : visibleChallenges.slice(0, 4)).map(challenge => (
+                        <div key={challenge.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-sm text-white truncate">{guestDisplayName(challenge.hostName)}</p>
+                            <p className="text-xs text-slate-400 mt-1">{challenge.gameTime} min · {challenge.specialRule === 'none' ? 'Standard rules' : 'Modified rules'} · {(challenge.wagerAmount ?? 0) > 0 ? `${challenge.wagerAmount} coins` : 'Free'}{(challenge.bestOf ?? 1) > 1 ? ` · Best of ${challenge.bestOf}` : ''}</p>
+                          </div>
+                          <button type="button" onClick={() => onJoinRoom(challenge.id)}
+                            disabled={connectionStatus !== 'connected' || Boolean(pendingHostMatch || pendingJoinRoom)}
+                            aria-label={`Join ${guestDisplayName(challenge.hostName)}'s ${challenge.gameTime} minute game`}
+                            className="shrink-0 rounded-lg bg-slate-200 text-slate-950 px-4 py-2.5 text-xs font-bold hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed">Join</button>
+                        </div>
+                      ))}
+                      {visibleChallenges.length > 4 && (
+                        <button type="button" onClick={() => setShowAllChallenges(v => !v)}
+                          className="w-full rounded-lg border border-slate-700 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-800">
+                          {showAllChallenges ? 'Show fewer' : `View all ${visibleChallenges.length} challenges`}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {isGuest && <p className="text-xs text-slate-400 mt-3">Guest games must be free and single-match. Sign in to access coin games and series.</p>}
+                </section>
+
+                {/* Follow matches without leaving the arena for technical tools. */}
+                <div className="grid grid-cols-2 gap-3">
+                  <button type="button" onClick={() => onSelectMode('KentroTV')}
+                    className="bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl p-3.5 flex items-center gap-3 text-left text-sm font-semibold text-slate-200 min-h-14">
+                    <Radio className="h-5 w-5 text-emerald-300 shrink-0"/> Watch live games <ArrowRight className="h-4 w-4 ml-auto text-slate-400"/>
+                  </button>
+                  <button type="button" onClick={() => onOpenPastGamesModal?.('PvP')}
+                    className="bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl p-3.5 flex items-center gap-3 text-left text-sm font-semibold text-slate-200 min-h-14">
+                    <History className="h-5 w-5 text-amber-300 shrink-0"/> Recent matches <ArrowRight className="h-4 w-4 ml-auto text-slate-400"/>
+                  </button>
                 </div>
 
                 {/* DIRECT ROOM CODE SEARCH BAR */}
                 <form
                   onSubmit={handleJoinRoom}
-                  className="bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex flex-col sm:flex-row items-center gap-2 shadow-md"
+                  className="k-arena-join bg-slate-900 border border-slate-800 rounded-xl p-2.5 flex flex-col sm:flex-row items-center gap-2 shadow-md"
                 >
                   <div className="flex items-center gap-2.5 px-3 py-2 w-full sm:w-auto flex-1 bg-slate-950 rounded-lg border border-slate-800">
                     <Search className="w-4 h-4 text-slate-500 shrink-0" />
@@ -758,8 +927,16 @@ function LobbyDashboardImpl({
                   </p>
                 )}
 
-                {/* FEATURE GRID (12 TILES) */}
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 md:p-6 shadow-xl">
+                <button type="button" onClick={() => onSelectMode("OfflineNearby")}
+                  className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold rounded-xl px-4 py-3 flex items-center justify-center gap-2 text-xs">
+                  <Wifi className="w-4 h-4" /> Play Nearby Offline — Wi-Fi / Hotspot
+                </button>
+
+                {/* Advanced utilities are discoverable, not forced ahead of finding a match. */}
+                <button type="button" onClick={() => setShowMoreArenaTools(v => !v)} className="k-arena-tools-toggle" aria-expanded={showMoreArenaTools}>
+                  <Sliders className="w-4 h-4"/> {showMoreArenaTools ? "Hide more arena tools" : "More arena tools"} <ChevronRight className={showMoreArenaTools ? "rotate-90 w-4 h-4" : "w-4 h-4"}/>
+                </button>
+                {showMoreArenaTools && <div className="k-arena-advanced bg-slate-900 border border-slate-800 rounded-2xl p-5 md:p-6 shadow-xl">
                   <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
                     <div className="flex items-center gap-2">
                       <Swords className="w-4 h-4 text-slate-400" />
@@ -786,11 +963,11 @@ function LobbyDashboardImpl({
 
                     {/* 2. Active games */}
                     <button
-                      onClick={() => setShowActiveGamesModal(true)}
+                      onClick={() => onSelectMode("KentroTV")}
                       className="bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-200 font-bold p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center group"
                     >
                       <Activity className="w-5 h-5 text-slate-400 group-hover:text-white transition-colors stroke-[2]" />
-                      <span className="text-xs font-semibold uppercase tracking-wider">Active games</span>
+                      <span className="text-xs font-semibold uppercase tracking-wider">Watch live</span>
                     </button>
 
                     {/* 3. All Matches */}
@@ -835,12 +1012,7 @@ function LobbyDashboardImpl({
                     {/* 7. Quick Match */}
                     <button
                       onClick={() => {
-                        const available = openRooms.find(r => r.creator !== username && r.hostName !== username);
-                        if (available) {
-                          onJoinRoom(available.id);
-                        } else {
-                          onHostMatch(5, "none", 5, 5, 0, 1);
-                        }
+                        handleQuickMatch();
                       }}
                       className="bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-200 font-bold p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center group"
                     >
@@ -902,7 +1074,7 @@ function LobbyDashboardImpl({
                     </button>
 
                   </div>
-                </div>
+                </div>}
 
                 {/* INLINE AWAITING OPPONENT OPEN ROOMS BAR */}
                 {openRooms.length > 0 && (
@@ -1100,7 +1272,7 @@ function LobbyDashboardImpl({
               exit={{ opacity: 0, scale: 0.98 }}
               className="max-w-3xl mx-auto bg-slate-900 border border-slate-800 rounded-2xl p-6 md:p-8 shadow-2xl space-y-6"
             >
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
                 <div>
                   <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-widest block">
                     Active Room Arena
@@ -1109,13 +1281,23 @@ function LobbyDashboardImpl({
                     ROOM #{roomId}
                   </h2>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center flex-wrap gap-2">
                   <button
+                    type="button"
+                    onClick={handleCopyWhatsAppLink}
+                    title="Copy a direct game link to paste in WhatsApp"
+                    className="px-3.5 py-2 bg-emerald-900/30 hover:bg-emerald-800/50 border border-emerald-700/50 text-emerald-300 rounded-xl transition text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {inviteCopied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                    <span>{inviteCopied ? "Link Copied!" : "Copy to WhatsApp"}</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleCopyCode}
                     className="px-3.5 py-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 rounded-xl transition text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
                     {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                    <span>{copied ? "Copied" : "Copy Code"}</span>
+                    <span>{copied ? "Copied!" : "Copy Code"}</span>
                   </button>
                   <button
                     onClick={handleLeaveRoom}
@@ -1125,6 +1307,21 @@ function LobbyDashboardImpl({
                   </button>
                 </div>
               </div>
+
+              {copyError && <p role="alert" className="text-xs text-rose-300">{copyError}</p>}
+              {inviteCopied && <p role="status" className="text-xs text-emerald-300">Link copied. Paste it in WhatsApp — your opponent can tap it and select Start Game.</p>}
+              {!isGuest && roomPlayers.length < 2 && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
+                  <p className="text-xs font-extrabold text-amber-300">Challenge a friend · Send an in-app alert</p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input value={friendChallengeName} onChange={e => setFriendChallengeName(e.target.value)} list="kentro-friend-suggestions" placeholder="Friend's username" aria-label="Friend to challenge" className="flex-1 min-w-0 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white" />
+                    <datalist id="kentro-friend-suggestions">{friendSuggestions.map(name => <option key={name} value={name}/>)}</datalist>
+                    <button type="button" disabled={challengeSending || !friendChallengeName.trim()} onClick={() => void sendFriendChallenge()} className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-black text-slate-950 disabled:opacity-40">{challengeSending ? "Sending…" : "Send Challenge"}</button>
+                  </div>
+                  <p className="text-[10px] text-slate-400">For connected friends only. They can tap the notification to open your room.</p>
+                  {friendChallengeState && <p role="status" className="text-xs text-amber-200">{friendChallengeState}</p>}
+                </div>
+              )}
 
               {/* Room Players Status */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1227,7 +1424,7 @@ function LobbyDashboardImpl({
               </p>
 
               <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                {openRooms.length === 0 ? (
+                {awaitingRooms.length === 0 ? (
                   <div className="text-center py-8 bg-slate-950/50 rounded-2xl border border-slate-800/80 p-4">
                     <Clock className="w-8 h-8 text-slate-600 mx-auto mb-2" />
                     <p className="text-slate-300 text-xs font-bold">No room codes waiting right now.</p>
@@ -1243,7 +1440,7 @@ function LobbyDashboardImpl({
                     </button>
                   </div>
                 ) : (
-                  openRooms.map((room) => {
+                  awaitingRooms.map((room) => {
                     const isMine = room.creator === username || room.hostName === username;
                     return (
                       <div
@@ -1379,65 +1576,6 @@ function LobbyDashboardImpl({
         )}
       </AnimatePresence>
 
-      {/* ACTIVE GAMES MODAL */}
-      <AnimatePresence>
-        {showActiveGamesModal && (
-          <div className="fixed inset-0 z-50 bg-slate-950/90 flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-lg w-full shadow-2xl relative max-h-[85vh] flex flex-col"
-            >
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-amber-400" />
-                  <h3 className="text-lg font-black text-white uppercase tracking-tight">Active Games</h3>
-                </div>
-                <button
-                  onClick={() => setShowActiveGamesModal(false)}
-                  className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <p className="text-xs text-slate-400 mt-3 mb-4">
-                Watch ongoing live matches in real time across the arena.
-              </p>
-
-              <div className="flex-1 overflow-y-auto space-y-3">
-                {openRooms.length === 0 ? (
-                  <div className="text-center py-8 bg-slate-950/50 rounded-2xl border border-slate-800/80 p-4">
-                    <Activity className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                    <p className="text-slate-300 text-xs font-bold">No active matches in progress right now.</p>
-                    <p className="text-slate-500 text-[11px] mt-1">Start a room or invite a player to initiate a match!</p>
-                  </div>
-                ) : (
-                  openRooms.map((r) => (
-                    <div key={r.id} className="p-4 bg-slate-950/80 border border-slate-800/80 rounded-2xl flex items-center justify-between">
-                      <div>
-                        <span className="text-xs font-mono font-bold text-amber-400">ROOM #{r.id}</span>
-                        <p className="text-xs text-slate-300 font-bold mt-0.5">Host: {r.hostName}</p>
-                        <p className="text-[10px] text-slate-500">{r.gameTime}m • {r.specialRule === "none" ? "Standard" : r.specialRule}</p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setShowActiveGamesModal(false);
-                          onJoinRoom(r.id);
-                        }}
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs rounded-xl transition cursor-pointer"
-                      >
-                        Spectate / Join
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
     </div>
   );

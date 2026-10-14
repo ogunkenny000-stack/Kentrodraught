@@ -18,9 +18,15 @@ services:
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
     ports:
       - "3000:3000"
+    volumes:
+      - kentro_game_data:/app/data
     environment:
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
       SUPABASE_DB_URL: ${SUPABASE_DB_URL:-}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
     restart: unless-stopped
+
+# Preserve match records and sequence IDs across container restarts.
+volumes:
+  kentro_game_data:

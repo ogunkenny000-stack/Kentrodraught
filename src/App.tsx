@@ -5,7 +5,7 @@ import { AuthScreen } from "./AuthScreen";
 import { apiGet, apiPost } from "./apiClient";
 import InstallAppPrompt from "./InstallAppPrompt";
 
-import AdminPanel from "./AdminPanel";
+const AdminPanel = lazy(() => import("./AdminPanel"));
 import { 
   Trophy, RotateCcw, Volume2, VolumeX, BookOpen, 
   Settings as SettingsIcon, HelpCircle, X, ChevronRight, Check, Wrench, 
@@ -38,12 +38,12 @@ import { ChessClock } from "./components/ChessClock";
 import { EnginePanel } from "./components/EnginePanel";
 import { MenuSidebar } from "./components/MenuSidebar";
 import { HomeLobby } from "./components/HomeLobby";
-import { ProfilePage } from "./components/ProfilePage";
-import { FriendsPage } from "./components/FriendsPage";
+const ProfilePage = lazy(() => import("./components/ProfilePage").then(m => ({ default: m.ProfilePage })));
+const FriendsPage = lazy(() => import("./components/FriendsPage").then(m => ({ default: m.FriendsPage })));
 import { ComingSoonPane } from "./components/ComingSoonPane";
 import { LobbyDashboard } from "./components/LobbyDashboard";
-import { TournamentDashboard } from "./components/TournamentDashboard";
-import { GlobalChatLounge } from "./components/GlobalChatLounge";
+const TournamentDashboard = lazy(() => import("./components/TournamentDashboard").then(m => ({ default: m.TournamentDashboard })));
+const GlobalChatLounge = lazy(() => import("./components/GlobalChatLounge").then(m => ({ default: m.GlobalChatLounge })));
 import { calculateRating, defaultPlayerRating } from "./rating";
 import {
   playClickSound, playCaptureSound, playPromoSound, playGameStartSound,
@@ -61,6 +61,11 @@ import { TopNav } from "./components/layout/TopNav";
 import { MobileDrawers } from "./components/layout/MobileDrawers";
 import { MobileTabBar } from "./components/layout/MobileTabBar";
 import { GameScreen } from "./components/game/GameScreen";
+const OfflineNearby = lazy(() => import("./components/game/OfflineNearby").then(m => ({ default: m.OfflineNearby })));
+const KentroTV = lazy(() => import("./components/KentroTV").then(m => ({ default: m.KentroTV })));
+import { NotificationCenter, useKentroNotifications } from "./components/NotificationCenter";
+import { parseReplayLink } from "./lib/kentroTv";
+import { uniqueCompletedMatches } from "./lib/completedMatches";
 import { FloatingVideoCall } from "./components/game/FloatingVideoCall";
 import { useWebRTCCall } from "./lib/useWebRTCCall";
 import { MultiplayerPanel, VoiceCallState } from "./components/panels/MultiplayerPanel";
@@ -75,10 +80,10 @@ import { CoinsPurchaseModal } from "./components/modals/CoinsPurchaseModal";
 import { ComputerConfigModal } from "./components/modals/ComputerConfigModal";
 import { GameOverModal } from "./components/modals/GameOverModal";
 import { SandboxPlayChoiceModal } from "./components/modals/SandboxPlayChoiceModal";
-import { PlayerDirectoryModal } from "./components/modals/PlayerDirectoryModal";
-import { PastGamesModal } from "./components/modals/PastGamesModal";
-import { AnalysisLabModal } from "./components/modals/AnalysisLabModal";
-import { PuzzlesPane } from "./components/panels/PuzzlesPane";
+const PlayerDirectoryModal = lazy(() => import("./components/modals/PlayerDirectoryModal").then(m => ({ default: m.PlayerDirectoryModal })));
+const PastGamesModal = lazy(() => import("./components/modals/PastGamesModal").then(m => ({ default: m.PastGamesModal })));
+const AnalysisLabModal = lazy(() => import("./components/modals/AnalysisLabModal").then(m => ({ default: m.AnalysisLabModal })));
+const PuzzlesPane = lazy(() => import("./components/panels/PuzzlesPane").then(m => ({ default: m.PuzzlesPane })));
 import { ModalShell } from "./components/ui/ModalShell";
 import { markPuzzleSolved } from "./lib/puzzles";
 import { getKenMove, analyzeKen, EngineUnavailableError, SupersededError } from "./lib/kenEngine";
@@ -86,6 +91,9 @@ import { primeAvatar } from "./lib/avatarCache";
 import { AdminProfileProvider } from "./lib/adminProfileContext";
 import { KentroSplashScreen } from "./components/splash/KentroSplashScreen";
 import { saveFastResumeState, loadFastResumeState, clearFastResumeState, saveActiveRoom, loadActiveRoom, clearActiveRoom } from "./lib/fastResume";
+import { cleanInviteRoomCode, getRoomCodeFromUrl, removeRoomInviteFromUrl } from "./lib/roomInvite";
+import { GUEST_AI_LIMIT, GUEST_ONLINE_LIMIT, GUEST_AI_SAVE, isGuestActive, setGuestActive, getGuestName, getGuestAiUsed, claimGuestAiGame, isGuestName, guestDisplayName } from "./lib/guestTrial";
+import { safeStorage, safeSessionStorage } from "./lib/safeStorage";
 
 // Compatibility re-exports -- other modules historically imported these from
 // App; canonical home is now src/lib/constants.ts.
@@ -93,14 +101,23 @@ export { KEN_LEVELS } from "./lib/constants";
 export type { KenDifficulty } from "./lib/constants";
 
 export default function App() {
+  const [initialReplay, setInitialReplay] = useState(() => typeof window === "undefined" ? null : parseReplayLink(window.location.search));
+  // Direct links from WhatsApp are invitations, never automatic match entry.
+  // The guest explicitly presses Start Game before we contact the room server.
+  const [inviteRoomCode, setInviteRoomCode] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : getRoomCodeFromUrl(window.location.search)
+  );
+
   // --- Kentro Splash Screen ---
   const [showSplash, setShowSplash] = useState<boolean>(() => {
     try {
       if (typeof window !== "undefined") {
+        // No splash barrier when someone opens an invitation on their phone.
+        if (getRoomCodeFromUrl(window.location.search) || parseReplayLink(window.location.search) || new URLSearchParams(window.location.search).get("offline") === "1") return false;
         // Never show splash if resuming an active room/match
-        if (localStorage.getItem("kd.active_room")) return false;
+        if (safeStorage.getItem("kd.active_room")) return false;
         // Never show splash on returning session/visit
-        if (localStorage.getItem("kentro_splash_seen") || sessionStorage.getItem("kentro_splash_seen")) {
+        if (safeStorage.getItem("kentro_splash_seen") || safeSessionStorage.getItem("kentro_splash_seen")) {
           return false;
         }
       }
@@ -112,8 +129,8 @@ export default function App() {
   const handleSplashComplete = () => {
     try {
       if (typeof window !== "undefined") {
-        localStorage.setItem("kentro_splash_seen", "true");
-        sessionStorage.setItem("kentro_splash_seen", "true");
+        safeStorage.setItem("kentro_splash_seen", "true");
+        safeSessionStorage.setItem("kentro_splash_seen", "true");
       }
     } catch {
       // ignore
@@ -164,6 +181,10 @@ export default function App() {
   // --- Game Config & Mode Settings ---
   const [playMode, setPlayMode] = useState<PlayMode>(() => {
     try {
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("offline") === "1") return "OfflineNearby";
+      if (typeof window !== "undefined" && getRoomCodeFromUrl(window.location.search)) return "Multiplayer";
+      if (typeof window !== "undefined" && parseReplayLink(window.location.search)) return "KentroTV";
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "tournament") return "Tournament";
       const active = loadActiveRoom();
       if (active && active.roomId) return "Multiplayer";
     } catch {}
@@ -174,53 +195,53 @@ export default function App() {
   const isComputerMode = playMode === "Human_vs_AI" || playMode === "AI_vs_Human" || playMode === "AI_vs_AI";
   const [kenLevelId, setKenLevelId] = useState<number>(2); // Default to Ken 2
   const [boardTheme, setBoardTheme] = useState<BoardTheme>(() => {
-    return (localStorage.getItem("lidraughts_board_theme") as BoardTheme) || "wood";
+    return (safeStorage.getItem("lidraughts_board_theme") as BoardTheme) || "wood";
   });
   
   // --- Custom Board Theme States ---
   const [customLightSquare, setCustomLightSquare] = useState<string>(() => {
-    return localStorage.getItem("lidraughts_custom_light") || "#f8fafc";
+    return safeStorage.getItem("lidraughts_custom_light") || "#f8fafc";
   });
   const [customDarkSquare, setCustomDarkSquare] = useState<string>(() => {
-    return localStorage.getItem("lidraughts_custom_dark") || "#1e293b";
+    return safeStorage.getItem("lidraughts_custom_dark") || "#1e293b";
   });
   const [customBorder, setCustomBorder] = useState<string>(() => {
-    return localStorage.getItem("lidraughts_custom_border") || "#0f172a";
+    return safeStorage.getItem("lidraughts_custom_border") || "#0f172a";
   });
 
   // Keep custom theme colors updated in localStorage
   useEffect(() => {
-    localStorage.setItem("lidraughts_custom_light", customLightSquare);
+    safeStorage.setItem("lidraughts_custom_light", customLightSquare);
   }, [customLightSquare]);
 
   useEffect(() => {
-    localStorage.setItem("lidraughts_custom_dark", customDarkSquare);
+    safeStorage.setItem("lidraughts_custom_dark", customDarkSquare);
   }, [customDarkSquare]);
 
   useEffect(() => {
-    localStorage.setItem("lidraughts_custom_border", customBorder);
+    safeStorage.setItem("lidraughts_custom_border", customBorder);
   }, [customBorder]);
 
   useEffect(() => {
-    localStorage.setItem("lidraughts_board_theme", boardTheme);
+    safeStorage.setItem("lidraughts_board_theme", boardTheme);
   }, [boardTheme]);
 
   // --- Tournament Mode States ---
   const [isTournamentActive, setIsTournamentActive] = useState<boolean>(() => {
-    return localStorage.getItem("lidraughts_tournament_active") === "true";
+    return safeStorage.getItem("lidraughts_tournament_active") === "true";
   });
   const [tournamentRound, setTournamentRound] = useState<number>(() => {
-    return parseInt(localStorage.getItem("lidraughts_tournament_round") || "1", 10);
+    return parseInt(safeStorage.getItem("lidraughts_tournament_round") || "1", 10);
   });
   const [tournamentPoints, setTournamentPoints] = useState<number>(() => {
-    return parseInt(localStorage.getItem("lidraughts_tournament_points") || "0", 10);
+    return parseInt(safeStorage.getItem("lidraughts_tournament_points") || "0", 10);
   });
   const [tournamentHistory, setTournamentHistory] = useState<Array<{ round: number; opponent: string; outcome: "win" | "loss" | "draw"; points: number }>>(() => {
-    const saved = localStorage.getItem("lidraughts_tournament_history");
+    const saved = safeStorage.getItem("lidraughts_tournament_history");
     return saved ? JSON.parse(saved) : [];
   });
   const [isTournamentGameInProgress, setIsTournamentGameInProgress] = useState<boolean>(() => {
-    return localStorage.getItem("lidraughts_tournament_game_in_progress") === "true";
+    return safeStorage.getItem("lidraughts_tournament_game_in_progress") === "true";
   });
   const [activeTournamentMatchId, setActiveTournamentMatchId] = useState<string | null>(null);
   const [activeTournamentOpponent, setActiveTournamentOpponent] = useState<string | null>(null);
@@ -235,9 +256,9 @@ export default function App() {
   useEffect(() => {
     if (tournamentAbandonCheckedRef.current) return;
     tournamentAbandonCheckedRef.current = true;
-    if (localStorage.getItem("lidraughts_tournament_game_in_progress") !== "true") return;
+    if (safeStorage.getItem("lidraughts_tournament_game_in_progress") !== "true") return;
     if (!isTournamentActive) {
-      localStorage.setItem("lidraughts_tournament_game_in_progress", "false");
+      safeStorage.setItem("lidraughts_tournament_game_in_progress", "false");
       return;
     }
     const abandonedRound = tournamentRound;
@@ -248,11 +269,11 @@ export default function App() {
         outcome: "loss" as const,
         points: 0,
       }];
-      localStorage.setItem("lidraughts_tournament_history", JSON.stringify(nh));
+      safeStorage.setItem("lidraughts_tournament_history", JSON.stringify(nh));
       return nh;
     });
     setIsTournamentGameInProgress(false);
-    localStorage.setItem("lidraughts_tournament_game_in_progress", "false");
+    safeStorage.setItem("lidraughts_tournament_game_in_progress", "false");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -261,23 +282,28 @@ export default function App() {
   const [showAppGuideModal, setShowAppGuideModal] = useState<boolean>(false);
   const [copiedRoomCode, setCopiedRoomCode] = useState<boolean>(false);
 
-  const [showSquareNumbers, setShowSquareNumbers] = useState<boolean>(true);
+  const [showSquareNumbers, setShowSquareNumbers] = useState<boolean>(() => safeStorage.getItem("kentro_show_square_numbers") !== "false");
+  const [focusMode, setFocusMode] = useState<boolean>(() => safeStorage.getItem("kentro_focus_mode") === "true");
+  const [reducedMotion, setReducedMotion] = useState<boolean>(() => safeStorage.getItem("kentro_reduce_motion") === "true");
+  useEffect(() => { safeStorage.setItem("kentro_show_square_numbers", String(showSquareNumbers)); }, [showSquareNumbers]);
+  useEffect(() => { safeStorage.setItem("kentro_focus_mode", String(focusMode)); }, [focusMode]);
+  useEffect(() => { safeStorage.setItem("kentro_reduce_motion", String(reducedMotion)); }, [reducedMotion]);
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [muted, setMuted] = useState<boolean>(() => {
-    return localStorage.getItem("lidraughts_muted") === "true";
+    return safeStorage.getItem("lidraughts_muted") === "true";
   });
 
   useEffect(() => {
-    localStorage.setItem("lidraughts_muted", muted ? "true" : "false");
+    safeStorage.setItem("lidraughts_muted", muted ? "true" : "false");
   }, [muted]);
   const [boardScale, setBoardScale] = useState<number>(() => {
-    const saved = localStorage.getItem("lidraughts_board_scale");
+    const saved = safeStorage.getItem("lidraughts_board_scale");
     return saved ? parseInt(saved, 10) : 112;
   });
   const [isMobile, setIsMobile] = useState<boolean>(false);
 
   useEffect(() => {
-    localStorage.setItem("lidraughts_board_scale", boardScale.toString());
+    safeStorage.setItem("lidraughts_board_scale", boardScale.toString());
   }, [boardScale]);
 
   useEffect(() => {
@@ -289,22 +315,8 @@ export default function App() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const roomParam = params.get("room") || params.get("join") || params.get("code");
-      if (roomParam) {
-        const cleanCode = roomParam.replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
-        if (cleanCode) {
-          setRoomInput(cleanCode);
-          setPendingJoinRoom(cleanCode);
-          setPlayMode("Multiplayer");
-        }
-      }
-    } catch (e) {
-      console.error("Error reading room URL parameter:", e);
-    }
-  }, []);
+  // Query parameters are read above during initialization. Do not auto-join:
+  // entering an online match requires the invitee to tap Start Game first.
 
   // --- Responsive Drawer States (Mobile/Tablet overlays) ---
   const [isLeftDrawerOpen, setIsLeftDrawerOpen] = useState<boolean>(false);
@@ -503,13 +515,12 @@ export default function App() {
   // left mid-match, instead of always starting fresh. Saved on every move,
   // cleared the moment the game actually ends (see setGameOverInfo below)
   // or when a genuinely new match is started via the config modal.
-  const AI_GAME_STORAGE_KEY = "kentro_ai_game_in_progress";
   const AI_MODES: PlayMode[] = ["Human_vs_AI", "AI_vs_Human", "AI_vs_AI"];
 
   useEffect(() => {
     if (!AI_MODES.includes(playMode) || gameOverInfo || moveHistory.length === 0) return;
     try {
-      localStorage.setItem(AI_GAME_STORAGE_KEY, JSON.stringify({
+      safeStorage.setItem(AI_GAME_STORAGE_KEY, JSON.stringify({
         board, moveHistory, turn, kenLevelId, playMode, savedAt: Date.now(),
       }));
     } catch {
@@ -588,11 +599,34 @@ export default function App() {
   // the auth check is in flight on repeat visits; it is never the
   // source of truth and is overwritten as soon as the real fetch resolves.
   const [username, setUsername] = useState<string | null>(() => {
-    return localStorage.getItem("lidraughts_username") || null;
+    return safeStorage.getItem("lidraughts_username") || null;
   });
 
   // --- Supabase Auth State (the real, user-facing identity layer) ---
   const [authUser, setAuthUser] = useState<SupabaseAuthUser | null>(null);
+  const [guestEnabled, setGuestEnabled] = useState<boolean>(() => isGuestActive());
+  const guestMode = guestEnabled && !authUser;
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notificationManager = useKentroNotifications(authUser?.id || null, !!authUser && !guestMode);
+  const AI_GAME_STORAGE_KEY = guestMode ? GUEST_AI_SAVE : "kentro_ai_game_in_progress";
+  const [guestAiUsed, setGuestAiUsed] = useState(() => getGuestAiUsed());
+  const [guestOnlineUsed, setGuestOnlineUsed] = useState(0);
+  const [guestLimitNotice, setGuestLimitNotice] = useState<string | null>(null);
+  const guestAiStartReservedRef = useRef(false);
+  const requireAccount = (reason = "Sign in to unlock this feature, save progress and enjoy unlimited matches."): boolean => {
+    if (!guestMode) return true;
+    setGuestLimitNotice(reason);
+    return false;
+  };
+  const takeGuestAiTrial = (): boolean => {
+    if (!guestMode) return true;
+    if (!claimGuestAiGame()) {
+      setGuestLimitNotice(`You've used all ${GUEST_AI_LIMIT} free AI games. Sign in or create an account to play more.`);
+      return false;
+    }
+    setGuestAiUsed(getGuestAiUsed());
+    return true;
+  };
   const [authChecked, setAuthChecked] = useState<boolean>(false); // true once we know, one way or the other, whether someone is signed in
   const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false); // per-session only (not persisted) -- reappears next visit until actually verified, so it can't be silenced by accident forever
   const [verifyEmailSent, setVerifyEmailSent] = useState(false);
@@ -619,12 +653,16 @@ export default function App() {
         gameSocket.setAccessToken(session?.access_token ?? null);
         setAuthUser(user);
         if (user) {
+          setGuestActive(false);
+          setGuestEnabled(false);
           const uname = (user.user_metadata?.username as string | undefined) || null;
           setUsername(uname);
-          if (uname) localStorage.setItem("lidraughts_username", uname);
+          if (uname) safeStorage.setItem("lidraughts_username", uname);
         } else {
-          setUsername(null);
-          localStorage.removeItem("lidraughts_username");
+          const guest = isGuestActive();
+          setGuestEnabled(guest);
+          setUsername(guest ? getGuestName() : null);
+          safeStorage.removeItem("lidraughts_username");
         }
       } catch (err) {
         console.error("Auth bootstrap failed:", err);
@@ -635,14 +673,19 @@ export default function App() {
       }
 
       unsubscribe = onAuthStateChange((changedUser) => {
+        // Token can refresh without a username change. Keep WebSocket login
+        // proof fresh for the next network reconnect.
+        supabase.auth.getSession().then(({ data }) => gameSocket.setAccessToken(data.session?.access_token ?? null)).catch(() => {});
         setAuthUser(changedUser);
         if (changedUser) {
+          setGuestActive(false);
+          setGuestEnabled(false);
           const uname = (changedUser.user_metadata?.username as string | undefined) || null;
           setUsername(uname);
-          if (uname) localStorage.setItem("lidraughts_username", uname);
+          if (uname) safeStorage.setItem("lidraughts_username", uname);
         } else {
-          setUsername(null);
-          localStorage.removeItem("lidraughts_username");
+          setUsername(isGuestActive() ? getGuestName() : null);
+          safeStorage.removeItem("lidraughts_username");
         }
       });
     })();
@@ -967,7 +1010,7 @@ export default function App() {
   }, []);
 
   const refreshCoinBalance = async () => {
-    if (!username) return;
+    if (!username || guestMode) return;
     try {
       const data = await apiGet(`/api/coins/wallet/${encodeURIComponent(username.toLowerCase().trim())}`);
       setCoinBalance(data.balance || 0);
@@ -978,7 +1021,7 @@ export default function App() {
 
   useEffect(() => {
     refreshCoinBalance();
-  }, [username]);
+  }, [username, guestMode]);
 
   // --- Admin permission check (silent -- this is NOT the Admin Panel gate,
   // just enough info for the rest of the UI to know whether to show
@@ -988,7 +1031,7 @@ export default function App() {
   const isTournamentAdmin = adminPermissions.includes("manage_tournaments");
 
   useEffect(() => {
-    if (!username) { setAdminPermissions([]); return; }
+    if (!username || guestMode) { setAdminPermissions([]); return; }
     (async () => {
       try {
         const res = await apiPost("/api/admin/whoami", {});
@@ -997,7 +1040,7 @@ export default function App() {
         setAdminPermissions([]);
       }
     })();
-  }, [username]);
+  }, [username, guestMode]);
 
   // --- Check game over states to update stats & play sounds ---
   useEffect(() => {
@@ -1120,12 +1163,12 @@ export default function App() {
         if (activeTournamentMatchId) {
           setActiveTournamentOutcome(outcome);
           setIsTournamentGameInProgress(false);
-          localStorage.setItem("lidraughts_tournament_game_in_progress", "false");
+          safeStorage.setItem("lidraughts_tournament_game_in_progress", "false");
         } else if (isTournamentActive) {
           const pts = outcome === "win" ? 2 : outcome === "draw" ? 1 : 0;
           setTournamentPoints((p) => {
             const np = p + pts;
-            localStorage.setItem("lidraughts_tournament_points", String(np));
+            safeStorage.setItem("lidraughts_tournament_points", String(np));
             return np;
           });
 
@@ -1138,12 +1181,12 @@ export default function App() {
 
           setTournamentHistory((prev) => {
             const nh = [...prev, nextHistItem];
-            localStorage.setItem("lidraughts_tournament_history", JSON.stringify(nh));
+            safeStorage.setItem("lidraughts_tournament_history", JSON.stringify(nh));
             return nh;
           });
 
           setIsTournamentGameInProgress(false);
-          localStorage.setItem("lidraughts_tournament_game_in_progress", "false");
+          safeStorage.setItem("lidraughts_tournament_game_in_progress", "false");
         }
       }
     }
@@ -1161,9 +1204,9 @@ export default function App() {
         durationSeconds,
         movesCount: moveHistory.length,
       });
-      if (isAIGame) localStorage.removeItem(AI_GAME_STORAGE_KEY);
+      if (isAIGame) safeStorage.removeItem(AI_GAME_STORAGE_KEY);
 
-      (async () => {
+      if (!guestMode) (async () => {
         const current = { ...profileStats };
         let updatedStats: PlayerStats;
 
@@ -1252,7 +1295,16 @@ export default function App() {
         setProfileStats(updatedStats);
       })();
 
-      // Auto-save completed game to Supabase (unless this is a non-saving practice game resumed from Analysis)
+      // Guests do not save matches. For online multiplayer, the authoritative
+      // server already writes ONE record using the shared room game code.
+      // Both clients inserting their own random game IDs was creating 2–4
+      // archive entries per match. Refresh the archive after server sync.
+      if (!guestMode && playMode === "Multiplayer") {
+        window.setTimeout(() => { void fetchMyGames(); void fetchSavedGames(); }, 1800);
+        window.setTimeout(() => { void fetchMyGames(); void fetchSavedGames(); }, 5000);
+      }
+      if (!guestMode && playMode !== "Multiplayer") {
+      // Local AI / tournament matches are saved by this device only.
       if (isUnsavedPracticeGame) {
         console.log("Practice game resumed from analysis finished -- skipping auto-save to completed_games as requested.");
         setStatusMessage("Practice game complete! (Position practice was not saved to match history).");
@@ -1334,6 +1386,7 @@ export default function App() {
       } catch (saveError) {
         console.error("Failed to construct game data for save:", saveError);
       }
+      }
 
       // Play corresponding victory/defeat/draw sound
       if (outcome === "win") {
@@ -1344,7 +1397,7 @@ export default function App() {
         playDrawSound(muted);
       }
     }
-  }, [statusMessage, serverGameEnd, isSpectating, gameRecorded, gameOverInfo, gameStartTime, playMode, yourColor, kenLevelId, username, muted, isTournamentActive, isTournamentGameInProgress, tournamentRound, profileStats.elo]);
+  }, [statusMessage, serverGameEnd, isSpectating, gameRecorded, gameOverInfo, gameStartTime, playMode, yourColor, kenLevelId, username, muted, isTournamentActive, isTournamentGameInProgress, tournamentRound, profileStats.elo, guestMode]);
 
   // ===================================================================
   // ONLINE PLAY: socket wiring (docs/ONLINE_PLAY_PROTOCOL.md)
@@ -1538,8 +1591,8 @@ export default function App() {
     switch (data.type) {
       case "login-success":
         if (typeof data.username === "string") {
-          localStorage.setItem("lidraughts_username", data.username);
-          if (!username) setUsername(data.username);
+          if (!isGuestName(data.username)) safeStorage.setItem("lidraughts_username", data.username);
+          if (!username && (authUser || guestMode)) setUsername(data.username);
         }
         setOnlineUsers(Array.isArray(data.onlineUsers) ? data.onlineUsers : []);
         setSessionNotice(null);
@@ -1554,6 +1607,15 @@ export default function App() {
         break;
       case "online-users-update":
         setOnlineUsers(Array.isArray(data.onlineUsers) ? data.onlineUsers : []);
+        break;
+      case "guest-quota":
+        if (typeof data.onlineRemaining === "number") setGuestOnlineUsed(previous => Math.max(previous, GUEST_ONLINE_LIMIT - data.onlineRemaining));
+        break;
+      case "guest-limit-reached":
+        setGuestOnlineUsed(GUEST_ONLINE_LIMIT);
+        setGuestLimitNotice(data.message || "You've played your free online game. Sign in to continue.");
+        setPendingHostMatch(false);
+        setPendingJoinRoom(null);
         break;
       case "open-rooms-list":
         setOpenRooms(data.rooms || []);
@@ -1649,6 +1711,11 @@ export default function App() {
         break;
       }
       case "join-success":
+        // The room accepted this invitee; drop the URL so refresh does not
+        // prompt for the same invitation after a game has begun.
+        if (inviteRoomCode && cleanInviteRoomCode(String(data.roomId || "")) === inviteRoomCode) {
+          dismissRoomInvite();
+        }
         setPendingJoinRoom(null);
         setPendingHostMatch(false);
         setPendingRoomPreview(null);
@@ -1725,6 +1792,7 @@ export default function App() {
         break;
       }
       case "game-started": {
+        if (guestMode) setGuestOnlineUsed(GUEST_ONLINE_LIMIT);
         // Duplicate protection via seq (a re-broadcast must not reset the board).
         if (typeof data.seq === "number") {
           if (data.seq <= lastGameStartedSeqRef.current) break;
@@ -2817,7 +2885,9 @@ export default function App() {
   };
 
   // Start new standard match
-  const handleNewGame = (customStartBoard?: Board, customStartTurn?: "W" | "B") => {
+  const handleNewGame = (customStartBoard?: Board, customStartTurn?: "W" | "B", countGuestAi = true) => {
+    if (guestAiStartReservedRef.current) guestAiStartReservedRef.current = false;
+    else if (countGuestAi && guestMode && AI_MODES.includes(playMode) && !takeGuestAiTrial()) return;
     setGameOverInfo(null);
     if (playMode === "Multiplayer" && roomId !== null) {
       // Contract §3: game-reset is only allowed once the game has ENDED.
@@ -2833,7 +2903,7 @@ export default function App() {
     }
     if (playMode === "Tournament") {
       setIsTournamentGameInProgress(false);
-      localStorage.setItem("lidraughts_tournament_game_in_progress", "false");
+      safeStorage.setItem("lidraughts_tournament_game_in_progress", "false");
       setStatusMessage("Returned to Tournament Hub.");
       return;
     }
@@ -2956,7 +3026,7 @@ export default function App() {
       if (!leaveRoomWithConfirm()) return;
     }
     setGameOverInfo(null);
-    handleModeChange("Home");
+    handleModeChange("Home", true); // already confirmed and sent leave-room
   };
 
   /** Best-of-N: close the result modal and let the next game auto-start (M2). */
@@ -3179,8 +3249,15 @@ export default function App() {
     }
   };
 
+  const dismissRoomInvite = () => {
+    setInviteRoomCode(null);
+    try {
+      window.history.replaceState(window.history.state, "", removeRoomInviteFromUrl(window.location.href));
+    } catch { /* Embedded browsers may deny history changes. */ }
+  };
+
   const handleJoinRoom = (code: string) => {
-    const cleanedCode = code.replace(/[^A-Za-z0-9]/g, "").toUpperCase().trim();
+    const cleanedCode = cleanInviteRoomCode(code);
     if (!cleanedCode) return;
     patchRoom({ roomError: null });
     setPendingHostMatch(false);
@@ -3229,7 +3306,7 @@ export default function App() {
   // subscription at the app level purely for the unread badge; the lounge
   // itself still owns actually displaying/loading messages.
   useEffect(() => {
-    if (!username) return;
+    if (!username || guestMode) return;
     const myUname = username.toLowerCase().trim();
     const channel = supabase
       .channel("global_chat_notifications")
@@ -3249,7 +3326,7 @@ export default function App() {
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [username]);
+  }, [username, guestMode]);
 
   // Clear the unread count the moment the lounge is actually opened.
   useEffect(() => {
@@ -3262,7 +3339,7 @@ export default function App() {
   useEffect(() => {
     if (playMode !== "Multiplayer" || roomId !== null || connectionStatus !== "connected") return;
     handleFetchLiveRooms();
-    const interval = setInterval(handleFetchLiveRooms, 10000);
+    const interval = setInterval(() => { if (document.visibilityState === "visible") handleFetchLiveRooms(); }, 15000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playMode, roomId, connectionStatus]);
@@ -3347,7 +3424,7 @@ export default function App() {
     try {
       let rows;
       try {
-        const { data, error } = await supabase.from("completed_games").select("*").order("timestamp", { ascending: false }).limit(30);
+        const { data, error } = await supabase.from("completed_games").select("*").order("timestamp", { ascending: false }).limit(120);
         if (error) throw error;
         rows = data;
       } catch (err) {
@@ -3355,7 +3432,7 @@ export default function App() {
         return;
       }
       const games: any[] = (rows ?? []).map((row) => ({ id: row.gameId, ...row }));
-      setSavedGamesList(games);
+      setSavedGamesList(uniqueCompletedMatches(games).slice(0, 30));
     } catch (e) {
       console.error("Error fetching saved games:", e);
     } finally {
@@ -3363,7 +3440,7 @@ export default function App() {
     }
   };
 
-  const fetchMyGames = async () => {
+  const fetchMyGames = async (limit = 120) => {
     if (!username || !isSupabaseConfigured) { setMyGamesList([]); return; }
     setIsLoadingSavedGames(true);
     try {
@@ -3372,7 +3449,7 @@ export default function App() {
         .select("*")
         .or(`whitePlayer.eq.${username},blackPlayer.eq.${username}`)
         .order("timestamp", { ascending: false })
-        .limit(1000);
+        .limit(Math.min(Math.max(limit, 1), 1000));
       if (error) {
         handleSupabaseError(error, OperationType.GET, "completed_games (whitePlayer/blackPlayer)");
         return;
@@ -3381,7 +3458,7 @@ export default function App() {
       const byId = new Map<string, any>();
       for (const row of data ?? []) byId.set(row.gameId, { id: row.gameId, ...row });
 
-      const merged = Array.from(byId.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      const merged = uniqueCompletedMatches(Array.from(byId.values()));
       setMyGamesList(merged);
     } catch (e) {
       console.error("Error fetching your games:", e);
@@ -3391,12 +3468,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (username) {
+    if (username && !guestMode) {
       fetchMyGames();
       fetchSavedGames(); // community feed -- powers Home's "just finished" strip
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [username]);
+  }, [username, guestMode]);
 
   // Live Games on the Home page: poll the live-rooms list every 10s while
   // Home is on screen (the lobby's own Watch Live section polls separately).
@@ -3404,7 +3481,7 @@ export default function App() {
     if (playMode !== "Home" || connectionStatus !== "connected") return;
     const send = () => { if (gameSocket.getStatus() === "connected") gameSocket.send({ type: "list-live-rooms" }); };
     send();
-    const timer = setInterval(send, 10_000);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") send(); }, 15_000);
     return () => clearInterval(timer);
   }, [playMode, connectionStatus]);
 
@@ -3447,7 +3524,7 @@ export default function App() {
     if (error) { handleSupabaseError(error, OperationType.GET, "completed_games (player profile)"); return []; }
     const byId = new Map<string, any>();
     for (const row of data ?? []) byId.set(row.gameId, { id: row.gameId, ...row });
-    return Array.from(byId.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return uniqueCompletedMatches(Array.from(byId.values()));
   };
 
   const handleOpenPlayerProfile = async (targetUsername: string) => {
@@ -3550,8 +3627,34 @@ export default function App() {
     fetchMyGames();
   };
 
+  // The sidebar must not bypass locked Ken levels. The main AI setup
+  // remains the only place to request unlocks and view their costs.
+  const handleSidebarKenLevel = (level: number) => {
+    const unlocked = Math.max(3, profileStats.maxUnlockedKenLevel || 1);
+    if (level > unlocked) {
+      setStatusMessage(`Ken Level ${level} is locked. Unlock it from the Play Ken AI setup.`);
+      setShowComputerConfigModal(true);
+      return;
+    }
+    setKenLevelId(level);
+  };
+
   // Menu Sidebar mode dispatcher
-  const handleModeChange = (mode: PlayMode) => {
+  const handleModeChange = (mode: PlayMode, alreadyLeftRoom = false) => {
+    if (guestMode && (mode === "Tournament" || mode === "Global_Chat")) {
+      requireAccount(mode === "Tournament" ? "Create an account to enter tournaments." : "Sign in to join the community chat and messaging.");
+      return;
+    }
+    // Every navigation surface must respect the live-match forfeit confirmation.
+    if (mode !== "Multiplayer" && playMode === "Multiplayer" && roomId && !isSpectating && !alreadyLeftRoom) {
+      const seriesLive = !!seriesInfo && seriesInfo.bestOf > 1 && !seriesInfo.seriesOver;
+      const gameLive = roomPhase === "playing" || roomPhase === "setup" || (multiplayerStarted && !serverGameEnd);
+      if ((gameLive || seriesLive) && !leaveRoomWithConfirm()) return;
+    }
+    if (mode === "OfflineNearby" && playMode === "Multiplayer" && multiplayerStarted) {
+      setStatusMessage("Leave your online match before starting a nearby offline game.");
+      return;
+    }
     setActivePuzzleId(null);
     setHistoryViewIndex(null);
     setPendingHostMatch(false);
@@ -3581,7 +3684,7 @@ export default function App() {
     }
 
     if (mode === "Human_vs_AI" || mode === "AI_vs_Human" || mode === "AI_vs_AI") {
-      const savedRaw = localStorage.getItem(AI_GAME_STORAGE_KEY);
+      const savedRaw = safeStorage.getItem(AI_GAME_STORAGE_KEY);
       if (savedRaw) {
         try {
           const saved = JSON.parse(savedRaw);
@@ -3608,6 +3711,7 @@ export default function App() {
             }
 
             if (replayOk) {
+              if (guestMode && getGuestAiUsed() === 0 && !takeGuestAiTrial()) return;
               setBoard(saved.board);
               setMoveHistory(saved.moveHistory);
               setTurn(saved.turn);
@@ -3625,7 +3729,7 @@ export default function App() {
             // Inconsistent save -- resuming it would just crash again.
             // Clear it so it can't come back on a later attempt, and fall
             // through to the normal fresh-start flow below.
-            localStorage.removeItem(AI_GAME_STORAGE_KEY);
+            safeStorage.removeItem(AI_GAME_STORAGE_KEY);
           }
         } catch {
           // Corrupted/unreadable save -- fall through to the normal fresh-start flow below.
@@ -3662,7 +3766,7 @@ export default function App() {
       setClockLimitType("Untimed");
       setStatusMessage("Editor: tap squares with a brush to set up any position, then Play This Position.");
     } else {
-      handleNewGame();
+      handleNewGame(undefined, undefined, false); // navigation isn't a new AI match
     }
   };
 
@@ -4137,6 +4241,8 @@ export default function App() {
   // below; used to hide the mobile tab bar during live board play.
   const isBoardScreenActive = !(
     playMode === "Home" ||
+    playMode === "OfflineNearby" ||
+    playMode === "KentroTV" ||
     playMode === "Learn" ||
     (playMode === "Puzzles" && !activePuzzleId) ||
     playMode === "Global_Chat" ||
@@ -4254,6 +4360,8 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     const load = () => {
+      // No background fetch while a player has moved to another app.
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       fetch("/api/site-config")
         .then((r) => (r.ok ? r.json() : null))
         .then((cfg) => {
@@ -4267,7 +4375,8 @@ export default function App() {
     // Re-check periodically so a new announcement reaches players who
     // already have the app open.
     const t = setInterval(load, 120000);
-    return () => { alive = false; clearInterval(t); };
+    document.addEventListener("visibilitychange", load);
+    return () => { alive = false; clearInterval(t); document.removeEventListener("visibilitychange", load); };
   }, []);
 
   const [fairPlayWarning, setFairPlayWarning] = useState<{ strikes: number; maxStrikes: number; message: string } | null>(null);
@@ -4389,6 +4498,10 @@ export default function App() {
 
   // Still checking whether a Supabase session exists -- avoid flashing the
   // sign-in screen on reload, but if username is already known, do not block the UI.
+  if (playMode === "OfflineNearby" && !authUser) {
+    return <OfflineNearby username="Guest" onBack={() => { window.history.replaceState({}, "", window.location.pathname); setPlayMode("Home"); }} />;
+  }
+
   if (!authChecked && !username) {
     return (
       <div className="fixed inset-0 bg-slate-950 flex items-center justify-center z-50 w-full h-full">
@@ -4404,8 +4517,15 @@ export default function App() {
   // below is a no-op because the onAuthStateChange listener (set up in the
   // auth effect above) already handles flipping authUser/username -- this
   // callback exists so AuthScreen doesn't need to know any of that.
-  if (!authUser) {
-    return <AuthScreen onAuthenticated={() => {}} />;
+  if (!authUser && !guestEnabled) {
+    return <AuthScreen onAuthenticated={() => {}} onPlayOffline={() => setPlayMode("OfflineNearby")}
+      onContinueAsGuest={() => {
+        setGuestActive(true);
+        setGuestEnabled(true);
+        setGuestAiUsed(getGuestAiUsed());
+        setUsername(getGuestName());
+        if (!inviteRoomCode) setPlayMode("Home");
+      }} />;
   }
 
   // Signed in, but no username in user_metadata -- shouldn't normally
@@ -4423,14 +4543,14 @@ export default function App() {
   }
 
   const whitePlayerName =
-    playMode === "Multiplayer" ? (roomPlayers.find((p) => p.color === "W")?.username || "White")
+    playMode === "Multiplayer" ? guestDisplayName(roomPlayers.find((p) => p.color === "W")?.username || "White")
     : playMode === "Human_vs_AI" ? (username || "You")
     : playMode === "AI_vs_Human" ? `Ken ${kenLevelId}`
     : playMode === "Tournament" ? (yourColor === "W" ? (username || "You") : (activeTournamentOpponent || `Ken ${getTournamentKenLevelId(tournamentRound)}`))
     : "White";
 
   const blackPlayerName =
-    playMode === "Multiplayer" ? (roomPlayers.find((p) => p.color === "B")?.username || "Black")
+    playMode === "Multiplayer" ? guestDisplayName(roomPlayers.find((p) => p.color === "B")?.username || "Black")
     : playMode === "Human_vs_AI" ? `Ken ${kenLevelId}`
     : playMode === "AI_vs_Human" ? (username || "You")
     : playMode === "Tournament" ? (yourColor === "B" ? (username || "You") : (activeTournamentOpponent || `Ken ${getTournamentKenLevelId(tournamentRound)}`))
@@ -4439,7 +4559,7 @@ export default function App() {
   // --- Result modal details (real names / reason / series state, audit M1/M2) ---
   const seriesInProgress = playMode === "Multiplayer" && !!seriesInfo && seriesInfo.bestOf > 1 && !seriesInfo.seriesOver;
   const gameOverOpponentName =
-    playMode === "Multiplayer" ? (roomPlayers.find((p) => p.username !== username)?.username || "Opponent")
+    playMode === "Multiplayer" ? guestDisplayName(roomPlayers.find((p) => p.username !== username)?.username || "Opponent")
     : playMode === "Human_vs_AI" || playMode === "AI_vs_Human" || playMode === "AI_vs_AI" ? `Ken Level ${kenLevelId}`
     : playMode === "Tournament" ? (activeTournamentOpponent || `Ken Level ${getTournamentKenLevelId(tournamentRound)}`)
     : (playMode === "Analysis" || playMode === "Training") && analysisPlayVsAI ? `Ken Level ${analysisAILevel}`
@@ -4458,8 +4578,26 @@ export default function App() {
 
   return (
     <AdminProfileProvider permissions={adminPermissions}>
-    <div className="fixed inset-0 bg-[#070913] text-slate-100 flex flex-col font-sans select-none overflow-hidden w-full h-full">
+    <div className={`k-app-shell fixed inset-0 text-slate-100 flex flex-col font-sans select-none overflow-hidden w-full h-full ${focusMode && isBoardScreenActive ? "k-focus-active" : ""} ${reducedMotion ? "k-motion-reduced" : ""}`}>
       <InstallAppPrompt />
+      {guestMode && (
+        <div className="shrink-0 bg-emerald-500/10 border-b border-emerald-500/25 px-3 py-2 flex items-center justify-between gap-2 z-40">
+          <div className="min-w-0 text-[11px] text-emerald-200 font-sans">
+            <strong>Guest Mode</strong> · AI {Math.max(0, GUEST_AI_LIMIT - guestAiUsed)}/{GUEST_AI_LIMIT} left · Online {Math.max(0, GUEST_ONLINE_LIMIT - guestOnlineUsed)}/{GUEST_ONLINE_LIMIT} left
+          </div>
+          <button type="button" className="shrink-0 rounded-lg bg-amber-500 text-slate-950 px-3 py-1 text-[11px] font-extrabold" onClick={() => { setGuestActive(false); setGuestEnabled(false); setUsername(null); gameSocket.disconnect(); }}>Sign In / Register</button>
+        </div>
+      )}
+      {guestLimitNotice && (
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[130] bg-slate-950/90 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl">
+            <h2 className="text-lg font-black text-amber-300">Unlock more Kentro Draught</h2>
+            <p className="text-sm text-slate-300 mt-3 leading-relaxed">{guestLimitNotice}</p>
+            <button type="button" className="w-full bg-amber-500 text-slate-950 font-extrabold rounded-xl py-3 mt-5" onClick={() => { setGuestLimitNotice(null); setGuestActive(false); setGuestEnabled(false); setUsername(null); gameSocket.disconnect(); }}>Sign In or Create Account</button>
+            <button type="button" className="w-full text-slate-400 py-3 text-sm mt-1" onClick={() => { setGuestLimitNotice(null); if (playMode === "Multiplayer" && !multiplayerStarted) setPlayMode("Home"); }}>Keep Exploring</button>
+          </div>
+        </div>
+      )}
 
       {authUser && !authUser.email_confirmed_at && !verifyBannerDismissed && (
         <div className="shrink-0 bg-amber-500/10 border-b border-amber-500/30 px-3 py-2 flex items-center justify-between gap-2 z-40">
@@ -4549,7 +4687,8 @@ export default function App() {
         setIsRightDrawerOpen={setIsRightDrawerOpen}
         setShowAppGuideModal={setShowAppGuideModal}
         setShowSettingsModal={setShowSettingsModal}
-        showMobileDeskButton={playMode !== "Multiplayer" && playMode !== "Global_Chat"}
+        isGameActive={isBoardScreenActive}
+        showMobileDeskButton={isBoardScreenActive && playMode !== "Multiplayer"}
       />
 
       {/* Admin announcement / maintenance notice */}
@@ -4654,17 +4793,17 @@ export default function App() {
       </AnimatePresence>
 
       {/* Primary Grid Layout - Responsive 3-Column on Desktop */}
-      <div className="flex-grow flex flex-col lg:flex-row overflow-hidden w-full min-h-0">
+      <div className="k-app-layout flex-grow flex flex-col lg:flex-row overflow-hidden w-full min-h-0">
         {/* Left Sidebar Menu (Desktop only) */}
         <MenuSidebar
           showAdmin={adminPermissions.length > 0}
           onOpenAdmin={() => setShowAdminPanel(true)}
-          className="hidden lg:flex lg:w-64 border-r border-slate-800/80 bg-slate-950 flex-col p-4 shrink-0 overflow-y-auto select-none gap-4 h-full"
+          className="hidden lg:flex lg:w-64 flex-col shrink-0 overflow-y-auto select-none h-full"
           activeMode={playMode}
           onSelectMode={handleModeChange}
-          onOpenFriends={() => setShowFriendsPage(true)}
-          onOpenProfile={() => setShowProfilePage(true)}
-          onOpenStore={() => setShowPurchaseModal(true)}
+          onOpenFriends={() => { if (requireAccount()) setShowFriendsPage(true); }}
+          onOpenProfile={() => { if (requireAccount()) setShowProfilePage(true); }}
+          onOpenStore={() => { if (requireAccount()) setShowPurchaseModal(true); }}
           onOpenPlayers={() => { setShowPlayerDirectory(true); fetchPlayersDirectory(); }}
           unreadLoungeCount={unreadLoungeCount}
           muted={muted}
@@ -4675,22 +4814,24 @@ export default function App() {
           clockLimitType={clockLimitType}
           onSelectClockLimit={setClockLimitType}
           kenLevelId={kenLevelId}
-          onSelectKenLevel={setKenLevelId}
+          onSelectKenLevel={handleSidebarKenLevel}
           boardScale={boardScale}
           onSelectBoardScale={setBoardScale}
         />
 
         {/* Center Screen: Game Board Section */}
-        <main className={`flex-1 min-h-0 min-w-0 flex flex-col ${isBoardScreenActive ? "items-center justify-center overflow-hidden" : playMode === "Global_Chat" ? "items-stretch justify-start overflow-hidden" : "items-stretch justify-start overflow-y-auto"} relative bg-[#070913] w-full`}>
+        <main className={`flex-1 min-h-0 min-w-0 flex flex-col ${isBoardScreenActive ? "items-center justify-center overflow-hidden" : playMode === "Global_Chat" ? "items-stretch justify-start overflow-hidden" : "items-stretch justify-start overflow-y-auto"} relative k-app-main w-full`}>
+          <Suspense fallback={<div role="status" className="flex min-h-40 items-center justify-center text-xs text-slate-400">Loading…</div>}>
           {playMode === "Home" ? (
             <HomeLobby
               username={username || "Player"}
+              isGuest={guestMode}
               coinBalance={coinBalance}
               profileStats={profileStats}
               recentGames={myGamesList}
               onSelectMode={handleModeChange}
-              onOpenStore={() => setShowPurchaseModal(true)}
-              onOpenProfile={() => setShowProfilePage(true)}
+              onOpenStore={() => { if (requireAccount("Sign in to use Kentro Coins and the shop.")) setShowPurchaseModal(true); }}
+              onOpenProfile={() => { if (requireAccount("Sign in to create your profile and save your results.")) setShowProfilePage(true); }}
               liveGames={liveRoomsList}
               communityGames={savedGamesList}
               onWatchLive={handleSpectateRoom}
@@ -4705,10 +4846,23 @@ export default function App() {
               setKenLevelId={setKenLevelId}
               onOpenComputerModal={() => setShowComputerConfigModal(true)}
               onUnlockKenLevel={handleUnlockKenLevel}
-              onSignOut={() => {
+              onOpenNotifications={() => setShowNotifications(true)}
+              onOpenKentroTV={() => handleModeChange("KentroTV")}
+              unreadNotificationCount={notificationManager.unread}
+              onSignOut={guestMode ? undefined : () => {
                 signOutUser().catch((err) => console.error("Sign out failed:", err));
               }}
             />
+          ) : playMode === "KentroTV" ? (
+            <KentroTV
+              liveRooms={liveRoomsList}
+              onRefresh={handleFetchLiveRooms}
+              onWatch={handleSpectateRoom}
+              onBack={() => { setInitialReplay(null); window.history.replaceState(window.history.state, "", window.location.pathname); handleModeChange("Home"); }}
+              initialReplay={initialReplay}
+            />
+          ) : playMode === "OfflineNearby" ? (
+            <OfflineNearby username={username || "Player"} onBack={() => { window.history.replaceState({}, "", window.location.pathname); handleModeChange("Home"); }} />
           ) : playMode === "Learn" ? (
             <ComingSoonPane
               icon={GraduationCap}
@@ -4743,6 +4897,7 @@ export default function App() {
           ) : playMode === "Multiplayer" && !multiplayerStarted ? (
             <LobbyDashboard
               username={username || ""}
+              isGuest={guestMode}
               connectionStatus={connectionStatus}
               onlineUsers={onlineUsers}
               openRooms={openRooms}
@@ -4755,7 +4910,8 @@ export default function App() {
               setRoomInput={setRoomInput}
               ws={ws}
               onSignOut={() => {
-                signOutUser().catch((err) => console.error("Sign out failed:", err));
+                if (guestMode) { setGuestActive(false); setGuestEnabled(false); setUsername(null); gameSocket.disconnect(); }
+                else signOutUser().catch((err) => console.error("Sign out failed:", err));
               }}
               onSelectMode={handleModeChange}
               chatInput={chatInput}
@@ -4774,6 +4930,8 @@ export default function App() {
               onReconnect={handleReconnect}
               pendingHostMatch={pendingHostMatch}
               pendingJoinRoom={pendingJoinRoom}
+              inviteRoomCode={inviteRoomCode}
+              onDismissInvite={dismissRoomInvite}
               pendingRoomPreview={pendingRoomPreview}
               onJoinRoomAccept={handleJoinRoomAccept}
               onJoinRoomRefuse={handleJoinRoomRefuse}
@@ -4858,7 +5016,7 @@ export default function App() {
                 }
 
                 setIsTournamentGameInProgress(true);
-                localStorage.setItem("lidraughts_tournament_game_in_progress", "true");
+                safeStorage.setItem("lidraughts_tournament_game_in_progress", "true");
                 setStatusMessage(`Tournament Match: Playing against ${opponent}. Time Limit: ${timeControl}. Handicap: ${handicap}. Good luck!`);
                 playGameStartSound(muted);
               }}
@@ -4908,6 +5066,8 @@ export default function App() {
               inlineNotice={moveRejectedError}
               isMobile={isMobile}
               boardScale={boardScale}
+              focusMode={focusMode}
+              setFocusMode={setFocusMode}
               engineEval={engineEval}
               isFlipped={isFlipped}
               setIsFlipped={setIsFlipped}
@@ -4967,14 +5127,14 @@ export default function App() {
                 : null
               }
               whiteName={
-                playMode === "Multiplayer" ? (roomPlayers.find((p) => p.color === "W")?.username || "White")
+                playMode === "Multiplayer" ? guestDisplayName(roomPlayers.find((p) => p.color === "W")?.username || "White")
                 : playMode === "Human_vs_AI" ? (username || "You")
                 : playMode === "AI_vs_Human" ? `Ken ${kenLevelId}`
                 : playMode === "Tournament" ? (yourColor === "W" ? (username || "You") : (activeTournamentOpponent || `Ken ${getTournamentKenLevelId(tournamentRound)}`))
                 : "White"
               }
               blackName={
-                playMode === "Multiplayer" ? (roomPlayers.find((p) => p.color === "B")?.username || "Black")
+                playMode === "Multiplayer" ? guestDisplayName(roomPlayers.find((p) => p.color === "B")?.username || "Black")
                 : playMode === "Human_vs_AI" ? `Ken ${kenLevelId}`
                 : playMode === "AI_vs_Human" ? (username || "You")
                 : playMode === "Tournament" ? (yourColor === "B" ? (username || "You") : (activeTournamentOpponent || `Ken ${getTournamentKenLevelId(tournamentRound)}`))
@@ -5035,11 +5195,12 @@ export default function App() {
               isCallActive={isCallActive}
             />
           )}
+          </Suspense>
         </main>
 
         {/* Right Sidebar (Desktop only) */}
-        {!(playMode === "Global_Chat") && !(playMode === "Multiplayer" && !multiplayerStarted) && playMode !== "Editor" && (
-          <section className="hidden lg:flex w-full lg:w-96 border-l border-slate-800/80 bg-slate-950/45 p-4 flex-col gap-4 select-none overflow-y-auto shrink-0 h-full">
+        {isBoardScreenActive && playMode !== "Editor" && (
+          <section className="k-game-desk hidden lg:flex w-full lg:w-96 border-l border-slate-800/80 bg-slate-950/45 p-4 flex-col gap-4 select-none overflow-y-auto shrink-0 h-full">
             {/* Section title */}
             <div className="flex justify-between items-center shrink-0 border-b border-slate-900 pb-2.5">
               <h3 className="text-xs font-extrabold uppercase tracking-widest text-slate-400 flex items-center gap-1.5 font-sans">
@@ -5087,6 +5248,7 @@ export default function App() {
         setClockLimitType={setClockLimitType}
         kenLevelId={kenLevelId}
         setKenLevelId={setKenLevelId}
+        onSelectKenLevel={handleSidebarKenLevel}
         boardScale={boardScale}
         setBoardScale={setBoardScale}
         sidebarContent={sidebarContent}
@@ -5129,6 +5291,26 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {playMode !== "Home" && !isBoardScreenActive && (
+        <button type="button" onClick={() => setShowNotifications(true)} aria-label={`Open notifications, ${notificationManager.unread} unread`}
+          className="fixed bottom-20 right-4 z-[45] rounded-full border border-amber-500/30 bg-slate-900 p-3 shadow-2xl hover:bg-slate-800">
+          <span className="relative"><span className="text-amber-400">🔔</span>{notificationManager.unread > 0 && <span className="absolute -top-3 -right-3 rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">{notificationManager.unread > 9 ? "9+" : notificationManager.unread}</span>}</span>
+        </button>
+      )}
+      <NotificationCenter
+        userId={authUser?.id || null}
+        open={showNotifications}
+        onClose={() => setShowNotifications(false)}
+        onNavigate={(path) => {
+          if (playMode === "Multiplayer" && roomId && !isSpectating && !serverGameEnd && multiplayerStarted) {
+            showInlineNotice("Finish or leave your live match before opening a notification.", 5000);
+            return;
+          }
+          window.location.assign(path);
+        }}
+        manager={notificationManager}
+      />
 
       {/* Grandmaster's Lounge message notification -- visible everywhere,
           including mid-game. Tap to jump straight to the Lounge. */}
@@ -5305,6 +5487,10 @@ export default function App() {
         setCustomBorder={setCustomBorder}
         boardScale={boardScale}
         setBoardScale={setBoardScale}
+        focusMode={focusMode}
+        setFocusMode={setFocusMode}
+        reducedMotion={reducedMotion}
+        setReducedMotion={setReducedMotion}
         onReplaySplash={() => setShowSplash(true)}
       />
 
@@ -5400,6 +5586,7 @@ export default function App() {
         purchaseSubmitted={purchaseSubmitted}
         onUnlockKenLevel={handleUnlockKenLevel}
         onOpenStore={() => {
+          if (!requireAccount("Sign in to purchase Kentro Coins and unlock premium levels.")) return;
           setPurchaseError(null);
           setPurchaseSubmitted(false);
           setPurchaseReceiptRef("");
@@ -5407,13 +5594,17 @@ export default function App() {
           playClickSound(muted);
         }}
         onApplyStart={() => {
+          if (guestMode) {
+            if (!takeGuestAiTrial()) return;
+            guestAiStartReservedRef.current = true;
+          }
           // Starting from the Editor: the config modal opens while playMode
           // is still "Editor". Unless the player happened to toggle a side,
           // the game would "start" with no AI allowed to move and every tap
           // still painting pieces. Force a real AI mode first.
           if (!AI_MODES.includes(playMode)) setPlayMode("Human_vs_AI");
           setShowComputerConfigModal(false);
-          localStorage.removeItem(AI_GAME_STORAGE_KEY);
+          safeStorage.removeItem(AI_GAME_STORAGE_KEY);
           handleNewGame(pendingSandboxBoard || undefined, pendingSandboxBoard ? editorTurn : undefined);
           setPendingSandboxBoard(null);
           playPromoSound(muted);
@@ -5460,21 +5651,22 @@ export default function App() {
         hideRematch={seriesInProgress || (playMode === "Multiplayer" && isSpectating)}
       />
 
-      <PastGamesModal
+      {showPastGamesModal && <Suspense fallback={null}><PastGamesModal
         open={showPastGamesModal}
         onClose={() => setShowPastGamesModal(false)}
         myGamesList={myGamesList}
         savedGamesList={savedGamesList}
         initialFilter={pastGamesModalFilter}
+        fetchMyGames={() => { void fetchMyGames(1000); }}
         username={username || "Player"}
         onAnalyzeGame={(g) => {
           handleLoadSavedGame(g);
           setShowPastGamesModal(false);
           setPlayMode("Analysis");
         }}
-      />
+      /></Suspense>}
 
-      <AnalysisLabModal
+      {showAnalysisLabModal && <Suspense fallback={null}><AnalysisLabModal
         open={showAnalysisLabModal}
         onClose={() => setShowAnalysisLabModal(false)}
         initialTab={analysisLabTab}
@@ -5509,7 +5701,7 @@ export default function App() {
           setShowAnalysisLabModal(false);
           handleModeChange("Human_vs_AI");
         }}
-      />
+      /></Suspense>}
 
       <SandboxPlayChoiceModal
         open={showSandboxPlayChoice}
@@ -5520,7 +5712,7 @@ export default function App() {
         setEditorTurn={setEditorTurn}
       />
 
-      <PlayerDirectoryModal
+      {showPlayerDirectory && <Suspense fallback={null}><PlayerDirectoryModal
         open={showPlayerDirectory}
         onClose={() => {
           setShowPlayerDirectory(false);
@@ -5549,12 +5741,12 @@ export default function App() {
           setViewingPlayer(null);
           setPlayMode("Analysis");
         }}
-      />
+      /></Suspense>}
 
-      {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} />}
+      {showAdminPanel && <Suspense fallback={null}><AdminPanel onClose={() => setShowAdminPanel(false)} /></Suspense>}
 
       {showProfilePage && (
-        <ProfilePage
+        <Suspense fallback={null}><ProfilePage
           username={username || "Player"}
           profileStats={profileStats}
           coinBalance={coinBalance}
@@ -5564,11 +5756,11 @@ export default function App() {
           onSignOut={() => {
             signOutUser().catch((err) => console.error("Sign out failed:", err));
           }}
-        />
+        /></Suspense>
       )}
 
       {showFriendsPage && (
-        <FriendsPage
+        <Suspense fallback={null}><FriendsPage
           username={username || "Player"}
           userElo={profileStats.elo}
           myGamesList={myGamesList}
@@ -5577,7 +5769,7 @@ export default function App() {
             handleModeChange("Global_Chat");
           }}
           onClose={() => setShowFriendsPage(false)}
-        />
+        /></Suspense>
       )}
 
       {/* Live In-Game Sharp Video Call Overlay */}

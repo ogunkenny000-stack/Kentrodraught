@@ -175,18 +175,39 @@ export function useClockTicker(snap: ClockSnapshot | null | undefined, intervalM
   useEffect(() => {
     lastKeyRef.current = readingKey(snap, Date.now());
     if (!snap || snap.clock.running === null) return;
-    const id = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const remaining = clockRemainingMs(snap, snap.clock.running as Color);
+      if (remaining <= 0) return;
+      // Wake just after the NEXT visible second changes. This replaces four
+      // 250ms wake-ups per second (per clock) with ~one; no extra App renders.
+      // The 15ms margin avoids waking just before a display boundary.
+      const toBoundary = remaining % 1000 || 1000;
+      const delay = Math.max(30, Math.min(1015, Math.ceil(toBoundary) + 15));
+      timer = setTimeout(tick, delay);
+    };
+    const tick = () => {
+      timer = null;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       const now = Date.now();
       const key = readingKey(snap, now);
       if (key !== lastKeyRef.current) {
         lastKeyRef.current = key;
         force();
       }
-      // The running side hit zero: nothing further can change until the
-      // server (or the local flag) sends a new snapshot.
-      if (clockRemainingMs(snap, snap.clock.running as Color, now) <= 0) clearInterval(id);
-    }, intervalMs);
-    return () => clearInterval(id);
+      schedule();
+    };
+    const onVisible = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') tick();
+    };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
+    schedule();
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [snap, intervalMs]);
 
   const now = Date.now();

@@ -16,4 +16,4 @@ nd_upgraded/scan_nigerian.exe
 scripts/e2e/out/
 
 # Server runtime data (game records, sequence counter) -- never commit
-data/
+/data/

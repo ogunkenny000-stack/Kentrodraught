@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { KentroGameRecord, RematchSeriesData, SeriesGameSummary } from "../types/gameRecords";
+import { uniqueCompletedMatches } from "../lib/completedMatches";
 import { getSupabaseAdmin } from "../../supabaseAdmin";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -580,7 +581,7 @@ export async function getRecentGameRecords(limit: number = 25): Promise<KentroGa
     .sort((a, b) => b.gameEndTime - a.gameEndTime);
 
   if (all.length >= limit || !supabaseConfigured()) {
-    return all.slice(0, limit);
+    return uniqueCompletedMatches(all).slice(0, limit);
   }
 
   // Complement with Supabase if cache is small
@@ -601,9 +602,8 @@ export async function getRecentGameRecords(limit: number = 25): Promise<KentroGa
     console.warn("[GameRecords] Failed to query recent games from Supabase:", err);
   }
 
-  return Array.from(recordsCache.values())
-    .filter(g => g.gameEndTime > 0 || g.completeMoveHistory.length > 0)
-    .sort((a, b) => b.gameEndTime - a.gameEndTime)
+  return uniqueCompletedMatches(Array.from(recordsCache.values())
+    .filter(g => g.gameEndTime > 0 || g.completeMoveHistory.length > 0))
     .slice(0, limit);
 }
 

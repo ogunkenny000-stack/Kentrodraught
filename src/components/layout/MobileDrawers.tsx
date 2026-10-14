@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
 import { MenuSidebar } from "../MenuSidebar";
@@ -26,6 +26,7 @@ export interface MobileDrawersProps {
   setClockLimitType: React.Dispatch<React.SetStateAction<"Blitz" | "Rapid" | "Classical" | "Untimed">>;
   kenLevelId: number;
   setKenLevelId: React.Dispatch<React.SetStateAction<number>>;
+  onSelectKenLevel?: (id: number) => void;
   boardScale: number;
   setBoardScale: React.Dispatch<React.SetStateAction<number>>;
   /** Arena Desk content for the right drawer */
@@ -44,8 +45,17 @@ export function MobileDrawers(props: MobileDrawersProps) {
     setShowPurchaseModal, setShowPlayerDirectory, fetchPlayersDirectory,
     unreadLoungeCount, muted, setMuted, setShowRules,
     boardTheme, setBoardTheme, clockLimitType, setClockLimitType,
-    kenLevelId, setKenLevelId, boardScale, setBoardScale, sidebarContent,
+    kenLevelId, setKenLevelId, onSelectKenLevel, boardScale, setBoardScale, sidebarContent,
   } = props;
+
+  useEffect(() => {
+    if (!isLeftDrawerOpen && !isRightDrawerOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setIsLeftDrawerOpen(false); setIsRightDrawerOpen(false); }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [isLeftDrawerOpen, isRightDrawerOpen, setIsLeftDrawerOpen, setIsRightDrawerOpen]);
 
   return (
     <>
@@ -61,14 +71,16 @@ export function MobileDrawers(props: MobileDrawersProps) {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="w-80 max-w-[85vw] h-full bg-[#070913] border-r border-slate-800 flex flex-col shadow-2xl relative"
+              role="dialog" aria-modal="true" aria-label="Navigation menu"
+              className="k-drawer-panel w-80 max-w-[85vw] h-full bg-[#070913] border-r border-slate-800 flex flex-col shadow-2xl relative"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drawer header close button */}
               <div className="flex justify-between items-center p-4 pt-[max(1rem,env(safe-area-inset-top))] border-b border-slate-900 shrink-0 bg-slate-950/50">
-                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Game Controls</span>
+                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Navigation</span>
                 <button
                   onClick={() => setIsLeftDrawerOpen(false)}
+                  aria-label="Close navigation"
                   className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -100,7 +112,7 @@ export function MobileDrawers(props: MobileDrawersProps) {
                   clockLimitType={clockLimitType}
                   onSelectClockLimit={setClockLimitType}
                   kenLevelId={kenLevelId}
-                  onSelectKenLevel={setKenLevelId}
+                  onSelectKenLevel={onSelectKenLevel || setKenLevelId}
                   boardScale={boardScale}
                   onSelectBoardScale={setBoardScale}
                 />
@@ -122,14 +134,16 @@ export function MobileDrawers(props: MobileDrawersProps) {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="w-80 max-w-[85vw] h-full bg-[#070913] border-l border-slate-800 flex flex-col shadow-2xl ml-auto relative"
+              role="dialog" aria-modal="true" aria-label="Match details"
+              className="k-drawer-panel w-80 max-w-[85vw] h-full bg-[#070913] border-l border-slate-800 flex flex-col shadow-2xl ml-auto relative"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drawer header close button */}
               <div className="flex justify-between items-center p-4 pt-[max(1rem,env(safe-area-inset-top))] border-b border-slate-900 shrink-0 bg-slate-950/50">
-                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Desk & Scorecard</span>
+                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Match details</span>
                 <button
                   onClick={() => setIsRightDrawerOpen(false)}
+                  aria-label="Close match details"
                   className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />

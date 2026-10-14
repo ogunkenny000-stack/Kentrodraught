@@ -70,6 +70,8 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     Promise.all([
       caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS)).catch(() => {}),
+      // Only the entry script and startup styles are pre-downloaded.
+      // Optional routes (TV, academy, tournaments, etc.) load on demand.
       caches.open(ASSET_CACHE).then((cache) => cache.addAll(PRECACHE_ASSETS)).catch(() => {}),
     ])
   );
@@ -191,4 +193,39 @@ self.addEventListener("fetch", (event) => {
       })()
     );
   }
+});
+
+// Web Push: display only a same-origin route. Clicking takes the player to
+// the correct game invite / replay / tournament; no game state is cached.
+self.addEventListener("push", (event) => {
+  event.waitUntil((async () => {
+    let payload;
+    try { payload = event.data ? event.data.json() : null; } catch { return; }
+    if (!payload || typeof payload.title !== "string") return;
+    const raw = typeof payload.url === "string" ? payload.url : "/";
+    const url = raw.startsWith("/") && !raw.startsWith("//") && !raw.includes("\\") ? raw : "/";
+    await self.registration.showNotification(payload.title.slice(0,150), {
+      body: String(payload.body || "").slice(0,500),
+      icon: "/icon-192.png", badge: "/icon-192.png",
+      tag: String(payload.tag || "kentro-alert").slice(0,100),
+      data: {url},
+    });
+  })());
+});
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const raw = event.notification?.data?.url;
+  const path = typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") && !raw.includes("\\") ? raw : "/";
+  const url = new URL(path, self.location.origin).href;
+  event.waitUntil((async () => {
+    const clientsList = await self.clients.matchAll({type:"window",includeUncontrolled:true});
+    for (const client of clientsList) {
+      if (client.url.startsWith(self.location.origin)) {
+        await client.navigate(url);
+        await client.focus();
+        return;
+      }
+    }
+    await self.clients.openWindow(url);
+  })());
 });

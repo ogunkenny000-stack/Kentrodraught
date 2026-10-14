@@ -47,6 +47,8 @@ export interface GameScreenProps {
   inlineNotice?: string | null;
   isMobile: boolean;
   boardScale: number;
+  focusMode: boolean;
+  setFocusMode: (value: boolean) => void;
   engineEval: EngineEval;
   isFlipped: boolean;
   setIsFlipped: React.Dispatch<React.SetStateAction<boolean>>;
@@ -164,7 +166,7 @@ export function GameScreen(props: GameScreenProps) {
     playMode, roomId, multiplayerStarted, multiplayerGameTime, multiplayerSpecialRule,
     copiedRoomCode, setCopiedRoomCode, ws, handleModeChange, isComputerMode,
     setShowComputerConfigModal, kenLevelId, isThinking, turn, statusMessage, stats,
-    activePuzzleId, clockLimitType, clock, connectionStatus, sendMessage, inlineNotice, isMobile, boardScale,
+    activePuzzleId, clockLimitType, clock, connectionStatus, sendMessage, inlineNotice, isMobile, boardScale, focusMode, setFocusMode,
     reconnectAttempts = 0, onReconnect, onLeaveSpectate, premove, obligatoryCaptureSquares, pingMs,
     engineEval, isFlipped, setIsFlipped, isEditorMode, boardTheme, activeThemeColors,
     customBorder, customDarkSquare, customLightSquare, boardArenaRef, floatingEmojis,
@@ -194,6 +196,25 @@ export function GameScreen(props: GameScreenProps) {
   const [copiedFen, setCopiedFen] = useState(false);
   const [copiedPdn, setCopiedPdn] = useState(false);
   const [showThreatArrow, setShowThreatArrow] = useState(true);
+  const [boardToolsOpen, setBoardToolsOpen] = useState(false);
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.key.toLowerCase() !== "z" || event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+      if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      event.preventDefault();
+      setFocusMode(!focusMode);
+    };
+    window.addEventListener("keydown", onShortcut);
+    return () => window.removeEventListener("keydown", onShortcut);
+  }, [focusMode, setFocusMode]);
+  useEffect(() => {
+    if (!boardToolsOpen) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setBoardToolsOpen(false); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [boardToolsOpen]);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
 
   // High-performance pointer tracking for instant mobile tap response (<18px touch jitter tolerance)
@@ -384,108 +405,30 @@ export function GameScreen(props: GameScreenProps) {
 
   return (
     <>
-      <div className="flex-1 w-full h-full max-h-full flex flex-col items-center justify-between p-1 sm:p-2.5 overflow-hidden select-none relative bg-[#070913]">
+      <div className="k-match-screen flex-1 w-full h-full max-h-full flex flex-col items-center justify-between p-1 sm:p-2.5 overflow-hidden select-none relative">
 
         {/* ========================================================================= */}
         {/* 1. TOP SUB-HEADER: CLEAN QUICK ACTIONS & STATUS */}
         {/* ========================================================================= */}
-        <div className="w-full max-w-[min(96vw,520px)] flex items-center justify-between px-1 shrink-0 gap-2 h-7 sm:h-8">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <button
-              onClick={() => {
-                if (activePuzzleId && onExitPuzzles) {
-                  onExitPuzzles();
-                } else if (isSpectating && onLeaveSpectate) {
-                  onLeaveSpectate();
-                } else {
-                  handleModeChange("Home");
-                }
-              }}
-              className="text-[11px] font-black text-amber-400 hover:text-amber-300 bg-slate-900/90 py-1 px-2.5 rounded-xl border border-amber-500/40 flex items-center gap-1 transition cursor-pointer shrink-0 shadow-sm active:scale-95"
-              title={isSpectating ? "Leave this game and return to Lobby" : "Return to Home Lobby"}
-            >
-              <ArrowLeft className="w-3.5 h-3.5 text-amber-400" />
-              <span>{isSpectating ? "Exit Game" : "Back"}</span>
-            </button>
-
-            {isComputerMode && (
-              <button
-                onClick={() => setShowComputerConfigModal(true)}
-                className="text-[10px] font-bold text-amber-400 bg-slate-900/90 py-1 px-2 rounded-xl border border-amber-500/30 flex items-center gap-1 transition cursor-pointer shrink-0 shadow-sm"
-              >
-                <Cpu className="w-3 h-3 text-amber-500" />
-                <span>Lvl {kenLevelId}</span>
-              </button>
-            )}
-
-            {/* Turn status pill */}
-            <div className="text-[10px] font-bold text-slate-300 bg-slate-900/90 py-1 px-2.5 rounded-xl border border-slate-800/80 flex items-center gap-1.5 truncate">
-              <span className={`w-2 h-2 rounded-full shrink-0 ${isThinking ? "bg-amber-500 animate-pulse" : turn === "W" ? "bg-white" : "bg-neutral-800 border border-neutral-700"}`} />
-              <span className="truncate max-w-[130px] sm:max-w-[200px] font-sans text-slate-200">{statusMessage}</span>
-            </div>
-
-            {/* Connection badge: visible on every layout while the link is down (H2) */}
-            {playMode === "Multiplayer" && connectionStatus && connectionStatus !== "connected" && (
-              <div
-                className="text-[10px] font-black text-amber-300 bg-amber-500/15 py-1 px-2.5 rounded-xl border border-amber-500/40 flex items-center gap-1.5 shrink-0 animate-pulse"
-                title="Moves are paused until the connection is back"
-              >
-                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                <span className="font-sans">Reconnecting…</span>
-              </div>
-            )}
-
-            {/* Live real-time latency ping badge when connected */}
-            {playMode === "Multiplayer" && connectionStatus === "connected" && typeof pingMs === "number" && (
-              <div
-                className={`text-[9px] font-mono font-bold py-1 px-2 rounded-xl border flex items-center gap-1.5 shrink-0 transition ${
-                  pingMs < 120
-                    ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
-                    : pingMs < 280
-                    ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
-                    : "bg-rose-500/15 border-rose-500/30 text-rose-300 animate-pulse"
-                }`}
-                title={`Live server ping: ${pingMs}ms. ${pingMs < 120 ? 'Optimal connection' : pingMs < 280 ? 'Good network' : 'High network delay'}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pingMs < 120 ? "bg-emerald-400" : pingMs < 280 ? "bg-amber-400" : "bg-rose-400"}`} />
-                <span>{pingMs > 0 ? `${pingMs}ms` : "Syncing"}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Quick Right Action: Flip Board, Arrow Toggle & 1-50 Toggle */}
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={() => setShowThreatArrow(!showThreatArrow)}
-              className={`p-1.5 rounded-xl border transition cursor-pointer active:scale-95 ${
-                showThreatArrow
-                  ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-                  : "bg-slate-900/90 border-slate-800/80 text-slate-400 hover:text-slate-200"
-              }`}
-              title={showThreatArrow ? "Hide Engine Best Move Arrow" : "Show Engine Best Move Arrow"}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            </button>
-
-            <button
-              onClick={() => setIsFlipped(!isFlipped)}
-              className="p-1.5 rounded-xl bg-slate-900/90 border border-slate-800/80 text-slate-300 hover:text-white transition cursor-pointer active:scale-95"
-              title="Flip Board"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-
-            <button
-              onClick={() => setShowSquareNumbers(!showSquareNumbers)}
-              className={`px-2 py-1 rounded-xl text-[10px] font-mono font-black border transition cursor-pointer active:scale-95 ${
-                showSquareNumbers
-                  ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-                  : "bg-slate-900/90 border-slate-800/80 text-slate-400 hover:text-slate-200"
-              }`}
-              title="Toggle Square Numbers (1-50)"
-            >
-              1-50
-            </button>
+        <div className="k-match-toolbar" role="toolbar" aria-label="Game toolbar">
+          <button
+            type="button"
+            className="k-match-back"
+            onClick={() => { if(activePuzzleId && onExitPuzzles) onExitPuzzles(); else if(isSpectating && onLeaveSpectate) onLeaveSpectate(); else handleModeChange("Home"); }}
+            aria-label="Leave game"
+          ><ArrowLeft size={18}/><span>Back</span></button>
+          <div className="k-match-state" role="status" aria-live="polite"><span className={`k-turn-indicator ${isThinking ? "thinking" : turn === "W" ? "gold" : "black"}`}/><span>{statusMessage}</span></div>
+          {playMode === "Multiplayer" && connectionStatus !== "connected" && <span className="k-match-reconnect">Reconnecting…</span>}
+          {playMode === "Multiplayer" && connectionStatus === "connected" && typeof pingMs === "number" && <span className="k-match-ping" title={`Server latency: ${pingMs} ms`}>{pingMs > 0 ? `${pingMs} ms` : "Syncing"}</span>}
+          <div className="k-match-tools-wrapper"><button type="button" className="k-match-more" aria-label="Board options" aria-expanded={boardToolsOpen} onClick={() => setBoardToolsOpen(v => !v)}><MenuIcon size={19}/><span>Options</span></button>
+            {boardToolsOpen && <div className="k-match-tools-popover" role="group" aria-label="Board options">
+              {isComputerMode && <button onClick={() => {setShowComputerConfigModal(true);setBoardToolsOpen(false);}}><Cpu size={17}/> Engine Ken · Level {kenLevelId}</button>}
+              <button onClick={() => {setIsFlipped(!isFlipped);setBoardToolsOpen(false);}}><RefreshCw size={17}/> Flip board</button>
+              <button onClick={() => {setShowSquareNumbers(!showSquareNumbers);setBoardToolsOpen(false);}}><Layout size={17}/> {showSquareNumbers ? "Hide" : "Show"} square numbers</button>
+              <button onClick={() => {setFocusMode(!focusMode);setBoardToolsOpen(false);}} aria-pressed={focusMode}><Eye size={17}/> {focusMode ? "Exit focus mode" : "Focus on board"}</button>
+              <button onClick={() => {setShowThreatArrow(!showThreatArrow);setBoardToolsOpen(false);}}><Sparkles size={17}/> {showThreatArrow ? "Hide" : "Show"} best-move arrow</button>
+              {onOpenSettings && <button onClick={() => { onOpenSettings(); setBoardToolsOpen(false); }}><SettingsIcon size={17}/> All settings</button>}
+            </div>}
           </div>
         </div>
 
@@ -874,7 +817,7 @@ export function GameScreen(props: GameScreenProps) {
         {/* 3. 10x10 DRAUGHTS BOARD ARENA */}
         {/* ========================================================================= */}
         <div 
-          className="flex gap-1.5 w-full max-w-[min(96vw,540px)] aspect-square relative flex-row justify-center items-center shrink-0 my-1"
+          className="k-match-stage flex gap-1.5 w-full max-w-[min(98vw,680px)] aspect-square relative flex-row justify-center items-center shrink-0 my-1"
           style={
             !isMobile && boardScale !== 100
               ? {
@@ -894,7 +837,9 @@ export function GameScreen(props: GameScreenProps) {
           {/* Checkerboard Arena */}
           <div 
             ref={boardArenaRef}
-            className={`relative aspect-square w-full h-full rounded-2xl shadow-2xl p-1.5 my-auto overflow-hidden border-4 transition-colors ${boardTheme === "custom" ? "" : `${activeThemeColors.boardBg} ${activeThemeColors.border}`}`}
+            className={boardTheme === "wood"
+              ? "kentro-royal-frame relative aspect-square w-full h-full my-auto overflow-hidden"
+              : `relative aspect-square w-full h-full rounded-2xl shadow-2xl p-1.5 my-auto overflow-hidden border-4 transition-colors ${boardTheme === "custom" ? "" : `${activeThemeColors.boardBg} ${activeThemeColors.border}`}`}
             style={boardTheme === "custom" ? { backgroundColor: customBorder, borderColor: customBorder } : undefined}
           >
             {/* Floating Emojis Reaction Overlay */}
@@ -950,7 +895,7 @@ export function GameScreen(props: GameScreenProps) {
             </div>
 
             {/* 10x10 Grid Blocks */}
-            <div className="w-full h-full grid grid-cols-10 grid-rows-10 rounded-lg overflow-hidden border border-slate-950/20">
+            <div className={`w-full h-full grid grid-cols-10 grid-rows-10 overflow-hidden ${boardTheme === "wood" ? "kentro-royal-grid" : "rounded-lg border border-slate-950/20"}`}>
               {displayRows.map((r) =>
                 displayCols.map((c) => {
                   const sq = ngRcToSq(r, c);
@@ -1007,8 +952,10 @@ export function GameScreen(props: GameScreenProps) {
                         if (sq !== null) handleSquareClick(sq);
                       }}
                       className={`relative w-full h-full flex items-center justify-center transition-colors duration-100 touch-manipulation select-none ${
-                        boardTheme === "custom" 
-                          ? "hover:brightness-110" 
+                        boardTheme === "wood"
+                          ? (isDark ? "kentro-wood-dark" : "kentro-wood-light")
+                          : boardTheme === "custom"
+                          ? "hover:brightness-110"
                           : isDark ? `${activeThemeColors.darkSquare} hover:brightness-110` : activeThemeColors.lightSquare
                       } ${sq !== null ? "cursor-pointer" : "cursor-default"}`}
                       style={{
@@ -1070,27 +1017,13 @@ export function GameScreen(props: GameScreenProps) {
                           animate={isCapturedAnim ? { scale: 0, opacity: 0, rotate: 180 } : { scale: 1, opacity: 1 }}
                           exit={{ scale: 0, opacity: 0 }}
                           transition={isCapturedAnim ? { duration: 0.35, ease: "easeIn" } : { duration: 0.12, ease: "easeOut" }}
-                          className={`relative h-[82%] aspect-square rounded-full shadow-lg flex items-center justify-center transition-shadow ${
-                            piece === "w" || piece === "W"
-                              ? "bg-gradient-to-br from-amber-50 to-amber-200 border border-amber-300"
-                              : "bg-gradient-to-br from-neutral-800 to-neutral-950 border border-neutral-900 shadow-neutral-950/70"
-                          } ${
-                            isCapturedAnim ? "z-30 ring-2 ring-rose-500/80 shadow-[0_0_15px_rgba(244,63,94,0.9)]" : ""
-                          }`}
+                          className={`kentro-royal-piece ${piece === "w" || piece === "W" ? "kentro-royal-piece--gold" : "kentro-royal-piece--black"} ${isCapturedAnim ? "z-30 ring-2 ring-rose-500/80" : ""}`}
+                          aria-label={`${piece === "W" || piece === "B" ? "King " : ""}${piece.toLowerCase() === "w" ? "Gold" : "Black"} piece`}
                         >
-                          {/* Concentric rings */}
-                          <div className={`absolute inset-1 rounded-full border border-dashed ${
-                            piece === "w" || piece === "W" ? "border-amber-400/35" : "border-neutral-700/50"
-                          }`} />
-                          <div className={`absolute inset-2 rounded-full border ${
-                            piece === "w" || piece === "W" ? "border-amber-400/25" : "border-neutral-700/30"
-                          }`} />
-
-                          {/* Flying King Crown Overlays */}
                           {(piece === "W" || piece === "B") && (
-                            <div className="relative z-20 flex items-center justify-center">
-                              <Crown className={`w-3.5 h-3.5 ${piece === "W" ? "text-amber-600 fill-amber-500" : "text-yellow-400 fill-yellow-500"} drop-shadow`} />
-                            </div>
+                            <span className="kentro-royal-king-mark" aria-hidden="true">
+                              <Crown className="w-[60%] h-[60%] text-yellow-100 fill-amber-600 drop-shadow" />
+                            </span>
                           )}
                         </motion.div>
                       )}

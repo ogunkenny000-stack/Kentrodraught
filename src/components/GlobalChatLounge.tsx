@@ -142,7 +142,7 @@ function GlobalChatLoungeImpl({
   }, []);
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#070913] text-slate-100 select-none overflow-hidden font-sans">
+    <div className="k-lounge w-full h-full flex flex-col bg-[#070913] text-slate-100 select-none overflow-hidden font-sans">
       {/* 1. TOP BRAND NAVIGATION HEADER */}
       <LoungeHeader
         username={username}

@@ -4,6 +4,7 @@ import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { APP_BUILD } from "./lib/constants";
 import './index.css';
+import './kentro-design.css';
 
 console.log(`%cKentro Draught build ${APP_BUILD}`, "color:#f59e0b;font-weight:bold");
 

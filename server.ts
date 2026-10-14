@@ -1,6 +1,6 @@
+import { Mutex } from "./src/server/engineMutex";
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { spawn, execSync, ChildProcess } from "child_process";
 import fs from "fs";
 import { WebSocketServer } from "ws";
@@ -23,6 +23,8 @@ import {
 } from "./src/server/gameRecordsManager";
 import { attachOnlinePlay } from "./src/server/onlinePlay";
 import { isScanFen, isEngineDepth, MAX_ENGINE_DEPTH, parseEngineMoveRequest } from "./src/server/engineRequest";
+import { accountForUsername, insertNotification, sendTournamentReminders } from "./src/server/notifications";
+import { deliverPendingPushes, safePushEndpoint, validateSubscription, vapidSettings } from "./src/server/webPush";
 
 // --- Kentro Coins + Admin Panel: temporarily disabled for launch ---
 // Both features route through the Supabase service-role client
@@ -62,98 +64,6 @@ class EngineLRUCache<V> {
 
   clear(): void {
     this.map.clear();
-  }
-}
-
-// Mutex to serialize access to the persistent C++ process's stdin/stdout,
-// with support for priority queuing, supersede preemption, and queue cancellation.
-class Mutex {
-  private highQueue: {
-    run: (release: () => void) => void;
-    supersedeKey?: string;
-    onSuperseded?: () => void;
-  }[] = [];
-  private lowQueue: {
-    run: (release: () => void) => void;
-    supersedeKey?: string;
-    onSuperseded?: () => void;
-  }[] = [];
-  private locked = false;
-  private currentSupersedeKey?: string;
-  private currentStopCallback?: () => void;
-
-  async acquire(
-    isHighPriority = true,
-    supersedeKey?: string,
-    onSuperseded?: () => void
-  ): Promise<() => void> {
-    // If a supersedeKey is provided, discard older waiting requests with the same key
-    if (supersedeKey) {
-      this.cancelWaiting(supersedeKey);
-      // If the currently active search shares this supersedeKey, stop it immediately to yield CPU
-      if (this.locked && this.currentSupersedeKey === supersedeKey && this.currentStopCallback) {
-        this.currentStopCallback();
-      }
-    }
-
-    return new Promise((resolve) => {
-      const release = () => {
-        this.currentSupersedeKey = undefined;
-        this.currentStopCallback = undefined;
-        if (this.highQueue.length > 0) {
-          const next = this.highQueue.shift();
-          if (next) {
-            this.currentSupersedeKey = next.supersedeKey;
-            next.run(release);
-            return;
-          }
-        }
-        if (this.lowQueue.length > 0) {
-          const next = this.lowQueue.shift();
-          if (next) {
-            this.currentSupersedeKey = next.supersedeKey;
-            next.run(release);
-            return;
-          }
-        }
-        this.locked = false;
-      };
-
-      if (this.locked) {
-        const item = {
-          run: (rel: () => void) => resolve(rel),
-          supersedeKey,
-          onSuperseded,
-        };
-        if (isHighPriority) {
-          this.highQueue.push(item);
-        } else {
-          this.lowQueue.push(item);
-        }
-      } else {
-        this.locked = true;
-        this.currentSupersedeKey = supersedeKey;
-        resolve(release);
-      }
-    });
-  }
-
-  registerCurrentStop(callback: () => void) {
-    this.currentStopCallback = callback;
-  }
-
-  cancelWaiting(supersedeKey: string) {
-    const filterQueue = (q: { run: (release: () => void) => void; supersedeKey?: string; onSuperseded?: () => void }[]) => {
-      return q.filter((item) => {
-        if (item.supersedeKey === supersedeKey) {
-          item.onSuperseded?.();
-          return false;
-        }
-        return true;
-      });
-    };
-    this.highQueue = filterQueue(this.highQueue);
-    this.lowQueue = filterQueue(this.lowQueue);
   }
 }
 
@@ -941,6 +851,10 @@ async function startServer() {
       if (err?.message === "Superseded") {
         return res.status(499).json({ error: "Superseded by newer request" });
       }
+      if (err?.message === "Engine queue busy") {
+        res.setHeader("Retry-After", "1");
+        return res.status(503).json({ error: "Engine is busy; please try again" });
+      }
       console.error("Ken Engine API Error:", err?.message || err);
       res.status(500).json({ error: "Failed to evaluate board position" });
     }
@@ -949,6 +863,58 @@ async function startServer() {
   app.get("/api/engine/health", async (_req, res) => {
     const isHealthy = await engine.ping();
     res.json({ ok: isHealthy, engine: "scan_nigerian" });
+  });
+
+  // VAPID key is public. Push keys/subscriptions are stored server-side only.
+  app.get("/api/notifications/push-config", (_req,res) => res.json({ publicKey: vapidSettings()?.publicKey || null }));
+  app.post("/api/notifications/push-subscribe", createRateLimiter({ windowMs:60_000,max:20 },"push-subscribe"), async (req,res) => {
+    try {
+      if (!vapidSettings()) return res.status(503).json({error:"Background push is not configured on this server."});
+      const token = String(req.headers.authorization||"").replace(/^Bearer\s+/i,"");
+      const uid = await verifyAccessToken(token);
+      if (!uid) return res.status(401).json({error:"Sign in to enable notifications."});
+      const subscription = validateSubscription(req.body?.subscription);
+      if (!subscription) return res.status(400).json({error:"Invalid push subscription."});
+      const allowed = ["challenge","friend","tournament","result","system"];
+      const categories = Array.isArray(req.body?.categories) ? req.body.categories.filter((v:unknown) => typeof v === "string" && allowed.includes(v)).slice(0,5) : allowed;
+      const {error} = await getSupabaseAdmin().from("kentro_push_subscriptions").upsert({endpoint:subscription.endpoint,recipient_id:uid,p256dh:subscription.keys.p256dh,auth:subscription.keys.auth,categories,last_seen_at:new Date().toISOString()},{onConflict:"endpoint"});
+      if (error) throw error;
+      res.json({ok:true});
+    } catch (err) {console.error("[Push] subscribe",err);res.status(503).json({error:"Could not save push subscription."});}
+  });
+  app.post("/api/notifications/push-unsubscribe", createRateLimiter({ windowMs:60_000,max:20 },"push-unsubscribe"),async (req,res)=>{
+    try {
+      const uid = await verifyAccessToken(String(req.headers.authorization||"").replace(/^Bearer\s+/i,""));
+      if (!uid) return res.status(401).json({error:"Sign in first."});
+      const endpoint = req.body?.endpoint;
+      if (!safePushEndpoint(endpoint)) return res.status(400).json({error:"Invalid endpoint."});
+      const {error} = await getSupabaseAdmin().from("kentro_push_subscriptions").delete().eq("recipient_id",uid).eq("endpoint",endpoint);
+      if (error) throw error;
+      res.json({ok:true});
+    } catch { res.status(503).json({error:"Unable to remove subscription."}); }
+  });
+
+  // Authenticated friend-to-friend online room challenge. Rate-limited, identity verified.
+  let canChallengeFromRoom: (room: string, name: string) => boolean = () => false;
+  app.post("/api/notifications/challenge", createRateLimiter({ windowMs: 60_000, max: 8 }, "friend-challenge"), async (req, res) => {
+    try {
+      const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const uid = await verifyAccessToken(token);
+      if (!uid) return res.status(401).json({ error: "Sign in to challenge a friend." });
+      const roomId = String(req.body?.roomId || "").toUpperCase();
+      const friend = String(req.body?.friendUsername || "").trim();
+      if (!/^[A-Z0-9]{4,10}$/.test(roomId) || !/^[\w .-]{2,40}$/.test(friend)) return res.status(400).json({ error: "Enter a valid room and friend username." });
+      const { data: profile } = await getSupabaseAdmin().from("profiles").select("username").eq("ownerId", uid).maybeSingle();
+      const sender = profile?.username;
+      if (!sender || !canChallengeFromRoom(roomId, sender)) return res.status(403).json({ error: "Host an open room before inviting a friend." });
+      const targetId = await accountForUsername(friend);
+      if (!targetId || targetId === uid) return res.status(404).json({ error: "That friend could not be found." });
+      const { data: friendship } = await getSupabaseAdmin().from("friends").select("id")
+        .eq("id", [sender.toLowerCase(), friend.toLowerCase()].sort().join("_")).eq("status", "accepted").maybeSingle();
+      if (!friendship) return res.status(403).json({ error: "You can only challenge connected friends." });
+      await insertNotification(targetId, "challenge", `${sender} challenged you!`, `Tap to join ${sender}'s draughts game.`, `/?room=${roomId}`, `challenge:${roomId}:${uid}`);
+      res.json({ ok: true });
+    } catch (err) { console.error("[Notifications] Challenge failed", err); res.status(503).json({ error: "Challenge delivery unavailable. Try copying the invite link." }); }
   });
 
   // --- Game Records, Results & Rematch System Endpoints ---
@@ -3161,6 +3127,8 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== "production") {
+    // Keep the large Vite dev server out of production's dependency graph.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -3179,13 +3147,53 @@ async function startServer() {
     });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    const assetsPath = path.join(distPath, 'assets') + path.sep;
+    const versioned = /-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|jpg|jpeg|webp|woff2?|ico)$/;
+    // Precompressed files cost no live CPU. This matters even without Go:
+    // a typical tiny MVP host should keep using the simpler Node-only mode.
+    const encodingAllowed = (header: string, name: string): boolean => {
+      for (const part of header.toLowerCase().split(',')) {
+        const [value, ...params] = part.trim().split(';');
+        if (value !== name) continue;
+        return !params.some((p) => /^q\s*=\s*0(?:\.0*)?\s*$/.test(p.trim()));
+      }
+      return false;
+    };
+    app.get(/^\/assets\/[A-Za-z0-9_./-]+\.(?:js|css)$/, (req, res, next) => {
+      const original = path.resolve(distPath, '.' + req.path);
+      if (!original.startsWith(assetsPath) || !fs.existsSync(original)) return next();
+      const accepted = String(req.headers['accept-encoding'] || '');
+      let extension = '';
+      let encoding = '';
+      if (encodingAllowed(accepted, 'br') && fs.existsSync(original + '.br')) {
+        extension = '.br'; encoding = 'br';
+      } else if (encodingAllowed(accepted, 'gzip') && fs.existsSync(original + '.gz')) {
+        extension = '.gz'; encoding = 'gzip';
+      }
+      if (!extension) return next();
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.setHeader('Content-Encoding', encoding);
+      res.setHeader('Cache-Control', versioned.test(path.basename(original))
+        ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
+      res.type(path.extname(original));
+      res.sendFile(original + extension, { dotfiles: 'deny' }, next);
+    });
+    app.use(express.static(distPath, {
+      etag: true,
+      setHeaders(res, filePath) {
+        res.setHeader('Cache-Control', filePath.startsWith(assetsPath) && versioned.test(path.basename(filePath))
+          ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
+      },
+    }));
     app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  // Go edge can bind Node to loopback, keeping all game APIs private.
+  const HOST = process.env.HOST || "0.0.0.0";
+  const server = app.listen(PORT, HOST, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
   server.keepAliveTimeout = 65000;
@@ -3204,6 +3212,16 @@ async function startServer() {
     sanitizeCustomBoard,
     findLegalMatch,
   });
+  canChallengeFromRoom = (id, name) => {
+    const room = onlinePlay.rooms.get(id) as any;
+    return !!room && room.phase === "lobby" && String(room.creator).toLowerCase() === name.toLowerCase();
+  };
+  const reminderTimer = setInterval(() => void sendTournamentReminders().catch(e => console.error("[Notifications] reminders:", e)), 60_000);
+  reminderTimer.unref?.();
+  const pushTimer = setInterval(() => void deliverPendingPushes().catch(e=>console.error("[Push] Delivery error",e)), 30_000);
+  pushTimer.unref?.();
+  void deliverPendingPushes().catch(e=>console.error("[Push] startup delivery",e));
+  void sendTournamentReminders().catch(e => console.error("[Notifications] initial reminders:", e));
   isLiveMultiplayerActive = () => {
     try {
       const stats = onlinePlay.stats();

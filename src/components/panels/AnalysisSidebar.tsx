@@ -11,6 +11,7 @@ import { EngineEval, MoveEvalResult } from "../../types";
 import { QUALITY_BADGE_CLASSES, QUALITY_BADGE_ABBREV, KEN_LEVELS } from "../../lib/constants";
 import { playPromoSound, playClickSound } from "../../lib/audio";
 import { AdminTappableName } from "../../lib/adminProfileContext";
+import { MatchResultPair } from "../MatchResultPair";
 
 export interface AnalysisSidebarProps {
   moveHistory: Move[];
@@ -966,15 +967,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
                       onClick={() => onLoadSavedGame(g)}
                       className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-900 border border-slate-850 hover:border-amber-500/40 text-left transition cursor-pointer flex flex-col gap-1"
                     >
-                      <div className="flex items-center justify-between font-bold text-slate-200 text-xs">
-                        <AdminTappableName username={g.whitePlayer} className="truncate max-w-[110px]" />
-                        <span className="text-slate-500 text-[10px] px-1 font-mono">vs</span>
-                        <AdminTappableName username={g.blackPlayer} className="truncate max-w-[110px] text-right" />
-                      </div>
-                      <div className="flex items-center justify-between text-[9px] text-slate-400">
-                        <span>Winner: <strong className="text-amber-400">{g.winner || "Draw"}</strong></span>
-                        <span>{dateStr}</span>
-                      </div>
+                      <MatchResultPair game={g} compact />
+                      <div className="text-[9px] text-slate-400 text-center">{dateStr}</div>
                     </div>
                   );
                 })}

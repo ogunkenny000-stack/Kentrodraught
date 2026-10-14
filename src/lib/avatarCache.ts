@@ -1,11 +1,23 @@
 /**
  * Tiny read-through cache for player avatars: any component can ask for a
- * username's picture and the profiles table is hit AT MOST once per name
- * per session, no matter how many chat messages or scoreboards show it.
+ * username's picture and repeated chat/scoreboard entries share one lookup.
+ * Cache size and age are bounded so it stays small on older phones.
  */
 import { supabase } from "../supabase";
 
-const cache = new Map<string, Promise<string | null>>();
+// Bounded LRU: player directories and chats can contain thousands of names.
+// Keep no more than 320 resolved/pending promises in a low-memory phone.
+const MAX_CACHED_AVATARS = 320;
+const cache = new Map<string, { promise: Promise<string | null>; expires: number }>();
+function retain(key: string, promise: Promise<string | null>, ttlMs: number): void {
+  cache.delete(key);
+  cache.set(key, { promise, expires: Date.now() + ttlMs });
+  while (cache.size > MAX_CACHED_AVATARS) {
+    const oldest = cache.keys().next().value;
+    if (!oldest) break;
+    cache.delete(oldest);
+  }
+}
 
 /** Names that are never real accounts -- resolve instantly, no network. */
 const NON_PLAYER = /^(ken( level)? ?\d*|you|white( player)?|black( player)?|guest|system)$/i;
@@ -14,11 +26,17 @@ export function getAvatarUrl(username: string | null | undefined): Promise<strin
   const name = (username || "").trim();
   if (!name || NON_PLAYER.test(name)) return Promise.resolve(null);
   const key = name.toLowerCase();
-  let p = cache.get(key);
-  if (!p) {
-    // Supabase builders are PromiseLike (thenable) without .catch -- wrap
+  const found = cache.get(key);
+  if (found && found.expires > Date.now()) {
+    // Touch this entry so frequently visible players stay cached.
+    cache.delete(key);
+    cache.set(key, found);
+    return found.promise;
+  }
+  if (found) cache.delete(key);
+  // Supabase builders are PromiseLike (thenable) without .catch -- wrap
     // in a real async fn so failures resolve to null instead of throwing.
-    p = (async () => {
+    const p = (async () => {
       try {
         const { data } = await supabase
           .from("profiles")
@@ -30,8 +48,9 @@ export function getAvatarUrl(username: string | null | undefined): Promise<strin
         return null;
       }
     })();
-    cache.set(key, p);
-  }
+    // Avatar changes are primed by the profile editor immediately; the TTL
+    // bounds stale results when another player edits their profile.
+  retain(key, p, 45 * 60_000);
   return p;
 }
 
@@ -39,5 +58,5 @@ export function getAvatarUrl(username: string | null | undefined): Promise<strin
  *  picture (already in memory) and right after a new upload. */
 export function primeAvatar(username: string | null | undefined, url: string | null) {
   const key = (username || "").trim().toLowerCase();
-  if (key) cache.set(key, Promise.resolve(url));
+  if (key) retain(key, Promise.resolve(url), 45 * 60_000);
 }

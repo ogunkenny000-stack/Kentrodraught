@@ -1,6 +1,6 @@
 import { Board, Move, Piece } from "./gameLogic";
 
-export type PlayMode = "Home" | "Human_vs_AI" | "AI_vs_Human" | "AI_vs_AI" | "Analysis" | "Training" | "Puzzles" | "Learn" | "Editor" | "Multiplayer" | "Tournament" | "Global_Chat";
+export type PlayMode = "Home" | "Human_vs_AI" | "AI_vs_Human" | "AI_vs_AI" | "Analysis" | "Training" | "Puzzles" | "Learn" | "Editor" | "Multiplayer" | "OfflineNearby" | "KentroTV" | "Tournament" | "Global_Chat";
 
 export interface Puzzle {
   id: string;
@@ -42,7 +42,7 @@ export interface ThemeColors {
 
 export const BOARD_THEMES: Record<BoardTheme, ThemeColors> = {
   wood: {
-    name: "Classic Wood",
+    name: "Royal Nigerian Wood",
     darkSquare: "bg-[#7c4c24]",
     lightSquare: "bg-[#eac494]",
     border: "border-[#4a2e16]",

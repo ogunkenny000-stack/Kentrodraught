@@ -1,3 +1,11 @@
+## Latest performance and hosting enhancements (October 2026)
+
+Start with **[MAX_PERFORMANCE_README.md](MAX_PERFORMANCE_README.md)** for the new performance fixes, tests, small-server container setup, and important limitations. This release preserves the existing app design and engine.
+
+## MVP performance enhancement (Go + lightweight frontend)
+
+See **[PERFORMANCE_UPGRADE.md](PERFORMANCE_UPGRADE.md)** for the optional Go edge, code-splitting changes, deployment options, tests, and CPU/RAM benchmarking guidance. The default Node server remains supported and retains authority over matches.
+
 ---
 title: Kentro Draught
 emoji: 👑
@@ -40,9 +48,10 @@ correctly:
    game with that username first (creates the `profiles` row the bootstrap
    binds to). See `server.ts`'s startup bootstrap logic.
 
-The Dockerfile expects `draught_com.zip` and `Dockerfile` side by side and
-un-zips the app itself during the build — see the comment at the top of the
-Dockerfile for the exact expected layout.
+The included two-stage `Dockerfile` now builds from this source directory
+rather than needing another `draught_com.zip` archive. It compiles the native
+engine and frontend, then copies only production runtime files into the
+smaller final image. The compose file persists local match files in a volume.
 
 ## Running locally
 
@@ -228,3 +237,64 @@ boot-time auto-migration, optional `BOOTSTRAP_ADMIN_USERNAME`) are runtime
 env vars. On Hugging Face Docker Spaces, add all of them under Settings →
 Variables and secrets — the `VITE_*` pair arrives via BuildKit secrets,
 which this Dockerfile also accepts.
+
+## Nearby Offline Multiplayer (Wi-Fi / hotspot)
+
+The Home Lobby and Online Game Hub now offer **Play Nearby Offline** in
+addition to normal online multiplayer. Each player loads/installs the PWA
+while online once, then connects to the same Wi-Fi/hotspot. **Host Game**
+produces an invite code, **Join Game** produces a reply code, and the
+host pastes that reply to establish a direct, server-free WebRTC data channel.
+Share the two codes via Nearby Share / Quick Share / AirDrop (or clipboard).
+Web browsers cannot host a discoverable Bluetooth game or fully automate
+local device pairing without a signaling service; this explicit exchange
+is necessary to avoid depending on the internet. See
+`docs/OFFLINE_NEARBY_TESTING.md` for steps, offline limits, and the device
+acceptance checklist. No coins, online ratings, or cloud results are touched.
+
+
+## Guest Mode (2026-10-11)
+
+The sign-in screen now offers **Continue as Guest**, including WhatsApp invitees.
+Guests can browse the app and play **three started AI games** plus **one
+started online game** on a stable per-browser guest identity. The top banner
+shows remaining games and provides a direct Sign In / Register action.
+
+- AI trials are browser-local and counted when Start Match / New Game is pressed;
+  existing in-progress AI games may be resumed without consuming another trial.
+  Clearing browser site data may reset this client-side allowance; this is a
+  product trial, not a tamper-proof device identifier.
+- Online trials are enforced on the server when the two-player game begins;
+  creating a room does not consume a trial. Reconnecting to that started game
+  is allowed. Rematches/new rooms require a real signed-in account.
+- Guest online rooms are free single matches; no coin wagers or series.
+  Ranked progress, wallets, purchased levels, tournaments and messaging
+  require sign-in. Nearby offline play remains available.
+- **Production deployment requirement:** Run `supabase/guest_trials.sql` in
+  your Supabase SQL editor before enabling online guest matches, and configure
+  both `SUPABASE_URL` and server-only `SUPABASE_SECRET_KEY`. The server uses
+  atomic `claim_guest_online_games` RPC to protect quota under concurrency and
+  does **not** grant another game when the configured DB is unavailable.
+  Local development without Supabase uses only process-local counters, which
+  reset on server restart. Live migration and two-phone tests are still needed.
+- Verify with `npm test` and `npm run build`, then test guest invite joining,
+  remaining quota after refresh, reconnect, exhaustion, and account sign-in.
+
+### Kentro TV and Smart Notifications (October 2026)
+
+The existing app now includes live Kentro TV, recorded-game playback, shareable animated highlights, optional short-video export, in-app notifications, friend challenges, tournament reminders/results and optional opt-in Web Push. **Before deployment**, apply `supabase/migrations/20261011_kentro_tv_notifications.sql` and configure VAPID on the server if background push is desired. See [the complete setup and two-device testing guide](docs/KENTRO_TV_SMART_NOTIFICATIONS.md). No core draughts rule changes are required.
+
+## Royal Nigerian Board (October 2026)
+
+The default **Royal Nigerian Wood** board now uses the reference-matched bold timber frame,
+cream-and-walnut squares, and larger ringed black/gold pieces. This affects the live game,
+nearby offline mode, and Kentro TV replay without changing Nigerian rules or the engine.
+See [`docs/ROYAL_NIGERIAN_BOARD.md`](docs/ROYAL_NIGERIAN_BOARD.md) for assets and testing.
+
+## 2026 Product UX redesign
+
+This package contains the full Kentro 2026 mobile-first interface overhaul, including new app navigation, home dashboard, guest-first entry, compact online-match setup, focused in-game board toolbar, updated Kentro TV, and shared styling across the remaining experiences. See [docs/PRODUCT_REDESIGN_2026.md](docs/PRODUCT_REDESIGN_2026.md) for file details, implementation decisions, and required live regression tests. It does **not** change the 10×10 Nigerian game rules or require a new database migration.
+
+## October 13, 2026 screen-by-screen review
+
+See `docs/SCREEN_BY_SCREEN_REVIEW_2026-10-13.md` for the 37-screen audit, applied fixes, verification evidence, remaining live-device tests, and release blockers. Run `node --experimental-strip-types scripts/screen-audit-smoke.mjs` for the focused regression checks (Node 22.16+).
