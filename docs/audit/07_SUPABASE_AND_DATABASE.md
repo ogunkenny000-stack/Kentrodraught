@@ -66,7 +66,7 @@ Reproduction:
 ```sh
 node scripts/build-migrations.cjs --check
 AUDIT_PG_URL=postgresql://postgres@127.0.0.1:55432/postgres \
-  node --experimental-strip-types scripts/audit/database-security.mjs
+  npm run test:database
 ```
 
 The shown URL is an isolated local fixture with disposable trust authentication;
@@ -74,7 +74,7 @@ it is not a recommended production connection. The harness refuses non-loopback
 targets, creates its own database and drops it after the run. Only run it against
 a disposable local PostgreSQL administrator instance.
 
-**26 checks passed**. Assertions cover real `anon`, `authenticated` and
+**35 checks passed**. Assertions cover real `anon`, `authenticated` and
 `service_role` connections, email lookup revocation, reserved signup identity,
 concurrent first-profile claims, protected profile fields, friend consent,
 message identity/content, official records, private replays, private invitation
@@ -105,3 +105,21 @@ actual schema/data, backups and restore rehearsal, genuine Auth JWT/PostgREST
 and Realtime tests, canonical record synchronization/rating retry verification,
 financial reconciliation, secret bindings and reviewed access grants. The
 local suite cannot certify the state of the user's connected account.
+
+
+## Completion additions
+
+The final migration adds persistent groups/messages, recipient consent and owner
+transfer controls, direct-write revocation, read RLS, bounded RPCs, tournament
+CAS/versioning and canonical funded champion prize splits. The 35-check final
+run includes actual concurrent CAS, group identity/sender/reaction/removed-user
+checks, concurrent team prize settlement, injected second-beneficiary rollback,
+unfunded-pool rejection and containment rollback/reapplication with retained
+confidential rows. Migration reruns retain stable policies/functions/grants.
+
+`test:tournaments` integrates real WS moves/draws with the worker, actual
+PostgreSQL CAS and durable outbox replay across a simulated database outage.
+`test:groups` drives two real Chromium contexts through the actual lounge/SDK
+and PostgreSQL RPCs via an explicit local Auth/HTTP adapter. Neither is a hosted
+Auth/PostgREST/Realtime pass. The opt-in hosted suite and environment template,
+full migration order and rollback instructions are in `docs/SUPABASE_HANDOFF.md`.

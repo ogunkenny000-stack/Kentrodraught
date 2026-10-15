@@ -1,4 +1,4 @@
-# Architecture audit — 14 October 2026
+# Architecture audit — 15 October 2026
 
 Scope: the existing `codex-audit-recovery-20261014` checkout, originally at
 `090e8d9c2ceac66c309e0d8179cfeb8172c3d546`. No production deployment or live-data
@@ -33,8 +33,9 @@ The frontend receives snapshots through `src/lib/gameSocket.ts` and reduces
 them with `roomState.ts`; reported client clocks/results are not authoritative.
 `gameRecordsManager.ts` assigns game codes and writes local JSON records under
 `data/`; Supabase integration also stores application history. A genuine rematch
-has a separate game identity. Restarting a process does not restore live rooms;
-deployment must drain matches rather than promise restart recovery.
+has a separate game identity. Checksummed, fsynced single-writer snapshots now
+restore live rooms, clocks, session bindings and local quotas after restart; see
+report 05 for the explicit outage/clock/reconnect policy.
 
 Nearby gameplay does not use the Node server after pairing. It shares rules
 with online play, checks packet sequence and position fingerprints, and keeps
@@ -60,6 +61,18 @@ source declarations rather than secret/environment values.
 Confirmed findings and repairs are recorded in the numbered reports. Principal
 risks include user-writable profile identifiers crossing authorization boundaries,
 wide database write policies, multiple history persistence paths, differences
-between native and shared rules, an oversized frontend state owner, and live
-room state that does not survive server restart. Static review alone cannot
+between native and shared rules, an oversized frontend state owner, and single-writer
+room authority that does not support horizontal replicas. Static review alone cannot
 verify deployed policies, account lifecycle, real pushes, or production hosting.
+
+
+## Completion additions
+
+`src/server/tournamentEngine.ts` plans deterministic formats;
+`tournamentRuntime.ts` applies canonical game events through PostgreSQL CAS and a
+durable outbox. `durableState.ts` owns private room/outbox files. Persistent group
+RPCs/RLS live in the final additive SQL migration. `engineAccess.ts` enforces AI
+entitlements and `mediaConfig.ts` issues short-lived TURN REST credentials.
+`src/shared/moveClassification.ts` keeps pure analysis usable on the server
+without importing browser Auth initialization. See reports 12–16 and
+`docs/SUPABASE_HANDOFF.md` for current evidence and external acceptance.

@@ -117,10 +117,8 @@ after budget + 2.5 seconds.
 
 ## Remaining limits
 
-- The public engine endpoint accepts depth/time/evaluator parameters without
-  enforcing account-specific purchased difficulty entitlements. Browser level
-  locks are advisory. Product authorization needs a defined server-side level
-  contract before it can protect paid levels.
+- The former public paid-level bypass has been repaired; see the entitlement
+  boundary below. Genuine hosted unlock/Profile/JWT acceptance is pending.
 - API searches receive FEN only. Actual game repetition and elapsed draw counts
   stay with the full-history web/room adjudicators; search cannot infer them
   from a bare board. Native game termination uses threefold repetition while
@@ -143,3 +141,16 @@ after budget + 2.5 seconds.
 - Other native variants and the separate Kivy interface were not validated.
   Sampled move agreement cannot establish that every possible search output is
   legal; the browser's canonical validation remains essential.
+
+
+## Server entitlement boundary
+
+`engineAccess.ts` now resolves play level/depth/time/evaluation from the same
+Ken 1–8 definitions used by the client. Levels 1–3 are free; higher levels need
+a genuine token and canonical active-profile unlock. Forged depth/time/claimed
+purchase values are ignored or rejected. Explicit/generic analysis is capped
+to available strength. Unconfigured local diagnostic requests may use legacy
+bounded parameters only outside production; this is never a production bypass.
+The client sends intent/level and its actual session token and separates cached
+play levels from analysis. Policy regression and production HTTP denial tests
+passed; genuine hosted purchase/Profile/JWT integration remains PENDING.

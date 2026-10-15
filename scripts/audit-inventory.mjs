@@ -26,7 +26,10 @@ const inventory = {
   deployment: ['Dockerfile','docker-compose.yml','.dockerignore','go-edge/go.mod','go-edge/main.go','scripts/start-go-edge.sh'],
 };
 inventory.httpRoutes = [...read('server.ts').matchAll(/app\.(get|post|put|patch|delete)\s*\(\s*["']([^"']+)/g)].map(m=>({method:m[1].toUpperCase(),path:m[2]}));
-inventory.httpRoutes.push(...[...read('src/server/accountAuth.ts').matchAll(/router\.(get|post|put|patch|delete)\s*\(\s*["']([^"']+)/g)].map(m=>({method:m[1].toUpperCase(),path:'/api/auth'+m[2]})));
+for (const [file,prefix] of [
+  ['accountAuth.ts','/api/auth'], ['tournamentInvites.ts','/api/tournaments'],
+  ['tournamentRuntime.ts','/api/tournaments'], ['mediaConfig.ts','/api/media'],
+]) inventory.httpRoutes.push(...[...read('src/server/'+file).matchAll(/router\.(get|post|put|patch|delete)\s*\(\s*["']([^"']+)/g)].map(m=>({method:m[1].toUpperCase(),path:prefix+m[2]})));
 fs.mkdirSync(path.join(root,'docs/audit'),{recursive:true});
 fs.writeFileSync(path.join(root,'docs/audit/inventory.json'),JSON.stringify(inventory,null,2)+'\n');
 console.log(JSON.stringify({components:inventory.components.length,routes:inventory.httpRoutes.length,websocketEvents:inventory.websocketEvents.length,sqlFiles:inventory.sqlFiles.length}));

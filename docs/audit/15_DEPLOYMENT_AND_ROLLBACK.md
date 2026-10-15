@@ -40,19 +40,28 @@ records, sequence counters and any other required database data separately.
 volume, publishes HTTP only on loopback, and passes no host credentials. It
 checks non-root execution, actual native search, protected static delivery,
 two-client guest gameplay, graceful shutdown and completed-record restoration
-using a configured data-directory subpath. The fresh production image passed
-these checks: [runtime and restart evidence](evidence/docker-continuation-20261015.json).
-It uses Node 22.23.3 and UID 1000, and occupies 362,469,195 bytes (345.7 MiB).
-The earlier checkpoint image evidence predates later source changes and must
-not substitute for this rebuild. The build uses synthetic public frontend
-settings and no hosted credentials; it is a tested local image, not a deployed
-production instance.
+using a configured data-directory subpath. Fresh completion checks include actual production guest gameplay, active-game
+SIGKILL/restart, token reclamation, clock/history preservation, denied paid-level
+claims, graceful shutdown and completed-record restoration. Current image evidence
+is [completion-container-20261015.json](evidence/completion-container-20261015.json).
+The earlier image/build numbers are historical. The fresh image uses Node 22 and
+UID 1000 with no runtime compiler/Vite. It is a local disposable image, not a
+production deployment; build frontend values are explicitly synthetic and no
+hosted secrets are passed.
 
-Durable completed records do not imply durable live rooms. Rooms, clocks and
-session ownership are in process memory; active-game restart recovery remains
-unimplemented. Drain active games before planned upgrades and tell operators
-about this limitation. Never claim a saved JSON archive can resume a live
-room after a process restart.
+Live rooms, sessions, local quotas, clocks and tournament outbox now checkpoint
+under this same private directory. Actual subprocess and container SIGKILL tests
+verify recovery. File fsync/atomic rename/checksum and a single-writer lock protect
+snapshots; a bad snapshot fails startup. Outage time freezes, clocks have roughly
+one-second crash tolerance, and seats get a fresh 120-second recovery window.
+A rematch clears previous terminal state; terminal synchronization/outbox replay
+is idempotent. Never run multiple Node authorities on the same or independent
+copies of live state behind a load balancer.
+
+Back up the whole data directory consistently while stopped/drained. Its room
+snapshots contain bearer resume tokens and must remain private. A successful
+source ZIP excludes this runtime state. The full current recovery, SQL containment
+rollback and staging checklist is in [Supabase handoff](../SUPABASE_HANDOFF.md).
 
 ## Reverse proxies and optional edge
 
@@ -79,3 +88,9 @@ or data must also be restored. A Git revert does not undo database changes.
 Preserve the mounted data volume; do not use volume-deleting cleanup commands
 as part of ordinary redeployment. Recheck health, native search, WebSocket
 upgrades and record visibility after either deployment or rollback.
+
+
+New runtime TURN options `TURN_URLS`/`TURN_SHARED_SECRET` are forwarded by Compose.
+The secret remains runtime-only; public client configuration contains only
+short-lived credentials for authenticated callers. No shared relay service is
+configured automatically. Use `.env.example` and supply the operator's own relay.

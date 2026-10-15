@@ -1,7 +1,7 @@
 {
-  "capturedAt": "2026-10-15T11:47:14.430Z",
-  "image": "sha256:442f3a7ba8060100612a9d982b5ceda3db6327399fd6c42f7b279a86c8ddce2b",
-  "imageBytes": 362622258,
+  "capturedAt": "2026-10-15T11:55:24.746Z",
+  "image": "sha256:e56afaf1e5f6bd6b2220e846e154c82cea45f5cd8ba65d4844e938700e7a9302",
+  "imageBytes": 362623824,
   "runtime": {
     "uid": 1000,
     "node": "v22.23.3",
@@ -9,7 +9,7 @@
     "vite": false,
     "dataDir": "/app/data/smoke-state"
   },
-  "shutdownMs": 147,
+  "shutdownMs": 138,
   "checks": [
     "Production HTTP readiness",
     "Non-root runtime without compiler/Vite",

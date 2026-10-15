@@ -18,3 +18,11 @@ For development, run `npm run dev`. For a production build use `npm run build` f
 `KENTRO_DATA_DIR` must point to the intended writable persistent directory. Leave `SKIP_DB_MIGRATION=1` unless a reviewed database change is deliberately authorized. Configure the public browser URL/publishable key at build time and the server key in the host's secret manager only when exercising real hosted features. Consult `.env.example` and the staging requirements in `docs/audit/14_REMAINING_ISSUES.md`.
 
 The environment configuration draft saves installation and startup instructions separately from these files. Saving a draft does not run it, restart services, publish a snapshot or verify restoration in a fresh task. Processes and authentication do not survive snapshots automatically. Review and publish through environment settings when ready; use GitHub commits/downloads for durable source backup.
+
+Current locally verified completion also covers active-room restart, authoritative
+tournament outbox/CAS and persistent groups. Optional regression entry points are
+`test:restart`, `test:multiplayer`, `test:database`, `test:tournaments` and
+`test:groups`. Use only disposable loopback PostgreSQL for local fixtures.
+`npm start` explicitly sets production mode; the development entry stays `dev`.
+For later hosted integration use `docs/SUPABASE_HANDOFF.md`, not the local Auth
+fixture. Hosted tests remain PENDING until real staging bindings and acceptance.

@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-10-15T06:38:23.102Z",
+  "generatedAt": "2026-10-15T11:55:12.811Z",
   "branch": "codex-audit-recovery-20261014",
-  "sourceHead": "3648e9371975ffb548c703beec5f1365786f52e8",
+  "sourceHead": "cf900f3c7c043f1ae2fa17e4603687d67e074a06",
   "components": [
     "src/components/BestMoveArrow.tsx",
     "src/components/ChessClock.tsx",
@@ -115,12 +115,15 @@
     "src/server/accountAuth.ts",
     "src/server/authoritativeRatings.ts",
     "src/server/bodyParsing.ts",
+    "src/server/durableState.ts",
+    "src/server/engineAccess.ts",
     "src/server/engineMutex.ts",
     "src/server/engineRequest.ts",
     "src/server/gameEnd.ts",
     "src/server/gameRecordsManager.ts",
     "src/server/guestQuota.ts",
     "src/server/httpAuth.ts",
+    "src/server/mediaConfig.ts",
     "src/server/nativeEngine.ts",
     "src/server/notifications.ts",
     "src/server/onlinePlay.ts",
@@ -128,7 +131,9 @@
     "src/server/securityMiddleware.ts",
     "src/server/sessions.ts",
     "src/server/staticAssets.ts",
+    "src/server/tournamentEngine.ts",
     "src/server/tournamentInvites.ts",
+    "src/server/tournamentRuntime.ts",
     "src/server/webPush.ts",
     "src/server/wsValidation.ts"
   ],
@@ -356,6 +361,22 @@
     {
       "method": "POST",
       "path": "/api/auth/password-reset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tournaments/invite"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tournaments/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tournaments/join-match"
+    },
+    {
+      "method": "GET",
+      "path": "/api/media/ice"
     }
   ],
   "websocketEvents": [
@@ -432,6 +453,18 @@
       "name": "kentro_tournament_invites"
     },
     {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_groups"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_group_members"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_group_messages"
+    },
+    {
       "file": "supabase/guest_trials.sql",
       "name": "guest_online_trials"
     },
@@ -466,6 +499,18 @@
     {
       "file": "supabase/migrations/20261015_tournament_privacy.sql",
       "name": "kentro_tournament_invites"
+    },
+    {
+      "file": "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
+      "name": "kentro_groups"
+    },
+    {
+      "file": "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
+      "name": "kentro_group_members"
+    },
+    {
+      "file": "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
+      "name": "kentro_group_messages"
     },
     {
       "file": "supabase/schema.sql",
@@ -543,11 +588,13 @@
     "supabase/migrations/20261015_account_email_privacy.sql",
     "supabase/migrations/20261015_authoritative_ratings.sql",
     "supabase/migrations/20261015_tournament_privacy.sql",
+    "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
     "supabase/reset_all_data.sql",
     "supabase/rollback/20261014_security_authorization.sql",
     "supabase/rollback/20261014_wallet_transactions.sql",
     "supabase/rollback/20261015_authoritative_ratings.sql",
     "supabase/rollback/20261015_tournament_privacy.sql",
+    "supabase/rollback/20261016_groups_and_tournament_runtime.sql",
     "supabase/schema.sql"
   ],
   "environmentVariableNames": [
@@ -578,6 +625,12 @@
     "SMOKE_URL",
     "SUPABASE_DB_URL",
     "SUPABASE_SECRET_KEY",
+    "SUPABASE_STAGING_ALICE_TOKEN",
+    "SUPABASE_STAGING_BOB_TOKEN",
+    "SUPABASE_STAGING_EXPECTED_REF",
+    "SUPABASE_STAGING_PUBLISHABLE_KEY",
+    "SUPABASE_STAGING_TEST_CONFIRM",
+    "SUPABASE_STAGING_TEST_URL",
     "SUPABASE_URL",
     "TRUST_PROXY",
     "VITE_GEMINI_API_KEY",
@@ -588,16 +641,20 @@
     "WEB_PUSH_VAPID_PUBLIC_KEY"
   ],
   "tests": [
-    "scripts/e2e/recovery.e2e.ts",
     "scripts/arena-discovery-smoke.mjs",
     "scripts/audit/container-smoke.ts",
     "scripts/audit/multiplayer-smoke.ts",
+    "scripts/audit/tournament-smoke.ts",
     "scripts/board-style-smoke.cjs",
+    "scripts/e2e/fixtures/groups.html",
+    "scripts/e2e/fixtures/groups.tsx",
     "scripts/e2e/frontend.e2e.ts",
+    "scripts/e2e/groups.e2e.ts",
     "scripts/e2e/harness.ts",
     "scripts/e2e/nearby.e2e.ts",
     "scripts/e2e/offline.e2e.ts",
     "scripts/e2e/pvp.e2e.ts",
+    "scripts/e2e/recovery.e2e.ts",
     "scripts/e2e/surfaces.e2e.ts",
     "scripts/e2e/tv.e2e.ts",
     "scripts/engine-benchmark.mjs",
@@ -627,6 +684,7 @@
     "src/lib/roomState.test.ts",
     "src/lib/serviceWorker.test.ts",
     "src/lib/useServerClock.test.ts",
+    "src/lib/useWebRTCCall.test.ts",
     "src/lib/voiceNoteMime.test.ts",
     "src/nativeRules.audit.test.ts",
     "src/rules.audit.test.ts",
@@ -637,11 +695,14 @@
     "src/server/authoritativeRatings.test.ts",
     "src/server/bodyParsing.test.ts",
     "src/server/coinsService.test.ts",
+    "src/server/durableState.test.ts",
+    "src/server/engineAccess.test.ts",
     "src/server/engineRequest.test.ts",
     "src/server/gameRecordsManager.restart.test.ts",
     "src/server/gameRecordsManager.test.ts",
     "src/server/httpAuth.test.ts",
     "src/server/infrastructure.test.ts",
+    "src/server/mediaConfig.test.ts",
     "src/server/nativeEngine.integration.test.ts",
     "src/server/nativeEngine.test.ts",
     "src/server/onlinePlay.regression.test.ts",
@@ -649,7 +710,9 @@
     "src/server/serverReliability.test.ts",
     "src/server/staticAssets.test.ts",
     "src/server/supabaseAdmin.test.ts",
+    "src/server/tournamentEngine.test.ts",
     "src/server/tournamentInvites.test.ts",
+    "src/server/tournamentRuntime.test.ts",
     "src/server/webPush.test.ts"
   ],
   "nativeSources": [

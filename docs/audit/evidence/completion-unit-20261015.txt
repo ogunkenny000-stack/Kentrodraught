@@ -1,0 +1,13 @@
+
+> kentro-draughts@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.11 /workspace/Kentrodraught
+
+
+ Test Files  49 passed (49)
+      Tests  513 passed (513)
+   Start at  11:48:55
+   Duration  7.34s (transform 1.37s, setup 0ms, import 2.70s, tests 12.77s, environment 4ms)
+

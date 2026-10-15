@@ -9,7 +9,7 @@
     "prebuild": "node scripts/build-engine.cjs",
     "build": "vite build && node scripts/inject-sw-assets.cjs && node scripts/precompress-assets.cjs && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "build:engine": "node scripts/build-engine.cjs",
-    "start": "node dist/server.cjs",
+    "start": "node --input-type=commonjs -e \"process.env.NODE_ENV='production'; require('./dist/server.cjs')\"",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",

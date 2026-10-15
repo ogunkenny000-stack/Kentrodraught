@@ -139,3 +139,17 @@ it.each([5, 9])(
     ).toBe(groupMatches.length);
   },
 );
+
+
+it('keeps the reigning hill winner through draws and crowns them over the points leader',()=>{
+ let t=startTournament({...fixture('King of the Hill',3),maxRounds:4});let king='';
+ for(let round=1;round<=4;round++){
+  const match=t.matches.find(m=>m.status!=='completed')!;match.roomId='hill'+round;
+  const previous=String(t.engineState!.hillChampion);
+  const winner=round===4?null:round===3?(match.white===previous?'B':'W'):(match.white===previous?'W':'B');
+  if(round===3)king=winner==='W'?match.white:match.black;
+  t=applyTournamentResult(t,match.roomId,'hillgame'+round,winner as 'W'|'B'|null);
+ }
+ expect(t.status).toBe('completed');expect(t.engineState!.champions).toEqual([king]);
+ expect(t.players.find(p=>p.username===king)!.points).toBeLessThan(Math.max(...t.players.map(p=>p.points)));
+});

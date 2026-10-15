@@ -20,3 +20,17 @@ The continuation preserves the owner's GitHub checkpoint and Royal Wood styling.
 ## Limits
 
 Hosted registration, email confirmation/recovery delivery, authenticated profile/wallet/social Realtime and actual private tournament redemption still require staging credentials and installed SQL. UI fixtures are identified as fixtures. Full screen-reader, contrast, touch-device, Safari and Android hardware acceptance has not been established. The large initial bundle and the incomplete tournament/group backend remain material limitations.
+
+
+## Completion journeys
+
+The actual lounge now exposes persistent group creation, consent-based invitations,
+member messaging, owner/admin controls and visible backend errors. The creation
+dialog uses the shared focus-trapping shell and labeled inputs; conversation rows
+are keyboard-operable. A two-browser PostgreSQL-backed fixture verifies persistence
+and consent, while explicitly excluding hosted Auth/PostgREST/Realtime claims.
+Small attachments are bounded and recording tracks stop on chat change/unmount.
+Tournament start/join/watch now use server pairings and real multiplayer rooms;
+client-generated official results and local fallback tournaments were removed.
+Unanswered draw/resignation dialogs expire after 30 seconds. Missing call routing
+cannot show a simulated connected call. See reports 12–14 for exact limits.

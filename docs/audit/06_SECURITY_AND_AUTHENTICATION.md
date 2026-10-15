@@ -73,7 +73,7 @@ seven files** on this continuation. Real HTTP fixtures check invite UID binding,
 input bounds, caching, generic errors, auth/provider failures, account attempt
 limits and reset throttling. They do not call hosted Auth.
 
-The disposable PostgreSQL suite additionally passed **26 checks**, including
+The disposable PostgreSQL suite additionally passed **35 checks**, including
 actual role permissions, private reads, unauthorized invitation/entry/chat,
 ban enforcement, wallet concurrency and rollback. See
 [database report](07_SUPABASE_AND_DATABASE.md) for the exact scope.
@@ -86,3 +86,17 @@ Realtime with real JWTs after migration rehearsal. Establish deployment
 origins, proxy trust, provider abuse limits and shared rate limiting for the
 chosen topology. No penetration-test certification or production security
 guarantee is claimed.
+
+
+## Completion security boundaries
+
+Engine play parameters are now derived on the server from the requested level
+and canonical active-account purchase entitlement. Guest analysis is capped to
+free level strength, so generic engine parameters cannot bypass purchased
+levels. Production never enables the legacy local diagnostic options.
+Group writes derive `auth.uid()` through bounded RPCs with table writes revoked.
+Tournament results come only from canonical rooms and versioned server commits.
+Static shared TURN credentials were removed; authenticated callers can receive
+HMAC credentials for the operator's own relay that expire after ten minutes.
+Guest responses contain STUN only. Room snapshots and outbox are private
+single-writer runtime files and must never be served/committed in source ZIPs.

@@ -1,0 +1,9 @@
+
+> kentro-draughts@0.0.0 test:offline
+> tsx scripts/e2e/offline.e2e.ts
+
+  ✓ browser treats 127/8 loopback as secure context
+  ✓ production install precaches nearby before the user opens its mode
+  ✓ TV remains lazy and avoids additional first-load downloads
+  ✓ nearby mode opens after the browser goes offline
+PASS: actual production service worker installed, prepared Nearby (TV stayed lazy), then opened and reloaded Nearby with browser networking offline.

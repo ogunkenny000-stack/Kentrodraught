@@ -99,15 +99,7 @@ function schedule(t: TournamentState): Pairing[] {
         pairs.push(...robin(seed, t.currentRound));
     }
   } else if (f === "hill") {
-    const previous = t.matches
-      .filter((m) => m.winner && m.black !== "∅")
-      .at(-1);
-    const champion =
-      previous && previous.winner !== "D"
-        ? previous.winner === "W"
-          ? previous.white
-          : previous.black
-        : eligible[0].username;
+    const champion = String(t.engineState!.hillChampion || eligible[0].username);
     const counts = (name: string) =>
       t.matches.filter((m) => m.white === name || m.black === name).length;
     const challenger = eligible
@@ -266,6 +258,7 @@ function next(t: TournamentState, now: number): TournamentState {
       f === "knockout" || f === "double"
         ? alive
         : t.players.slice().sort(compare).slice(0, 1);
+    if (f === "hill") champions = t.players.filter(p => p.username === t.engineState!.hillChampion);
     if (f === "team") {
       const teams = new Map<string, number>();
       for (const p of t.players)
@@ -336,6 +329,7 @@ export function startTournament(
   t.engineState = {
     format: f,
     seed,
+    ...(f === "hill" ? { hillChampion: seed[0] } : {}),
     groups: Object.fromEntries(seed.map((n, i) => [n, i % 2])),
     groupRounds:
       Math.ceil(seed.length / 2) + (Math.ceil(seed.length / 2) % 2) - 1,
@@ -385,6 +379,7 @@ export function applyTournamentResult(
   m.status = "completed";
   m.gameCode = gameCode;
   award(t, m);
+  if (t.engineState?.format === "hill" && winner) t.engineState.hillChampion = winner === "W" ? m.white : m.black;
   const f =
     t.engineState?.stage === "knockout" ? "knockout" : t.engineState?.format;
   if (!winner && (f === "knockout" || f === "double")) {

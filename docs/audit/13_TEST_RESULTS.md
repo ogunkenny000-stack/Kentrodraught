@@ -1,37 +1,65 @@
-# Final test results — 15 October 2026
+# Completion test results — 15 October 2026
 
-The continuation began at the owner's GitHub checkpoint `35bed25`. Results below are fresh local checks, separate from `CHECKPOINT_VALIDATION.md` and the earlier checkpoint's 401 tests. Sanitized raw outputs are saved under `evidence/final-*`; Docker/Go/SQL evidence has named continuation files. User-facing dates use Africa/Lagos; raw runner timestamps retain their recorded UTC/timezone.
+These checks continue the owner's GitHub source through the recovery branch.
+Current evidence files are `evidence/completion-*`; older `final-*` and checkpoint
+results are historical. User-facing date uses Africa/Lagos; raw logs retain UTC.
+No hosted Supabase or production infrastructure was modified.
 
-| Check and command | Result and scope |
+| Check | Executed result and scope |
 | --- | --- |
-| `npm ci --include=dev --cache /workspace/.npm` | PASS; clean lockfile install, 299 packages; native postinstall initialized and searched |
-| `npm run lint` | PASS; TypeScript with React 19 types |
-| `npm run build` | PASS; native freshness/search, Vite, service-worker injection, gzip/Brotli and Node bundle |
-| `npm test` | PASS; 468 tests in 43 files |
-| `NATIVE_RULES_SANITIZE=1 npx vitest run src/nativeRules.audit.test.ts src/rules.audit.test.ts src/engineBuild.audit.test.ts` | PASS; 39 tests in 3 files with native ASan/UBSan probe |
-| `AUDIT_PG_URL=postgresql://postgres@127.0.0.1:55432/postgres npm run test:database` | PASS; 26 real PostgreSQL role, transaction, concurrency and migration checks in disposable databases |
-| `npm run migrations:check` | PASS; combined SQL matches ordered migration sources |
-| `npm run test:multiplayer` | PASS; all 26 actual loopback WebSocket stages |
-| Browser `scripts/e2e/pvp.e2e.ts` | PASS; independent contexts, real local WS moves/clocks/reconnect/resign/rematch; `E2E_SKIP_MEDIA=1` explicitly skips voice |
-| `npm run test:browser` | PASS; guest/auth UI, actual native AI, resume/New, quotas, modal focus and responsive board |
-| `npm run test:tv` | PASS; explicit local replay/API fixtures; hosted data and push are not tested |
-| `scripts/e2e/recovery.e2e.ts` | PASS; real recovery form validation, expired session, explicit provider-response fixture and continuation |
-| `npm run test:offline` | PASS; production service worker prepares Nearby and opens/reloads it while browser networking is disabled |
-| `npm run test:nearby` | UNAVAILABLE; zero host ICE candidates under managed Chromium policy; not a passing peer transport |
-| `node scripts/static-serving-smoke.mjs http://127.0.0.1:8126` | PASS; actual built assets, negotiated raw bytes, cache headers, private artifacts and missing routes |
-| `ENGINE_AUDIT_URL=http://127.0.0.1:8126 node scripts/audit/engine-http.mjs` | PASS; actual native scores, invalid input, terminal loss, cancellation/cache and disconnect queue recovery |
-| `npm run test:perf` | PASS; precache/compression cleanup/byte equality and queue behavior |
-| Go `go test -race -count=1 ./...`, `go vet ./...` | PASS; verified optional Go 1.27.2 toolchain, independent of the core app |
-| `npm run test:container -- kentro-audit:20261015 ...` | PASS; non-root runtime, health, native search, actual two-client production gameplay, SIGTERM and durable record restart |
-| `npm audit --json` | Zero known advisories in the final checked lockfile; dated scanner result |
-| `git diff --check` | PASS |
+| `npm ci --include=dev --cache /workspace/.npm` | PASS; clean lockfile install, 299 installed packages, native postinstall initializes/searches |
+| `npm run lint` | PASS; complete configured TypeScript check |
+| `npm test` | PASS; **513 tests in 49 files** |
+| `npm run build` | PASS; native search, Vite, service-worker injection, gzip/Brotli and server bundle; browser Auth separated from server classification |
+| Native ASan/UBSan rules/build suite | PASS; **39 tests in 3 files** |
+| `npm run migrations:check` | PASS; combined SQL matches every ordered source migration |
+| `npm run test:database` | PASS; **35 PostgreSQL checks**: real roles/RLS, money transactions/concurrency, groups/consent/removal, CAS, funded canonical prizes, rollback and migration reruns |
+| `npm run test:tournaments` | PASS; actual WS canonical moves/draws → worker → PostgreSQL standings; durable failed-result restart/replay and duplicates |
+| `npm run test:restart` | PASS; actual SIGKILL in private game, wrong token denied, both seats/history/clocks restored, more play, draw, rematch killed/restored, no stale terminal result, SIGTERM/file permissions |
+| `npm run test:multiplayer` | PASS; all **26 real loopback WS stages** |
+| Two-browser PvP | PASS; real local WS moves/clocks/reconnect, resignation and rematch; voice transport explicitly SKIPPED |
+| `npm run test:groups` | PASS; actual lounge/SDK + local Auth/HTTP adapter + PostgreSQL RLS, invite/accept/message/reload, oversized attachment rejection, microphone tracks ended on chat change |
+| Media lifecycle unit tests | PASS within main suite; late capture after cancel, no new fallback permission prompts after cancel, adopted microphone cleanup; no peer transport claim |
+| Production frontend browser journey | PASS; actual native AI, guest limits, resume/New, dialogs/keyboard and responsive board |
+| TV browser journey | PASS with explicit replay/API fixtures; hosted data/push/share/export not certified |
+| Recovery browser journey | PASS; validation/expired-session handling and explicit provider response fixture; real email/reset is pending |
+| Offline browser journey | PASS; actual production worker installs/prepares Nearby and opens/reloads it with browser networking disabled; TV remains lazy |
+| Static-serving + actual HTTP engine | PASS; built routes/cache/encoding/private artifacts, scored native response, invalid input, cancellation/cache and disconnect queue recovery |
+| `npm run test:perf` | PASS; cache/compression byte equality/cleanup and engine queue invariants; not a capacity test |
+| Optional Go race tests + vet | PASS with verified Go 1.27.2 and writable caches |
+| Fresh production container | PASS; non-root Node 22, native search/static privacy, actual guest game SIGKILL/restart, resume tokens/history/clocks, paid-level denial, SIGTERM and completed archive restoration |
+| `npm audit --json` | Zero known advisories at the scan time for the checked lockfile |
+| `npm run test:hosted` without staging bindings | **PENDING, exits 2**; no hosted tests executed |
+| Real-device media/Nearby | **PENDING/UNAVAILABLE** under managed Chromium UDP policy; zero prior ICE host candidates, no successful peer transport claimed |
+| GitHub Actions new workflow | Prepared; next actual hosted CI execution is not claimed as already passed |
 
-Browser commands use `CHROME_NO_SANDBOX=1` only for this container and an explicit loopback `E2E_APP_URL`. Normal UI/TV/recovery use `http://127.0.0.1:8126`; offline uses `http://127.0.0.2:8126` to exercise the production worker rather than its intentional localhost development guard. External browser requests are blocked. The PvP browser uses a disposable development listener without hosted credentials; the container additionally exercises production guest socket admission.
+Local database URLs are explicitly disposable loopback fixtures. Their synthetic
+Auth schema/role claims and the group HTTP adapter are not genuine hosted Auth,
+PostgREST or Realtime. The opt-in staging test/template and acceptance/rollback
+instructions are in [Supabase handoff](../SUPABASE_HANDOFF.md).
 
-Two browser harness problems were investigated: clearing a controlled input through a synthetic fill left stale component state, and an animated drawer target moved during a click. The harness now types a short invalid username and waits for stable clickable controls, preserving all validation/navigation assertions. The final journeys pass. An early native evaluator-cache test used a stale executable before rebuild; fresh rebuild and the final suite pass without weakening its assertions. The initial Docker restart harness also refreshed its ephemeral published port after restart; complete runtime checks then passed.
+Browser external requests are blocked. UI/TV/recovery/PvP use loopback servers;
+offline uses a dedicated `127.0.0.2` production listener to exercise the worker
+instead of its intentional localhost development guard. The first offline check
+found a listener bound only to `127.0.0.1`; adding the dedicated loopback listener
+resolved that setup issue and the complete journey passed. Browser no-sandbox is
+specific to this container. Group fixture Realtime deliberately fails; real polling
+and PostgreSQL RPCs are exercised, with the limitation retained in the report.
 
-## Not executed or not established
+Production builds retain the large-chunk advisory. Current main entry
+`index-Ddv1nQpT.js` is 1,129,459 bytes raw, 311,162 gzip and 276,691 Brotli.
+The bundle is still substantial on slower phones. Native LTO and Docker's
+publishable-key-name lint warnings are recorded; the public browser build key
+is intentionally synthetic/public, and private keys are not used as build args.
+Dependency installation retained TLS/signature validation, using a BuildKit public
+CA trust secret for the managed network. No TLS/signature bypass was used.
 
-No genuine Supabase hosted Auth/email/RLS/Realtime, real payment or prize, production deployment, physical-phone Nearby/media, real push delivery, full browser/device matrix or production capacity test was completed. Earlier checkpoint load measurements remain historical. A complete tournament worker and persisted groups are unfinished. See report 14 before release.
-
-The final built entry is `index-D8zFNHhx.js`: 1,129,449 bytes raw, 311,153 gzip and 276,465 Brotli. This is still large. The fresh short shared-machine HTTP smoke observed / p50/p95 3.4/13.3 ms and recent-games 1.9/3.6 ms, 30 requests each; these are not production SLAs.
+No real hosted account/email/Realtime, payment, withdrawal, push delivery,
+production deployment, complete device/accessibility matrix or production
+capacity certification is established. The final production image is `sha256:e56afaf1e5f6bd6b2220e846e154c82cea45f5cd8ba65d4844e938700e7a9302`,
+362,623,824 bytes, UID 1000; graceful stop was 138 ms in this disposable run.
+A temporary Docker build-cache space failure was resolved by pruning unused
+local build cache before rebuilding and rerunning the complete container test.
+No data volume was deleted. The source ZIP includes the required
+8,503,280-byte native evaluation data; exact GitHub archive verification is the
+final delivery step after the report commit.

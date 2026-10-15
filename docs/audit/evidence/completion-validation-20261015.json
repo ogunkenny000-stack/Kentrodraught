@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-15",
+  "sourceBranch": "codex-audit-recovery-20261014",
+  "unit": {
+    "passed": 513,
+    "files": 49
+  },
+  "nativeSanitizers": {
+    "passed": 39,
+    "files": 3
+  },
+  "disposablePostgreSQL": {
+    "passed": 35
+  },
+  "realWebSocketStages": 26,
+  "hostedSupabase": "PENDING; no bindings and no hosted test execution",
+  "productionInfrastructure": "NOT MODIFIED",
+  "mediaTransport": "PENDING; managed Chromium supplies no peer ICE candidates",
+  "groupsBrowser": "PASS; actual SDK/UI, synthetic local Auth/HTTP adapter, real PostgreSQL RPC/RLS",
+  "tournamentPipeline": "PASS; real WS canonical moves/results, PostgreSQL CAS, durable outbox restart",
+  "productionContainerEvidence": "completion-container-20261015.json",
+  "note": "Counts describe executed local checks; fixtures are not hosted acceptance."
+}

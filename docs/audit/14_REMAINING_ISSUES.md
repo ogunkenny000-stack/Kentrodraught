@@ -1,28 +1,55 @@
 # Remaining issues — 15 October 2026
 
-Readiness: **READY ONLY FOR STAGING**. Source repairs and local checks do not install hosted migrations or certify the connected Supabase project's state.
+Readiness: **READY FOR LOCAL DEVELOPMENT AND STAGING INTEGRATION. PRODUCTION
+ACCEPTANCE PENDING.** No hosted Supabase or production infrastructure was changed.
+The original gaps in live restart recovery, tournament authority, persistent
+groups and API-level AI access have source repairs and local regression evidence.
+This does not establish that every application path or deployment is perfect.
 
-## P0 — critical
+## Release gates requiring external integration
 
-No unresolved P0 was reproduced in the executed final local checks. This is bounded evidence, not a claim that the application or live deployment has no unknown critical defects. Source privacy repairs are not active on an existing hosted database until the reviewed migrations are applied. The actual hosted schema and user data were not inspected.
+1. **PENDING — hosted Supabase.** Rehearse ordered migrations on a copy of the
+   real schema/data; test genuine Auth/reset email/JWT revocation, PostgREST/RLS,
+   Realtime, private tournament access, group membership removal, canonical ratings
+   and persisted results. `npm run test:hosted` is opt-in and exits 2 without explicit
+   disposable staging bindings. Local role claims/HTTP adapters are fixtures.
+2. **PENDING — device media/Nearby.** Managed Chromium produces no peer ICE
+   candidates. Verify voice/video/screen share and Nearby on real devices and
+   separate NAT/mobile networks with the operator's own TURN REST relay and HTTPS.
+3. **PENDING — release operations.** Rehearse deployment/rollback, consistent
+   data-volume backups/restoration, genuine hosted push and realistic capacity.
+   Reconcile historical wallets, legacy tournament payouts and ledger anomalies
+   before enabling paid events. No production payment/withdrawal test was run.
 
-## P1 — release blockers or substantial gaps
+## Operating constraints and wider product work
 
-1. Rehearse upgrades on an isolated copy of the real Supabase schema/data, then verify genuine Auth, reset emails, permissions, PostgREST/Realtime, canonical ratings, wallet reconciliation and private tournament access. No callable Supabase connector or injected project credentials were available to this execution environment; the user's account connection alone does not supply this evidence.
-2. Active rooms/clocks/session ownership remain in memory and do not resume after a server restart. Completed archive preservation is tested; drain live games before upgrades. Multiple Node writers or horizontal replicas are unsupported by local JSON room/archive authority.
-3. A complete authoritative tournament pairing/scheduling/live-game/standings worker and a persisted group backend remain unfinished. Existing transactions are locally tested, but paid event operation and payouts require staging acceptance and operator review.
-4. Purchased AI level controls are not an API entitlement boundary: the public analysis/engine interface accepts bounded strength parameters without an authoritative per-level contract. Do not sell this as protected access before that server policy is designed and tested.
-5. Nearby and voice/video need supported real-device/network tests. Managed Chromium supplied no peer ICE candidates; no transport success is claimed.
+- Exactly one Node authority per persistent data directory. JSON files and
+  process-local rate limits do not support horizontal replicas/distributed rooms.
+  Shared routing/storage/limits require a different architecture before scaling.
+- Active snapshots fsync before acknowledgement; clock checkpoints are one second
+  apart. An abrupt crash can restore roughly one second of clock time; outage time
+  is frozen. This is an explicit recovery policy, not zero-loss distributed failover.
+- Room/outbox files contain resume tokens and need private filesystem/backups.
+  Corruption fails startup; restore a verified compatible backup. Archives retain
+  500 games/200 series locally; long-term history needs verified hosted sync.
+- Tournament formats and deterministic tie breakers are described in report 12.
+  This is not federation bracket certification. Unclaimed matches need players
+  or organizer cancellation/refund; no-show events do not invent champions.
+  Sponsored prize funding and arbitrary custom rules are not supported.
+- Group feeds show the latest 100 messages. Larger media storage, historical feed
+  pagination, shared read receipts and server moderation/report workflows remain
+  product extensions. Inline attachments are bounded at 120 KB; oversize files
+  show an error. Local block/report drafts do not affect other accounts.
+- The main browser entry remains large; measure slow phones/networks before
+  choosing further code splits. Complete screen-reader, contrast, touch and target
+  browser/device acceptance. Current responsive/focus tests have bounded scope.
+- Draw/resignation offers now expire after 30 seconds and resume clocks; the
+  existing two-party resignation design is preserved. Review repeated-offer policy
+  for competitive operation; this work does not change Nigerian Draughts rules.
+- Experimental Gemini training-lab/provider claims are not strength certification.
+  Browser AI analysis is limited by canonical access; provider keys stay private.
 
-## P2 — improvements and wider acceptance
-
-- Large initial JavaScript remains roughly 276 KB Brotli; assess slower phone/network performance and split measured heavy paths.
-- Rate limits are process local. Configure trusted proxy topology and shared/edge limits for any multi-instance deployment.
-- JSON archive limits are 500 records/200 series; use verified durable hosted synchronization and backups for long-term history. Atomic rename is not a power-loss/fsync guarantee.
-- Complete screen-reader/contrast/touch-device coverage, authenticated social browser journeys, hosted push, export/share behavior and browser compatibility.
-- Define unanswered draw/resignation offer timeouts; current two-party offers can pause the match while awaiting a reply.
-- Experimental Gemini training-lab strength, generated strategy claims and optional provider integrations are not certified. Never bundle private provider keys into VITE variables.
-
-## P3 — maintenance
-
-Maintain a single npm lockfile workflow, keep source inventory and operational runbooks current, and continue dependency scanning. Historical checkpoint evidence is retained with its original scope; it is not relabeled as a current production benchmark.
+No unresolved P0 was reproduced in the final executed local suites. This is
+bounded evidence; the actual production schema, users and infrastructure were
+not inspected. See [handoff](../SUPABASE_HANDOFF.md) and report 13 for executed
+versus pending checks.

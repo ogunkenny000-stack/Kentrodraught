@@ -15,7 +15,8 @@ the HTTP APIs, WebSockets or native AI service.
 `npm run lint` runs TypeScript checking. `npm test` runs Vitest. `npm run build`
 verifies/builds the native engine, builds Vite assets, injects the service-worker
 precache, generates compressed assets and bundles the Node server.
-`npm start` then runs `dist/server.cjs`. Large-chunk warnings remain relevant
+`npm start` then runs `dist/server.cjs` and explicitly sets production mode,
+including when the shell has no NODE_ENV binding. Large-chunk warnings remain relevant
 to mobile initial downloads; a successful build does not remove that cost.
 
 Native build fingerprints cover source, headers, makefiles, configuration,

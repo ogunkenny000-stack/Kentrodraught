@@ -396,6 +396,18 @@ try {
     await owner.query(await fs.readFile(path.join(root,'supabase/migrations/20261016_groups_and_tournament_runtime.sql'),'utf8'));
     await groupAction(alice,group.id,'delete');
   });
+  await check('group message rate and reaction limits retain idempotent retry and existing toggles',async()=>{
+    const group=await groupAction(alice,null,'create',{name:'Bounded group'});
+    const id=i=>'60000000-0000-4000-8000-'+String(i).padStart(12,'0');
+    for(let i=1;i<=30;i++)await groupAction(alice,group.id,'send',{id:id(i),text:'message '+i});
+    await denied(alice,'select kentro_group_action($1,$2,$3)',[group.id,'send',{id:id(31),text:'over limit'}]);
+    await groupAction(alice,group.id,'send',{id:id(1),text:'message 1'});
+    for(let i=0;i<32;i++)await groupAction(alice,group.id,'react',{id:id(1),emoji:'reaction'+i});
+    await denied(alice,'select kentro_group_action($1,$2,$3)',[group.id,'react',{id:id(1),emoji:'over limit'}]);
+    await groupAction(alice,group.id,'react',{id:id(1),emoji:'reaction0'});
+    assert.equal((await owner.query('select * from kentro_group_messages where group_id=$1',[group.id])).rowCount,30);
+    await groupAction(alice,group.id,'delete');
+  });
   await check('security migration reruns and exact-policy rollback preserve application data',async()=>{
     const before=(await owner.query('select count(*) as count from coin_transactions')).rows[0].count;
     const file=await fs.readFile(path.join(root,'supabase/migrations/20261014_security_authorization.sql'),'utf8');

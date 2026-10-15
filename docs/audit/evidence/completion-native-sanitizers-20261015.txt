@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /workspace/Kentrodraught
+
+
+ Test Files  3 passed (3)
+      Tests  39 passed (39)
+   Start at  11:45:33
+   Duration  11.28s (transform 194ms, setup 0ms, import 248ms, tests 11.15s, environment 0ms)
+

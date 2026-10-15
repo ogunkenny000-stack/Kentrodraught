@@ -1551,6 +1551,7 @@ begin
   delete from public.kentro_group_members where group_id=p_group and owner_id=v_uid; return jsonb_build_object('ok',true);
  elsif v_me.status<>'active' then raise exception 'Accept the invitation first' using errcode='42501';
  elsif p_action='send' then
+  perform 1 from public.profiles where "ownerId"=v_uid for update;
   v_id:=coalesce((p_data->>'id')::uuid,gen_random_uuid());
   if length(coalesce(p_data->>'text','')) not between 1 and 200000 then raise exception 'Invalid message'; end if;
   if not exists(select 1 from public.kentro_group_messages where id=v_id) and (select count(*) from public.kentro_group_messages where sender_id=v_uid and created_at>now()-interval '1 minute')>=30 then raise exception 'Message rate limit reached'; end if;

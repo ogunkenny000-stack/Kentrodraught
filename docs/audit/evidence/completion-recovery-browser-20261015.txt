@@ -1,0 +1,4 @@
+  ✓ validation and an expired recovery session cannot update a password
+  ✓ recovery success requires a successful explicit Auth update fixture
+  ✓ successful recovery can continue into the application
+PASS recovery UI validation, expired session, explicit provider-response fixture and continuation. Hosted reset/email delivery remains unverified.

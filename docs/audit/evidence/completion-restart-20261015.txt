@@ -1,0 +1,5 @@
+
+> kentro-draughts@0.0.0 test:restart
+> tsx scripts/audit/live-restart.ts
+
+PASS actual SIGKILL/restart: private room, resume authentication, paused clocks, canonical board/history, continuing moves, agreed draw, rematch SIGKILL/restart without stale terminal result, SIGTERM, protected file mode.
