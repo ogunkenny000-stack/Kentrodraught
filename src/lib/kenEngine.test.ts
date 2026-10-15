@@ -17,6 +17,19 @@ function pendingFetch() {
 beforeEach(() => clearClientEngineCache());
 afterEach(() => { clearClientEngineCache(); vi.unstubAllGlobals(); });
 describe("native engine client", () => {
+  it("namespaces the same cancellation stream independently in each browser context", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response()); vi.stubGlobal("fetch", fetcher);
+    await analyzeKen(board, "W", 100, "live");
+    vi.resetModules();
+    const secondBrowser = await import("./kenEngine");
+    try { await secondBrowser.analyzeKen(board, "W", 100, "live"); }
+    finally { secondBrowser.clearClientEngineCache(); }
+    const first = JSON.parse(fetcher.mock.calls[0][1].body).supersedeKey;
+    const second = JSON.parse(fetcher.mock.calls[1][1].body).supersedeKey;
+    expect(first.endsWith(":live")).toBe(true);
+    expect(second.endsWith(":live")).toBe(true);
+    expect(first).not.toBe(second);
+  });
   it("returns only a canonical legal move", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response()));
     expect((await analyzeKen(board, "W", 100)).move).toEqual(move);

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, BellOff, CheckCheck, ChevronRight, CircleHelp, Clock, Link2, MessageSquare, Settings2, Shield, Swords, Trophy, X } from "lucide-react";
 import { supabase } from "../supabase";
+import { trapDialogFocus } from "../lib/dialogFocus";
 import { DEFAULT_NOTIFICATION_PREFERENCES, KentroNotification, NotificationCategory, NotificationPreferences, loadNotificationPreferences, notificationStorageKey, unreadCount, validNotificationPath } from "../lib/smartNotifications";
 import { enableBackgroundPush, disableBackgroundPush, refreshBackgroundCategories } from "../lib/pushSubscription";
 
@@ -86,23 +87,9 @@ export function NotificationCenter({ userId, open, onClose, onNavigate, manager 
   closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const frame = requestAnimationFrame(() => panelRef.current?.focus());
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!panelRef.current) return;
-      if (event.key === "Escape") { event.preventDefault(); closeRef.current(); return; }
-      if (event.key !== "Tab") return;
-      const controls = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled)'))
-        .filter(el => el.getClientRects().length > 0);
-      if (!controls.length) { event.preventDefault(); panelRef.current.focus(); return; }
-      if (event.shiftKey && (document.activeElement === controls[0] || document.activeElement === panelRef.current)) {
-        event.preventDefault(); controls[controls.length - 1].focus();
-      } else if (!event.shiftKey && document.activeElement === controls[controls.length - 1]) {
-        event.preventDefault(); controls[0].focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener("keydown", onKeyDown); previousFocus?.focus(); };
+    const panel = panelRef.current;
+    if (!panel) return;
+    return trapDialogFocus(panel, () => closeRef.current());
   }, [open]);
   useEffect(() => { if (open) { void reload(); setSettings(false); } }, [open]);
   useEffect(() => {

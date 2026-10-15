@@ -31,6 +31,10 @@ try {
   assert.deepEqual(gunzipSync(gz), raw);
   assert.deepEqual(brotliDecompressSync(br), raw);
   assert(br.byteLength < gz.byteLength);
+  fs.writeFileSync(path.join(dist, entry.slice(1)), 'small');
+  execFileSync(process.execPath, [path.join(__dirname, 'precompress-assets.cjs')], { env });
+  assert(!fs.existsSync(path.join(dist, entry.slice(1) + '.gz')), 'shrunk asset must not retain stale gzip bytes');
+  assert(!fs.existsSync(path.join(dist, entry.slice(1) + '.br')), 'shrunk asset must not retain stale Brotli bytes');
   console.log(`Startup lazy-loading: PASS (2 of 3 bundles preloaded); gzip + Brotli byte-perfect: PASS (raw ${raw.length}, gzip ${gz.length}, Brotli ${br.length})`);
 } finally {
   fs.rmSync(base, { recursive: true, force: true });

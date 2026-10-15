@@ -1,7 +1,7 @@
 /** RFC 8291 aes128gcm Web Push and RFC 8292 VAPID using Node's built-in crypto.
  * No service account keys or private credentials are ever sent to browsers.
  */
-import { createECDH, createPrivateKey, createCipheriv, createHmac, randomBytes, sign } from "node:crypto";
+import { ECDH, createECDH, createPrivateKey, createCipheriv, createHmac, randomBytes, sign } from "node:crypto";
 import { getSupabaseAdmin } from "../../supabaseAdmin";
 
 export interface BrowserPushSubscription { endpoint: string; keys: { p256dh: string; auth: string } }
@@ -27,24 +27,39 @@ export function vapidSettings() {
 
 /** Strict host allowlist: subscriptions are user input; never POST to internal/private infrastructure. */
 export function safePushEndpoint(input: unknown): input is string {
-  if (typeof input !== "string" || input.length > 2048) return false;
+  if (typeof input !== "string" || input.length > 2048 || /[\s\\#]/u.test(input)) return false;
+  // Inspect the original authority too: URL normalizes escapes, trailing spaces
+  // and the default port. Only standard HTTPS authorities are subscription URLs.
+  const authority = /^https:\/\/([a-z0-9.-]+)(?::([0-9]+))?(?:[/?]|$)/i.exec(input);
+  if (!authority || (authority[2] !== undefined && authority[2] !== "443")) return false;
   try {
     const url = new URL(input);
     const host = url.hostname.toLowerCase();
-    return url.protocol === "https:" && !url.username && !url.password && !url.port && (
+    return url.protocol === "https:" && !url.username && !url.password && !url.port && !url.hash && (
       host === "fcm.googleapis.com" || host === "updates.push.services.mozilla.com" ||
-      host === "push.services.mozilla.com" || host.endsWith(".push.apple.com") ||
-      host === "web.push.apple.com" || host.endsWith(".notify.windows.com")
+      host === "push.services.mozilla.com" || host === "web.push.apple.com" ||
+      /^wns[0-9]+-[a-z0-9]+\.notify\.windows\.com$/.test(host)
     );
   } catch { return false; }
 }
 
-export function validateSubscription(value: any): BrowserPushSubscription | null {
-  if (!value || !safePushEndpoint(value.endpoint) || typeof value.keys?.p256dh !== "string" || typeof value.keys?.auth !== "string") return null;
+function decodeSubscriptionKey(value: unknown, bytes: number): Buffer | null {
+  if (typeof value !== "string" || value.length !== Math.ceil(bytes * 8 / 6) || !/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  const decoded = unb64(value);
+  return decoded.length === bytes && b64(decoded) === value ? decoded : null;
+}
+
+export function validateSubscription(value: unknown): BrowserPushSubscription | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (!safePushEndpoint(candidate.endpoint) || !candidate.keys || typeof candidate.keys !== "object" || Array.isArray(candidate.keys)) return null;
+  const keys = candidate.keys as Record<string, unknown>;
   try {
-    const pub = unb64(value.keys.p256dh), auth = unb64(value.keys.auth);
-    if (pub.length !== 65 || pub[0] !== 4 || auth.length !== 16) return null;
-    return { endpoint: value.endpoint, keys: { p256dh: value.keys.p256dh, auth: value.keys.auth } };
+    const pub = decodeSubscriptionKey(keys.p256dh, 65), auth = decodeSubscriptionKey(keys.auth, 16);
+    if (!pub || pub[0] !== 4 || !auth) return null;
+    // Length and the uncompressed prefix alone also accept points off the curve.
+    ECDH.convertKey(pub, "prime256v1", undefined, undefined, "uncompressed");
+    return { endpoint: candidate.endpoint, keys: { p256dh: keys.p256dh as string, auth: keys.auth as string } };
   } catch { return null; }
 }
 

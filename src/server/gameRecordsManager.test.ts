@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { EventEmitter } from "node:events";
 const eventSource: EventEmitter = process;
 const disk = vi.hoisted(() => ({
-  existsSync: vi.fn(), mkdirSync: vi.fn(), readFileSync: vi.fn(), writeFileSync: vi.fn(), renameSync: vi.fn(),
+  existsSync: vi.fn(), mkdirSync: vi.fn(), readFileSync: vi.fn(), writeFileSync: vi.fn(), renameSync: vi.fn(), unlinkSync: vi.fn(),
   promises: { writeFile: vi.fn(), rename: vi.fn() },
 }));
 vi.mock("fs", () => ({ default: disk }));
@@ -43,7 +43,7 @@ describe("game record persistence", () => {
     expect(disk.promises.writeFile).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2000);
     expect(disk.promises.writeFile).toHaveBeenCalledTimes(1);
-    expect(disk.promises.rename).toHaveBeenCalledTimes(1);
+    expect(disk.renameSync).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(4000);
     expect(disk.promises.writeFile).toHaveBeenCalledTimes(1);
   });
@@ -53,18 +53,18 @@ describe("game record persistence", () => {
     manager.getNextGameCode();
     await vi.advanceTimersByTimeAsync(2000);
     expect(disk.promises.writeFile).toHaveBeenCalledTimes(1);
-    expect(disk.promises.rename).not.toHaveBeenCalled();
+    expect(disk.renameSync).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2000);
     expect(disk.promises.writeFile).toHaveBeenCalledTimes(2);
-    expect(disk.promises.rename).toHaveBeenCalledTimes(1);
+    expect(disk.renameSync).toHaveBeenCalledTimes(1);
   });
   it("retries a failed rename too", async () => {
     const manager = await import("./gameRecordsManager");
-    disk.promises.rename.mockRejectedValueOnce(new Error("rename refused"));
+    disk.renameSync.mockImplementationOnce(() => { throw new Error("rename refused"); });
     manager.getNextGameCode();
     await vi.advanceTimersByTimeAsync(4000);
     expect(disk.promises.writeFile).toHaveBeenCalledTimes(2);
-    expect(disk.promises.rename).toHaveBeenCalledTimes(2);
+    expect(disk.renameSync).toHaveBeenCalledTimes(2);
   });
   it("retains the dirty flag after a synchronous failure", async () => {
     const manager = await import("./gameRecordsManager");
@@ -98,5 +98,48 @@ describe("game record persistence", () => {
     release();
     await vi.advanceTimersByTimeAsync(1);
     expect(disk.promises.writeFile).toHaveBeenCalledTimes(3);
+  });
+});
+
+
+describe("canonical game records", () => {
+  const start = { gameCode: "26100042", player1: "alice", player2: "bob", playerColors: { alice: "W" as const, bob: "B" as const }, gameMode: "Multiplayer", timeControl: "5 min" };
+  const end = { gameCode: start.gameCode, completeMoveHistory: [], finalResult: "1–0" as const, resultReason: "Timeout", winnerColor: "W" as const, winnerUsername: "alice", loserUsername: "bob", isDraw: false };
+  it("keeps the first completed result and counts its series only once", async () => {
+    const manager = await import("./gameRecordsManager"); manager.recordGameStart(start);
+    const first = await manager.recordGameEnd(end); const endedAt = first.gameEndTime;
+    vi.setSystemTime(Date.now() + 1000);
+    await manager.recordGameEnd({ ...end, finalResult: "0–1", winnerColor: "B", winnerUsername: "bob", loserUsername: "alice" });
+    manager.recordGameStart({ ...start, player1: "attacker" });
+    expect(await manager.getGameRecordByCode(start.gameCode)).toMatchObject({ whitePlayer: "alice", winner: "alice", finalResult: "1–0", gameEndTime: endedAt });
+    expect(manager.getSeriesById(first.seriesId)).toMatchObject({ seriesGamesCount: 1, scores: { alice: 1, bob: 0 } });
+  });
+  it("snapshots custom starting/final positions, turns and move history", async () => {
+    const manager = await import("./gameRecordsManager");
+    const board = { 1: "B", 50: "W" }; const history = [{ from: 1, to: 6, caps: [] }];
+    manager.recordGameStart({ ...start, startingPosition: board, startingTurn: "B" }); board[1] = "b";
+    const result = await manager.recordGameEnd({ ...end, completeMoveHistory: history, currentPosition: { 6: "B", 50: "W" }, currentTurn: "W" });
+    history[0].to = 7;
+    expect(result.startingPosition).toEqual({ 1: "B", 50: "W" });
+    expect(result.startingTurn).toBe("B"); expect(result.currentTurn).toBe("W");
+    expect(result.completeMoveHistory[0].to).toBe(6);
+  });
+  it("does not publish an in-progress game in the completed-game list", async () => {
+    const manager = await import("./gameRecordsManager");
+    const rec = manager.recordGameStart(start); rec.completeMoveHistory.push({ from: 31, to: 26, caps: [] });
+    expect(await manager.getRecentGameRecords()).toEqual([]);
+    await manager.recordGameEnd(end); expect(await manager.getRecentGameRecords()).toHaveLength(1);
+  });
+  it("shutdown saves the latest snapshot while an older write is in flight", async () => {
+    const manager = await import("./gameRecordsManager"); let release!: () => void;
+    disk.promises.writeFile.mockReturnValueOnce(new Promise<void>(resolve => { release = resolve; }));
+    manager.getNextGameCode(); await vi.advanceTimersByTimeAsync(2000);
+    manager.getNextGameCode(); manager.flushGameRecordsSync();
+    const seqWrite = disk.writeFileSync.mock.calls.find(([file]) => file.includes("game_seq"));
+    expect(JSON.parse(seqWrite![1]).currentSeq).toBe(3);
+    const committed = disk.renameSync.mock.calls.length;
+    release(); await vi.advanceTimersByTimeAsync(1);
+    expect(disk.renameSync).toHaveBeenCalledTimes(committed);
+    expect(disk.unlinkSync).toHaveBeenCalledTimes(1);
   });
 });

@@ -776,14 +776,14 @@ const NO_END: GameEndResult = { isOver: false, winner: null, isDraw: false, reas
  * AI/analysis games) and the server (as the authoritative check for PvP,
  * which previously had no such check at all).
  */
-export function checkGameEnd(history: Move[]): GameEndResult {
+export function checkGameEnd(history: Move[], initialBoard: Board = createInitialBoard(), initialTurn: "W" | "B" = "W"): GameEndResult {
   // Reconstruct every board position in the game, 0..history.length.
-  const boards: Board[] = [createInitialBoard()];
+  const boards: Board[] = [{ ...initialBoard }];
   for (let i = 0; i < history.length; i++) {
     boards.push(applyMove(boards[i], history[i]).board);
   }
   const finalBoard = boards[boards.length - 1];
-  const sideToMove: "W" | "B" = history.length % 2 === 0 ? "W" : "B";
+  const sideToMove: "W" | "B" = history.length % 2 === 0 ? initialTurn : getOppColor(initialTurn);
 
   // 1. No legal moves -> opponent wins.
   if (generateLegalMoves(finalBoard, sideToMove).length === 0) {
@@ -866,36 +866,3 @@ function boardsEqual(a: Board, b: Board): boolean {
   return true;
 }
 
-/**
- * Draw detector rule: 1 King vs <=3 pieces is a draw in Nigerian Draughts (Rules 4.1-4.4).
- * @deprecated Kept only so any remaining call site doesn't break the build;
- * prefer checkGameEnd(history), which correctly implements the FULL rule
- * set (move-counted, requires a king on the stronger side, plus repetition
- * and the 25-move king rule) instead of this immediate, always-on version.
- */
-export function checkDrawRule(board: Board): boolean {
-  let whiteCount = 0;
-  let blackCount = 0;
-  let whiteKings = 0;
-  let blackKings = 0;
-
-  for (let sq = 1; sq <= 50; sq++) {
-    const pc = board[sq];
-    if (pc) {
-      if (getCol(pc) === "W") {
-        whiteCount++;
-        if (isKing(pc)) whiteKings++;
-      } else {
-        blackCount++;
-        if (isKing(pc)) blackKings++;
-      }
-    }
-  }
-
-  // Rule 4.1-4.4: Lone white king vs <= 3 black pieces
-  if (whiteCount === 1 && whiteKings === 1 && blackCount <= 3) return true;
-  // Lone black king vs <= 3 white pieces
-  if (blackCount === 1 && blackKings === 1 && whiteCount <= 3) return true;
-
-  return false;
-}

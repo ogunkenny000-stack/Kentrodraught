@@ -102,20 +102,23 @@ describe("existing service worker", () => {
 });
 
 describe("production asset injection", () => {
-  it("includes lazy runtime chunks, preserves dev guards, and is idempotent", () => {
+  it("precaches startup assets, leaves feature chunks lazy, and is idempotent", () => {
     const dir = fs.mkdtempSync(path.resolve(".sw-fixture-"));
     fixtureDirs.push(dir);
     fs.mkdirSync(path.join(dir, "dist/assets/lazy"), { recursive: true });
     fs.writeFileSync(path.join(dir, "dist/sw.js"), source);
-    fs.writeFileSync(path.join(dir, "dist/index.html"), "<html>shell</html>");
-    for (const name of ["index-1.js", "index-1.css", "analysis-2.js", "lazy/worker-3.wasm", "photo.jpg"]) fs.writeFileSync(path.join(dir, "dist/assets", name), "fixture");
+    fs.writeFileSync(path.join(dir, "dist/index.html"), '<html><link rel="modulepreload" href="/assets/shared-1.js"><link rel="stylesheet" href="/assets/index-1.css"><script type="module" src="/assets/index-1.js"></script></html>');
+    for (const name of ["index-1.js", "shared-1.js", "index-1.css", "analysis-2.js", "lazy/worker-3.wasm", "photo.jpg"]) fs.writeFileSync(path.join(dir, "dist/assets", name), "fixture");
     const script = path.resolve("scripts/inject-sw-assets.cjs");
     const run = () => spawnSync(process.execPath, [script], { cwd: dir, encoding: "utf8" });
     const first = run();
     expect(first.status, first.stderr).toBe(0);
     const result = fs.readFileSync(path.join(dir, "dist/sw.js"), "utf8");
-    expect(result).toContain('"/assets/analysis-2.js"');
-    expect(result).toContain('"/assets/lazy/worker-3.wasm"');
+    expect(result).toContain('"/assets/index-1.js"');
+    expect(result).toContain('"/assets/shared-1.js"');
+    expect(result).toContain('"/assets/index-1.css"');
+    expect(result).not.toContain('"/assets/analysis-2.js"');
+    expect(result).not.toContain('"/assets/lazy/worker-3.wasm"');
     expect(result).not.toContain('"/assets/photo.jpg"');
     expect(result).toContain("if (isDevEnv)");
     expect(() => new vm.Script(result)).not.toThrow();

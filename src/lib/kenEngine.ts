@@ -41,6 +41,10 @@ type Flight = { cacheKey: string; requestKey: string; controller: AbortControlle
 const clientEngineCache = new ClientLRUCache<KenResult>();
 const inFlightRequests = new Map<string, Flight>();
 const activeBySupersedeKey = new Map<string, Flight>();
+// A tab owns its cancellation streams. Identical component names in another
+// browser must never preempt this tab's native search on the shared server.
+const browserRequestNamespace = globalThis.crypto?.randomUUID?.()
+  ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 async function requestMove(
   board: Board, turn: "W" | "B", thinkTimeSec: number, depth: number,
@@ -78,7 +82,8 @@ async function requestMove(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
-          body: JSON.stringify({ fen, thinkTime: thinkTimeSec, ...(depth > 0 ? { depth } : {}), usePst, supersedeKey }),
+          body: JSON.stringify({ fen, thinkTime: thinkTimeSec, ...(depth > 0 ? { depth } : {}), usePst,
+            supersedeKey: supersedeKey ? `${browserRequestNamespace}:${supersedeKey}` : undefined }),
         });
       } catch (err: any) {
         if (controller.signal.aborted || err?.name === "AbortError") throw new SupersededError();

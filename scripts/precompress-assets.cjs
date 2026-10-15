@@ -11,7 +11,10 @@ function walk(dir) {
     if (entry.isDirectory()) { walk(file); continue; }
     if (!/\.(?:js|css|html|json|svg|txt)$/.test(entry.name)) continue;
     const data = fs.readFileSync(file);
-    if (data.length < 1024) continue;
+    if (data.length < 1024) {
+      for (const ext of ['.gz', '.br']) fs.rmSync(file + ext, { force: true });
+      continue;
+    }
     const variants = [
       ['gzip', '.gz', gzipSync(data, { level: 8 })],
       ['brotli', '.br', brotliCompressSync(data, { params: { [constants.BROTLI_PARAM_QUALITY]: 9 } })],
@@ -20,6 +23,8 @@ function walk(dir) {
       if (compressed.length < data.length) {
         fs.writeFileSync(file + ext, compressed);
         counts[name]++;
+      } else {
+        fs.rmSync(file + ext, { force: true });
       }
     }
   }

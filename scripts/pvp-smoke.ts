@@ -86,8 +86,13 @@ class Client {
   /** Waits only for messages that arrive AFTER this call. */
   waitNext(desc: string, match: (m: Msg) => boolean, timeoutMs = 12000): Promise<Msg> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`[${this.name}] timed out waiting for next: ${desc}`)), timeoutMs);
-      this.waiters.push({ match, resolve: (m) => { clearTimeout(timer); resolve(m); } });
+      const waiter = { match, resolve: (m: Msg) => { clearTimeout(timer); resolve(m); } };
+      const timer = setTimeout(() => {
+        const index = this.waiters.indexOf(waiter);
+        if (index >= 0) this.waiters.splice(index, 1);
+        reject(new Error(`[${this.name}] timed out waiting for next: ${desc}`));
+      }, timeoutMs);
+      this.waiters.push(waiter);
     });
   }
 
@@ -207,6 +212,8 @@ async function main() {
   assert(preview.roomId === roomId, "preview references the right room");
   assert(preview.bestOf === 3, "preview shows Best of 3");
   assert(preview.entryFee === 0, "preview shows FREE entry (wager 0)");
+  assert(!B.inbox.some(m => m.type === "join-success" || m.type === "game-started"), "preview leaves the viewer unseated until acceptance");
+  assert(A.inbox.filter(m => m.type === "room-info").at(-1)?.players.length === 1, "preview leaves the host alone in the lobby");
 
   console.log("\n== 3. Accept -> game 1 starts ==");
   const aStart1 = A.waitNext("game-started", (m) => m.type === "game-started");
@@ -326,6 +333,13 @@ async function main() {
   (A.color === A.turn ? A : B).playFirstLegalMove();
   await specMove;
   assert(true, "spectator receives live moves in real time");
+  const spectatorName = S.name; const spectatorToken = S.token!; S.drop();
+  await sleep(80);
+  S = await connect(spectatorName, spectatorToken);
+  const restoredSpectator = await S.wait("spectator restored after reconnect", m => m.type === "spectate-joined" && m.roomId === r3.roomId);
+  assert(restoredSpectator.gameState.moveHistory.length === 1 && restoredSpectator.yourColor === null, "reconnected spectator retains the live board and read-only role");
+  const deniedSpectatorMove = S.waitNext("spectator move denied", m => m.type === "error" && m.code === "not-in-room");
+  S.send({ type: "make-move", move: S.legalMoves()[0] }); await deniedSpectatorMove;
 
   console.log("\n== 14. Sessions: duplicate name refused without token, takeover with token ==");
   const dup = await connectRaw(A.name);
@@ -363,6 +377,9 @@ async function main() {
   assert(true, "error { code: game-in-progress } returned");
 
   console.log("\n== 17. Spectator leave-room is treated as leave-spectate ==");
+  const seatedLeaveSpectate = A.waitNext("seated leave-spectate denied", m => m.type === "error" && m.code === "not-in-room");
+  A.send({ type: "leave-spectate" }); await seatedLeaveSpectate;
+  assert(true, "leave-spectate cannot detach a seated player");
   const specLeft = S.waitNext("left-room-success", (m) => m.type === "left-room-success");
   S.send({ type: "leave-room" });
   await specLeft;
@@ -379,6 +396,12 @@ async function main() {
   const ended = await resign(B, A);
   assert(ended.winnerColor === A.color && ended.reason === "resign", "resignation awards the game to the opponent");
   await bEnd;
+  const httpBase = URL.replace(/^ws/, "http");
+  const recordedResponse = await fetch(`${httpBase}/api/games/code/${r3.roomId}`);
+  assert(recordedResponse.ok, "finished multiplayer record is readable through the real HTTP API");
+  const recorded = (await recordedResponse.json()).game;
+  assert(recorded.gameCode === r3.roomId && recorded.gameEndTime > 0 && recorded.completeMoveHistory.length === 2, "canonical record contains the finished game's moves and code");
+  assert(recorded.startingTurn === "W" && recorded.startingPosition && recorded.currentPosition && recorded.currentTurn === "W", "record includes starting/final positions and side to move");
   await leaveBoth(A, B);
 
   console.log("\n== 19. Server-authoritative flag: 3-second clock ends with reason timeout ==");

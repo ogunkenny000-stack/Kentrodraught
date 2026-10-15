@@ -24,11 +24,12 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
 
   const validate = (): string | null => {
     const cleanUsername = username.trim();
-    if (cleanUsername.length < 3) return "Username must be at least 3 characters.";
+    if (mode === "signup" && (cleanUsername.length < 3 || cleanUsername.length > 40)) return "Username must be 3 to 40 characters.";
     if (mode === "signup" && /^KGuest_/i.test(cleanUsername)) return "That username prefix is reserved for Guest Mode.";
-    if (!/^[a-zA-Z0-9_]+$/.test(cleanUsername)) return "Username can only contain letters, numbers, and underscores.";
+    if (mode === "signup" && !/^[a-zA-Z0-9_]+$/.test(cleanUsername)) return "Username can only contain letters, numbers, and underscores.";
+    if (!cleanUsername || cleanUsername.length > 256) return "Enter your username.";
     if (mode === "reset") return null; // no password/email needed to request a reset
-    if (password.length < 8) return "Password must be at least 8 characters.";
+    if (!password || (mode === "signup" && password.length < 8)) return "Password must be at least 8 characters.";
     if (mode === "signup") {
       if (!email.trim()) return "Enter your email address.";
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return "That email address doesn't look right.";
@@ -68,17 +69,8 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
       // Supabase Auth errors carry a stable .code (e.g. "invalid_credentials")
       // -- more reliable to switch on than parsing the raw .message text.
       const code = err?.code as string | undefined;
-      if (code === "user_not_found") {
-        setError("No account found with that username.");
-      } else if (code === "invalid_credentials") {
-        // We already resolved the username to a real account before calling
-        // Supabase, so by this point "invalid credentials" can only mean
-        // the password was wrong -- Supabase deliberately doesn't
-        // distinguish "no such account" from "wrong password" itself (a
-        // modern anti-enumeration default), but our own resolve-first step
-        // already ruled the first case out.
-        setError("Incorrect password.");
-      } else if (code === "email_not_confirmed") {
+      if (code === "user_not_found" || code === "invalid_credentials") {
+        setError("Invalid username or password.");      } else if (code === "email_not_confirmed") {
         setError("Please confirm your email first -- check your inbox for the confirmation link.");
       } else if (code === "user_already_exists" || code === "email_exists") {
         setError("An account with this email already exists. Try signing in instead.");
@@ -105,7 +97,7 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
           </div>
           <h1 className="text-xl font-bold text-white font-sans mb-2">Check your email</h1>
           <p className="text-sm text-slate-400 font-sans leading-relaxed mb-6">
-            We sent a password reset link to the email on file for <span className="text-amber-400">{username.trim()}</span>.
+            If an account exists, a password reset link will be sent to the email on file for <span className="text-amber-400">{username.trim()}</span>.
             Click it to set a new password, then come back and sign in.
           </p>
           <button
@@ -229,36 +221,40 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div>
-            <label className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
+            <label htmlFor="auth-username" className="text-[11px] text-slate-300 font-bold uppercase tracking-wide font-sans mb-1.5 block">
               Username
             </label>
             <div className="relative">
               <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                id="auth-username"
+                name="username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder={mode === "signup" ? "How opponents will see you" : "Your username"}
                 autoComplete="username"
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-600 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-400 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
               />
             </div>
           </div>
 
           {mode === "signup" && (
             <div>
-              <label className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
+              <label htmlFor="auth-email" className="text-[11px] text-slate-300 font-bold uppercase tracking-wide font-sans mb-1.5 block">
                 Email
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
+                  id="auth-email"
+                  name="email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
                   autoComplete="email"
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-600 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-400 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
                 />
               </div>
             </div>
@@ -267,7 +263,7 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
           {mode !== "reset" && (
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans">
+              <label htmlFor="auth-password" className="text-[11px] text-slate-300 font-bold uppercase tracking-wide font-sans">
                 Password
               </label>
               {mode === "signin" && (
@@ -283,18 +279,21 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                id="auth-password"
+                name="password"
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="At least 8 characters"
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder:text-slate-600 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder:text-slate-400 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
-                tabIndex={-1}
+                className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-slate-300 hover:text-white transition"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -303,7 +302,7 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
           )}
 
           {error && (
-            <div className="text-[13px] text-rose-400 font-sans bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+            <div role="alert" className="text-[13px] text-rose-400 font-sans bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
               {error}
             </div>
           )}

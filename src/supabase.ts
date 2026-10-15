@@ -1,4 +1,4 @@
-import { createClient, type User } from '@supabase/supabase-js';
+import { createClient, type User, type AuthChangeEvent } from '@supabase/supabase-js';
 
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || 'https://placeholder.supabase.co';
 const supabaseKey = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined) || 'placeholder_key';
@@ -53,8 +53,9 @@ export async function signUpWithEmail(email: string, password: string, username:
   // then the Supabase Auth ACCOUNT already exists, just with no matching
   // profile, leaving them unable to ever sign in by username. Catching it
   // here means signup fails cleanly, before anything is created.
-  const existingEmail = await resolveUsernameToEmail(cleanUsername);
-  if (existingEmail) {
+  const { data: existingProfile, error: lookupError } = await supabase.from('profiles').select('usernameLower').eq('usernameLower', cleanUsername).maybeSingle();
+  if (lookupError) throw new Error('Could not check username availability. Try again.');
+  if (existingProfile) {
     throw new Error('That username is already taken. Try another one.');
   }
 
@@ -97,31 +98,24 @@ export async function signUpWithEmail(email: string, password: string, username:
   return user;
 }
 
-/** Resolves a username to its account email via the resolve_username_to_email
- * RPC (see supabase/schema.sql) -- returns null if no account uses this
- * username. */
-export async function resolveUsernameToEmail(username: string): Promise<string | null> {
-  const { data, error } = await supabase.rpc('resolve_username_to_email', { p_username: username });
-  if (error) {
-    console.error('resolveUsernameToEmail failed:', error);
-    return null;
+/** Account emails are resolved only on the server, using its service-only RPC. */
+async function usernameAuthRequest(path: string, body: Record<string, string>): Promise<any> {
+  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(typeof data.error === 'string' ? data.error : 'Authentication failed. Try again.');
+    (error as Error & { code: string }).code = response.status === 429 ? 'over_request_rate_limit' : 'invalid_credentials';
+    throw error;
   }
-  return (data as string | null) ?? null;
+  return data;
 }
 
-/** Sign in with username instead of email -- resolves to the account's
- * real email first, then authenticates normally. Throws a clear
- * "account not found" error (distinct from "wrong password") if the
- * username doesn't match any account. */
 export async function signInWithUsername(username: string, password: string): Promise<User> {
-  const email = await resolveUsernameToEmail(username);
-  if (!email) {
-    const err = new Error('No account found with that username.');
-    (err as any).code = 'user_not_found';
-    throw err;
-  }
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const result = await usernameAuthRequest('/api/auth/sign-in', { username, password });
+  if (!result.session?.access_token || !result.session?.refresh_token) throw new Error('Sign in did not return a session.');
+  const { data, error } = await supabase.auth.setSession({ access_token: result.session.access_token, refresh_token: result.session.refresh_token });
   if (error) throw error;
+  if (!data.user) throw new Error('Sign in did not return a user.');
   return data.user;
 }
 
@@ -131,24 +125,19 @@ export async function signInWithEmail(email: string, password: string): Promise<
   return data.user;
 }
 
-/** Password reset by username, not email -- consistent with the rest of
- * this app's UX (email is only ever collected once, at signup). Resolves
- * the username to its account email via the same resolve_username_to_email
- * RPC used for sign-in, then asks Supabase to send the reset link. Throws
- * "user_not_found" if the username doesn't match any account, same
- * distinguishable error shape signInWithUsername already uses. */
+/** Recovery has the same public result whether or not an account exists. */
 export async function requestPasswordReset(username: string): Promise<void> {
-  const email = await resolveUsernameToEmail(username);
-  if (!email) {
-    const err = new Error('No account found with that username.');
-    (err as any).code = 'user_not_found';
-    throw err;
-  }
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: window.location.origin,
-  });
-  if (error) throw error;
+  await usernameAuthRequest('/api/auth/recover', { username });
 }
+
+let recoverySession = typeof window !== 'undefined' &&
+  (new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery' || new URLSearchParams(window.location.search).get('type') === 'recovery');
+export function hasPasswordRecoverySession(): boolean { return recoverySession; }
+export function finishPasswordRecovery(): void { recoverySession = false; }
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') recoverySession = true;
+  else if (event === 'SIGNED_OUT') recoverySession = false;
+});
 
 /** Re-sends the verification email to whoever is currently signed in.
  * No-op if already verified or if no one's signed in -- callers should
@@ -174,10 +163,10 @@ export async function signOutUser(): Promise<void> {
   if (error) throw error;
 }
 
-export function onAuthStateChange(callback: (user: User | null) => void): () => void {
+export function onAuthStateChange(callback: (user: User | null, event?: AuthChangeEvent) => void): () => void {
   const {
     data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => callback(session?.user ?? null));
+  } = supabase.auth.onAuthStateChange((event, session) => callback(session?.user ?? null, event));
   return () => subscription.unsubscribe();
 }
 

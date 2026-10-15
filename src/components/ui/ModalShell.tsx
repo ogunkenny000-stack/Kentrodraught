@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
+import { trapDialogFocus } from "../../lib/dialogFocus";
 
 /**
  * ModalShell -- the one responsive dialog container used by every popup in
@@ -44,28 +45,9 @@ export function ModalShell({
   closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const frame = requestAnimationFrame(() => dialogRef.current?.focus());
-    const handleDialogKeys = (event: KeyboardEvent) => {
-      const panel = dialogRef.current;
-      if (!panel) return;
-      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'));
-      if (openDialogs[openDialogs.length - 1] !== panel) return;
-      if (event.key === "Escape" && dismissable) {
-        event.stopPropagation();
-        event.preventDefault();
-        closeRef.current();
-      }
-      if (event.key !== "Tab") return;
-      const candidates = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled),[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])'));
-      const controls = candidates.filter(element => element.getClientRects().length > 0);
-      if (!controls.length) { event.preventDefault(); panel.focus(); return; }
-      const first = controls[0], last = controls[controls.length - 1];
-      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", handleDialogKeys);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener("keydown", handleDialogKeys); previousFocus?.focus(); };
+    const panel = dialogRef.current;
+    if (!panel) return;
+    return trapDialogFocus(panel, dismissable ? () => closeRef.current() : undefined);
   }, [open, dismissable]);
   const maxW =
     size === "sm" ? "sm:max-w-sm" : size === "md" ? "sm:max-w-md" : size === "lg" ? "sm:max-w-lg" : "sm:max-w-2xl";

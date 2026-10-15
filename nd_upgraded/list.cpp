@@ -63,18 +63,37 @@ void List::set_size(int size) {
 void List::set_score(int i, int sc) {
    assert(i >= 0 && i < m_size);
    assert(std::abs(sc) < (1 << 15));
-   m_score[i] = sc;
+   scores()[i] = sc;
 }
 
-void List::copy(const List & list) { // HACK: does not copy scores
+void List::reserve(int size) {
+
+   if (size <= Size && m_move_spill.empty()) return;
+   if (size <= int(m_move_spill.size())) return;
+
+   int capacity = std::max(size, std::max(Size * 2, int(m_move_spill.size()) * 2));
+   bool first = m_move_spill.empty();
+   m_move_spill.resize(capacity);
+   m_score_spill.resize(capacity);
+   if (first) {
+      std::copy(m_move, m_move + m_size, m_move_spill.begin());
+      std::copy(m_score, m_score + m_size, m_score_spill.begin());
+   }
+}
+
+void List::copy(const List & list) {
+
+   if (this == &list) return;
+
+   reserve(list.m_size);
 
    m_capture_score = list.m_capture_score;
 
    m_size = list.m_size;
 
    for (int i = 0; i < list.m_size; i++) {
-      m_move[i] = list.m_move[i];
-      // m_score[i] = list.m_score[i];
+      moves()[i] = list.move(i);
+      scores()[i] = list.score(i);
    }
 }
 
@@ -82,16 +101,16 @@ void List::move_to_front(int i) {
 
    assert(i >= 0 && i < m_size);
 
-   Move mv = m_move[i];
-   int  sc = m_score[i];
+   Move mv = moves()[i];
+   int  sc = scores()[i];
 
    for (int j = i; j > 0; j--) {
-      m_move[j] = m_move[j - 1];
-      m_score[j] = m_score[j - 1];
+      moves()[j] = moves()[j - 1];
+      scores()[j] = scores()[j - 1];
    }
 
-   m_move[0] = mv;
-   m_score[0] = sc;
+   moves()[0] = mv;
+   scores()[0] = sc;
 }
 
 void List::sort() {
@@ -102,28 +121,26 @@ void List::sort() {
 
    // insert sort (stable)
 
-   m_score[m_size] = -(1 << 15); // HACK: sentinel
-
    for (int i = m_size - 2; i >= 0; i--) {
 
-      Move mv = m_move[i];
-      int  sc = m_score[i];
+      Move mv = moves()[i];
+      int  sc = scores()[i];
 
       int j;
 
-      for (j = i; sc < m_score[j + 1]; j++) {
-         m_move[j] = m_move[j + 1];
-         m_score[j] = m_score[j + 1];
+      for (j = i; j + 1 < m_size && sc < scores()[j + 1]; j++) {
+         moves()[j] = moves()[j + 1];
+         scores()[j] = scores()[j + 1];
       }
 
       assert(j < m_size);
-      m_move[j] = mv;
-      m_score[j] = sc;
+      moves()[j] = mv;
+      scores()[j] = sc;
    }
 }
 
 void List::shuffle() {
-   std::shuffle(&m_move[0], &m_move[m_size], ml::gen);
+   std::shuffle(moves(), moves() + m_size, ml::gen);
 }
 
 void List::sort_static(const Pos & pos) { // for opening book
@@ -136,21 +153,21 @@ void List::sort_static(const Pos & pos) { // for opening book
 
    for (int i = m_size - 2; i >= 0; i--) {
 
-      Move mv = m_move[i];
-      int  sc = m_score[i];
+      Move mv = moves()[i];
+      int  sc = scores()[i];
 
       uint64 order = move_order(mv, pos);
 
       int j;
 
-      for (j = i; j + 1 < m_size && order < move_order(m_move[j + 1], pos); j++) {
-         m_move[j] = m_move[j + 1];
-         m_score[j] = m_score[j + 1];
+      for (j = i; j + 1 < m_size && order < move_order(moves()[j + 1], pos); j++) {
+         moves()[j] = moves()[j + 1];
+         scores()[j] = scores()[j + 1];
       }
 
       assert(j < m_size);
-      m_move[j] = mv;
-      m_score[j] = sc;
+      moves()[j] = mv;
+      scores()[j] = sc;
    }
 }
 

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const { rpc, from } = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn() }));
 vi.mock("../../supabaseAdmin", () => ({ getSupabaseAdmin: () => ({ rpc, from }) }));
-import { creditWallet, debitWallet, debitMultipleWallets, getOrCreateWallet, settleMatchPot } from "../../coinsService";
+import { creditWallet, debitWallet, debitMultipleWallets, getOrCreateWallet, settleMatchPot, unlockAiLevel, submitWithdrawal, resolvePurchase, resolveWithdrawal } from "../../coinsService";
 
 beforeEach(() => { vi.resetAllMocks(); });
 
@@ -59,5 +59,40 @@ describe("wallet creation reread", () => {
   it("still handles a concurrent wallet creation", async () => {
     setup({ data: { balance: 17 }, error: null }, { code: "23505" });
     await expect(getOrCreateWallet("alice", "uid")).resolves.toBe(17);
+  });
+});
+
+
+describe("atomic financial operations", () => {
+  const owner = "11111111-1111-4111-8111-111111111111";
+  const request = "22222222-2222-4222-8222-222222222222";
+  it("never charges an invalid target or a fractional cost", async () => {
+    await expect(unlockAiLevel(owner, 8, 1.1)).rejects.toThrow("safe integer");
+    await expect(unlockAiLevel(owner, 9, 1)).rejects.toThrow("level");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("uses a single operation for a free or paid unlock", async () => {
+    rpc.mockResolvedValue({ data: { ok: true, balance: 9, maxUnlockedKenLevel: 8 }, error: null });
+    await expect(unlockAiLevel(owner, 8, 0)).resolves.toMatchObject({ ok: true, maxUnlockedKenLevel: 8 });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(from).not.toHaveBeenCalled();
+  });
+  it("propagates transaction failures instead of fabricating completed requests", async () => {
+    const error = new Error("transaction rolled back");
+    rpc.mockResolvedValue({ data: null, error });
+    await expect(submitWithdrawal({ ownerId: owner, requestId: request, coins: 500, nairaAmount: 4750,
+      accountName: "Alice", accountNumber: "0123456789", bankName: null })).rejects.toBe(error);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(from).not.toHaveBeenCalled();
+  });
+  it("requires a stable request id and real boolean decision before resolving money", async () => {
+    await expect(resolveWithdrawal("bad-id", true, owner)).rejects.toThrow("UUID");
+    await expect(resolveWithdrawal(request, "false" as unknown as boolean, owner)).rejects.toThrow("boolean");
+    await expect(resolvePurchase(request, true, 0, "starter", owner)).rejects.toThrow("safe integer");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("does not turn an empty RPC response into a success", async () => {
+    rpc.mockResolvedValue({ data: null, error: null });
+    await expect(resolveWithdrawal(request, false, owner)).rejects.toThrow("valid result");
   });
 });

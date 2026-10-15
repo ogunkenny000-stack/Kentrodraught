@@ -3,9 +3,27 @@ const { execFileSync, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const root = path.resolve(__dirname, "..");
 const engineDir = path.join(root, "nd_upgraded");
 const binaryPath = path.join(engineDir, process.platform === "win32" ? "scan_nigerian.exe" : "scan_nigerian");
+const buildStatePath = path.join(root, "data", "native-engine-build.json");
+const compileFlags = "-pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math";
+const linkFlags = "-pthread -O3 -flto";
+
+function fileHash(file) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function sourceFingerprint() {
+  const hash = crypto.createHash("sha256");
+  hash.update(JSON.stringify({ platform: process.platform, arch: process.arch, compiler: process.env.CXX || "", compileFlags, linkFlags }));
+  const files = fs.readdirSync(engineDir).filter((name) => /\.(cpp|hpp|h)$/.test(name) || /^Makefile/.test(name) || name === "scan.ini").sort();
+  for (const name of files) hash.update(name + "\0" + fileHash(path.join(engineDir, name)) + "\0");
+  hash.update(fileHash(path.join(engineDir, "data", "eval_nigerian")));
+  hash.update(fileHash(__filename));
+  return hash.digest("hex");
+}
 
 function ensureSources() {
   const required = ["main.cpp", "data/eval_nigerian", process.platform === "darwin" ? "Makefile_macos" : "Makefile_linux"];
@@ -95,7 +113,11 @@ async function main() {
   const rootWeights = path.join(root, "data", "eval_nigerian");
   if (!fs.existsSync(rootWeights)) fs.copyFileSync(weights, rootWeights);
 
-  if (fs.existsSync(binaryPath)) {
+  const fingerprint = sourceFingerprint();
+  let buildState;
+  try { buildState = JSON.parse(fs.readFileSync(buildStatePath, "utf8")); } catch { /* A missing stamp requires a fresh build. */ }
+  const current = fs.existsSync(binaryPath) && buildState?.source === fingerprint && buildState?.binary === fileHash(binaryPath);
+  if (current) {
     try {
       fs.chmodSync(binaryPath, 0o755);
       await probeBinary();
@@ -104,6 +126,8 @@ async function main() {
     } catch (error) {
       console.warn(`[build:engine] Existing binary is not usable: ${error.message}. Rebuilding.`);
     }
+  } else if (fs.existsSync(binaryPath)) {
+    console.log("[build:engine] Source/build fingerprint changed or missing. Rebuilding.");
   }
 
   const makefile = process.platform === "darwin" ? "Makefile_macos" : "Makefile_linux";
@@ -112,13 +136,13 @@ async function main() {
   try {
     // No -march=native: a container/image must run on a different CPU too.
     execFileSync("make", ["-B", "-f", makefile, `-j${jobs}`, `CXX=${compiler}`,
-      "CXXFLAGS=-pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math",
-      "LDFLAGS=-pthread -O3 -flto"], { cwd: engineDir, stdio: "inherit" });
+      `CXXFLAGS=${compileFlags}`, `LDFLAGS=${linkFlags}`], { cwd: engineDir, stdio: "inherit" });
   } catch (error) {
     throw new Error(`Native engine compilation failed. Install make and a C++14 compiler, or use the project's Docker build. No automatic OS package installation was attempted. ${error.message}`);
   }
   fs.chmodSync(binaryPath, 0o755);
   await probeBinary();
+  fs.writeFileSync(buildStatePath, JSON.stringify({ source: fingerprint, binary: fileHash(binaryPath) }) + "\n");
   console.log("[build:engine] Native engine rebuilt and search-verified.");
 }
 
@@ -126,4 +150,4 @@ if (require.main === module) main().catch((error) => {
   console.error(`[build:engine] ${error.message}`);
   process.exitCode = 1;
 });
-module.exports = { ensureSources, probeBinary, main };
+module.exports = { ensureSources, probeBinary, sourceFingerprint, main };

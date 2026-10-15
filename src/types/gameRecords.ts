@@ -14,9 +14,11 @@ export interface KentroGameRecord {
   gameMode: string;
   timeControl: string;
   startingPosition?: Board | null;
+  startingTurn?: "W" | "B";
   completeMoveHistory: Move[];
   moveHistoryStrings: string[];
   currentPosition?: Board | null;
+  currentTurn?: "W" | "B";
   gameStartTime: number;
   gameEndTime: number;
   durationSeconds: number;

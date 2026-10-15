@@ -1,16 +1,19 @@
-import { Mutex } from "./src/server/engineMutex";
+import { PersistentEngine } from "./src/server/nativeEngine";
 import express from "express";
 import path from "path";
-import { spawn, execSync, ChildProcess } from "child_process";
 import fs from "fs";
 import { WebSocketServer } from "ws";
 import { generateLegalMoves, applyMove, createInitialBoard, checkGameEnd, boardToScanFen, scanFenToBoard, moveToNotationString, convertMoveStr, convertSq, isKing, verifyPuzzleLine, hubMoveStringToNigerian, ngSqToRc } from "./src/gameLogic";
 import type { Board, Move } from "./src/gameLogic";
-import { debitMultipleWallets, creditWallet, getOrCreateWallet, debitWallet, settleMatchPot, HOUSE_WALLET_USERNAME } from "./coinsService";
+import { debitMultipleWallets, creditWallet, getOrCreateWallet, debitWallet, settleMatchPot, HOUSE_WALLET_USERNAME, unlockAiLevel, submitWithdrawal, resolveWithdrawal, resolvePurchase } from "./coinsService";
 import { requirePermission, writeAuditLog, ADMIN_PERMISSIONS, getAdminByUid, type AdminPermission } from "./adminService";
 import compression from "compression";
+import { mountProductionStatic } from "./src/server/staticAssets";
 import { getSupabaseAdmin, verifyAccessToken } from "./supabaseAdmin";
 import { Client as PgClient } from "pg";
+import { randomUUID } from "node:crypto";
+import { createRateLimiter, securityHeaders } from "./src/server/securityMiddleware";
+import { createUsernameAuthHandlers } from "./src/server/usernameAuth";
 import {
   initGameRecordsManager,
   getNextGameCode,
@@ -22,7 +25,7 @@ import {
   getSeriesById,
 } from "./src/server/gameRecordsManager";
 import { attachOnlinePlay } from "./src/server/onlinePlay";
-import { isScanFen, isEngineDepth, MAX_ENGINE_DEPTH, parseEngineMoveRequest } from "./src/server/engineRequest";
+import { parseEngineMoveRequest } from "./src/server/engineRequest";
 import { accountForUsername, insertNotification, sendTournamentReminders } from "./src/server/notifications";
 import { deliverPendingPushes, safePushEndpoint, validateSubscription, vapidSettings } from "./src/server/webPush";
 
@@ -34,380 +37,9 @@ import { deliverPendingPushes, safePushEndpoint, validateSubscription, vapidSett
 // getSupabaseAdmin() call throws). Independent flags rather than one
 // combined flag so either feature can be on/off separately: Kentro Coins
 // stay off (per explicit decision), Admin Panel is back on.
+const isUuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const KENTRO_ADMIN_ENABLED = true;
 const KENTRO_COINS_ENABLED = true;
-
-// Fast LRU Cache for evaluated positions, delivering 0ms instantaneous responses
-// for repeated positions, opening moves, backward/forward navigation, and transpositions.
-class EngineLRUCache<V> {
-  private map = new Map<string, V>();
-  constructor(private readonly maxEntries = 5000) {}
-
-  get(key: string): V | undefined {
-    const val = this.map.get(key);
-    if (val !== undefined) {
-      this.map.delete(key);
-      this.map.set(key, val);
-    }
-    return val;
-  }
-
-  set(key: string, val: V): void {
-    if (this.map.has(key)) {
-      this.map.delete(key);
-    } else if (this.map.size >= this.maxEntries) {
-      const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) this.map.delete(oldest);
-    }
-    this.map.set(key, val);
-  }
-
-  clear(): void {
-    this.map.clear();
-  }
-}
-
-// Set ENGINE_DEBUG=1 in the environment for a full request/response transcript in
-// nd_upgraded/engine.log. Off by default. The previous version logged synchronously
-// (fs.appendFileSync) on every single line of every engine interaction -- that blocks
-// Node's single event-loop thread on disk I/O for every request, and the file grew
-// forever with no rotation. This is async and opt-in instead.
-const ENGINE_DEBUG = process.env.ENGINE_DEBUG === "1";
-const ENGINE_LOG_PATH = path.join(process.cwd(), "nd_upgraded", "engine.log");
-
-let stdbufAvailable: boolean | null = null;
-function hasStdbuf(): boolean {
-  if (stdbufAvailable === null) {
-    try {
-      execSync("command -v stdbuf", { stdio: "ignore" });
-      stdbufAvailable = true;
-    } catch {
-      stdbufAvailable = false;
-    }
-  }
-  return stdbufAvailable;
-}
-function engineLog(line: string) {
-  if (!ENGINE_DEBUG) return;
-  fs.appendFile(ENGINE_LOG_PATH, line, () => {
-    /* best-effort logging; never let a log write throw inside a request path */
-  });
-}
-
-interface EngineResult {
-  score: number;
-  depth: number;
-  pv: string;
-  move: string;
-  nodes?: number;
-}
-
-/**
- * Manages ONE long-lived `scan_nigerian hub` process for the lifetime of the server,
- * instead of spawning (and fully re-initializing -- including reloading the 8.5MB
- * eval file) a brand new process for every single move request.
- *
- * Confirmed empirically (2026-07-06) that the hub protocol only needs the
- * hub -> wait -> init -> ready handshake ONCE per process; after that, repeated
- * pos/level/go/stop cycles work correctly on the same process.
- *
- * All commands are serialized through `mutex` since the engine's stdin/stdout is a
- * single conversation that cannot be shared between two concurrent requests.
- */
-class PersistentEngine {
-  private proc: ChildProcess | null = null;
-  private readyPromise: Promise<void> | null = null;
-  private mutex = new Mutex();
-  private binaryPath = path.join(process.cwd(), "nd_upgraded", "scan_nigerian");
-  private workDir = path.join(process.cwd(), "nd_upgraded");
-  private cache = new EngineLRUCache<EngineResult>(5000);
-  private inFlight = new Map<string, Promise<EngineResult>>();
-
-  /** Spawns the engine process and waits for the one-time init handshake. Safe to call
-   * repeatedly -- returns the existing in-flight/ready promise if already starting/started. */
-  private start(): Promise<void> {
-    if (this.proc && !this.proc.killed && this.readyPromise) return this.readyPromise;
-
-    if (!fs.existsSync(this.binaryPath)) {
-      try {
-        console.log("[engine] scan_nigerian binary missing, automatically running scripts/build-engine.cjs...");
-        execSync("node scripts/build-engine.cjs", { cwd: process.cwd(), stdio: "inherit" });
-      } catch (err: any) {
-        console.warn("[engine] Automatic engine build attempt failed:", err?.message);
-      }
-    }
-
-    if (!fs.existsSync(this.binaryPath)) {
-      const msg =
-        `[engine] scan_nigerian C++ binary not present at ${this.binaryPath}. ` +
-        `Build it first: cd nd_upgraded && make -f Makefile_linux (or run "npm run build:engine").`;
-      console.warn(msg);
-      const rejected = Promise.reject(new Error(msg));
-      rejected.catch(() => {});
-      return rejected;
-    }
-
-    // Ensure executable permissions before spawning
-    try {
-      fs.chmodSync(this.binaryPath, 0o755);
-    } catch {}
-
-    this.readyPromise = new Promise<void>((resolve, reject) => {
-      // `stdbuf` (GNU coreutils) forces line-buffered output on Linux; it does not exist on
-      // macOS, and the engine already flushes every line itself, so spawn directly there.
-      const child = hasStdbuf()
-        ? spawn("stdbuf", ["-oL", "-eL", this.binaryPath, "hub"], { cwd: this.workDir })
-        : spawn(this.binaryPath, ["hub"], { cwd: this.workDir });
-      this.proc = child;
-      let buffer = "";
-      let initialized = false;
-
-      const onDown = (why: string) => {
-        engineLog(`ENGINE PROCESS DOWN (${why})\n`);
-        if (!initialized) reject(new Error(`engine exited before init (${why})`));
-        if (this.proc === child) {
-          this.proc = null;
-          this.readyPromise = null;
-        }
-      };
-
-      child.on("error", (err) => {
-        console.error("[engine] spawn error:", err.message);
-        onDown(err.message);
-      });
-      child.on("close", (code) => onDown(`exit code ${code}`));
-      child.stderr.on("data", (d) => engineLog(`STDERR: ${d}`));
-
-      const onInitData = (data: Buffer) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const raw of lines) {
-          const line = raw.trim();
-          engineLog(`STDOUT(init): ${line}\n`);
-          if (line === "wait") {
-            child.stdin.write("init\n");
-          } else if (line === "ready") {
-            initialized = true;
-            child.stdout.off("data", onInitData);
-            console.log("[engine] scan_nigerian initialized and ready");
-            resolve();
-          }
-        }
-      };
-      child.stdout.on("data", onInitData);
-
-      child.stdin.write("hub\n");
-    });
-
-    return this.readyPromise;
-  }
-
-  /** Starts the engine ahead of the first real request, so the first player doesn't
-   * pay the one-time init cost. Failure is logged but never throws. */
-  async warmUp(): Promise<void> {
-    try {
-      await this.start();
-    } catch (err) {
-      // already logged inside start(); nothing more to do here.
-    }
-  }
-
-  /** Fast health check ping: sends "ping" and expects "pong" within 1000ms. */
-  async ping(): Promise<boolean> {
-    try {
-      await this.start();
-      const release = await this.mutex.acquire(true);
-      const child = this.proc;
-      if (!child || !child.stdin.writable) {
-        release();
-        return false;
-      }
-
-      return new Promise<boolean>((resolve) => {
-        let timer: NodeJS.Timeout;
-        const onPingData = (data: Buffer) => {
-          if (data.toString().includes("pong")) {
-            clearTimeout(timer);
-            child.stdout.off("data", onPingData);
-            release();
-            resolve(true);
-          }
-        };
-
-        timer = setTimeout(() => {
-          child.stdout.off("data", onPingData);
-          release();
-          resolve(false);
-        }, 1000);
-
-        child.stdout.on("data", onPingData);
-        child.stdin.write("ping\n");
-      });
-    } catch {
-      return false;
-    }
-  }
-
-  async getMove(
-    fen: string,
-    thinkTimeSec: number,
-    depth?: number,
-    isHighPriority = true,
-    usePst = false,
-    supersedeKey?: string
-  ): Promise<EngineResult> {
-    if (!isScanFen(fen)) throw new Error("Invalid engine position");
-    if (!Number.isFinite(thinkTimeSec) || thinkTimeSec <= 0) throw new Error("Invalid engine time budget");
-    if (depth !== undefined && !isEngineDepth(depth)) throw new Error("Invalid engine search depth");
-    // 1. Instant cache check; every search sets its own depth limit.
-    const cacheKey = `${fen}|${thinkTimeSec.toFixed(3)}|${depth ?? MAX_ENGINE_DEPTH}|${usePst ? 1 : 0}`;
-    const cached = this.cache.get(cacheKey);
-    if (cached) {
-      return { ...cached };
-    }
-
-    // 2. In-flight request deduplication (coalescing)
-    const existingFlight = this.inFlight.get(cacheKey);
-    if (existingFlight) {
-      return existingFlight;
-    }
-
-    const execPromise = this._executeMove(fen, thinkTimeSec, depth, isHighPriority, usePst, supersedeKey);
-    this.inFlight.set(cacheKey, execPromise);
-
-    try {
-      const result = await execPromise;
-      this.cache.set(cacheKey, result);
-      return result;
-    } finally {
-      this.inFlight.delete(cacheKey);
-    }
-  }
-
-  private async _executeMove(
-    fen: string,
-    thinkTimeSec: number,
-    depth?: number,
-    isHighPriority = true,
-    usePst = false,
-    supersedeKey?: string
-  ): Promise<EngineResult> {
-    let isSuperseded = false;
-    const release = await this.mutex.acquire(isHighPriority, supersedeKey, () => {
-      isSuperseded = true;
-    });
-
-    if (isSuperseded) {
-      release();
-      throw new Error("Superseded");
-    }
-
-    // A queued request may outlive the previous process. Start/check it only
-    // after acquiring the search lock, not before waiting in the queue.
-    try {
-      await this.start();
-    } catch (err) {
-      release();
-      throw new Error(`Engine start failed: ${err}`);
-    }
-
-    const child = this.proc;
-    if (!child) {
-      release();
-      throw new Error("Engine process not available");
-    }
-
-    return new Promise<EngineResult>((resolve, reject) => {
-      const result: EngineResult = { score: 0, depth: 0, pv: "", move: "" };
-      let resolved = false;
-      let buffer = "";
-
-      const finish = (r: EngineResult) => {
-        if (resolved) return;
-        resolved = true;
-        child.stdout.off("data", onData);
-        clearTimeout(timer);
-        clearTimeout(softStopTimer);
-        release();
-        // A preempted search did not use the requested budget; never cache it
-        // as though it were a completed full-strength search.
-        if (isSuperseded) reject(new Error("Superseded"));
-        else resolve(r);
-      };
-
-      const fail = (err: Error) => {
-        if (resolved) return;
-        resolved = true;
-        child.stdout.off("data", onData);
-        clearTimeout(timer);
-        clearTimeout(softStopTimer);
-        release();
-        reject(err);
-      };
-
-      // Register preemption hook: if a newer request with the same supersedeKey arrives, stop this one early
-      this.mutex.registerCurrentStop(() => {
-        isSuperseded = true;
-        if (!resolved && child.stdin.writable) {
-          child.stdin.write("stop\n");
-        }
-      });
-
-      // Hard timeout safety valve
-      const timer = setTimeout(() => {
-        engineLog(`TIMEOUT waiting for "done" -- killing engine process, will respawn on next request\n`);
-        child.kill();
-        fail(new Error("Engine timed out"));
-      }, (thinkTimeSec + 2.5) * 1000);
-
-      // Soft stop: signal the engine to conclude search when requested time budget expires
-      const softStopTimer = setTimeout(() => {
-        if (!resolved && child.stdin.writable) {
-          child.stdin.write("stop\n");
-        }
-      }, thinkTimeSec * 1000);
-
-      const onData = (data: Buffer) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const raw of lines) {
-          const line = raw.trim();
-          engineLog(`STDOUT: ${line}\n`);
-
-          if (line.startsWith("info ")) {
-            const depthMatch = line.match(/(?:^|\s)depth=(\d+)/);
-            const scoreMatch = line.match(/(?:^|\s)score=(-?[\d.]+)/);
-            const pvMatch = line.match(/(?:^|\s)pv=(.+)$/);
-            const nodesMatch = line.match(/(?:^|\s)nodes=(\d+)/);
-
-            if (depthMatch) result.depth = parseInt(depthMatch[1], 10);
-            if (scoreMatch) result.score = Math.round(parseFloat(scoreMatch[1]) * 100);
-            if (pvMatch) result.pv = pvMatch[1].trim().replace(/^"|"$/g, "");
-            if (nodesMatch) result.nodes = parseInt(nodesMatch[1], 10);
-          } else if (line.startsWith("done ")) {
-            const moveMatch = line.match(/move=([^\s]+)/);
-            if (moveMatch) result.move = moveMatch[1];
-            finish(result);
-          }
-        }
-      };
-
-      child.stdout.on("data", onData);
-      engineLog(`\n--- REQUEST [${new Date().toISOString()}] FEN: "${fen}" THINKTIME: ${thinkTimeSec}s DEPTH: ${depth} PST: ${usePst} ---\n`);
-
-      child.stdin.write(`set-param name=eval value=${usePst ? "pst" : "pattern"}\n`);
-      child.stdin.write(`pos pos="${fen}"\n`);
-      child.stdin.write(`level move-time=${thinkTimeSec.toFixed(3)}\n`);
-      // Hub level settings persist: omitting this after an easy-level search
-      // otherwise leaves later strongest/time-controlled searches depth-limited.
-      child.stdin.write(`level depth=${depth ?? MAX_ENGINE_DEPTH}\n`);
-      child.stdin.write("go think\n");
-    });
-  }
-}
 
 const engine = new PersistentEngine();
 
@@ -617,172 +249,34 @@ function findLegalMatch(board: Board, turn: "W" | "B", claimed: Move): Move | nu
   return legal.find((m) => movesMatch(m, claimed)) || null;
 }
 
-// --- Auto-apply the signup-fix database trigger on every boot ---
-//
-// Fixes a real bug: signUpWithEmail (src/supabase.ts) writes the new
-// profiles row immediately after supabase.auth.signUp() -- but with
-// "Confirm email" enabled, Supabase deliberately withholds a session until
-// the confirmation link is clicked, so that write happens unauthenticated
-// and RLS correctly (silently) rejects it. Net effect: accounts get
-// created and even get confirmed, but no profile row ever exists, so
-// sign-in-by-username can never find them. The real fix is a database
-// trigger that creates the profile the instant the auth.users row exists,
-// regardless of session/confirmation state -- see the matching, more
-// heavily-commented copy of this exact SQL in supabase/schema.sql (kept
-// there for anyone who prefers to run it manually via the SQL Editor
-// instead of setting SUPABASE_DB_URL below; both are equivalent and safe
-// to have both applied).
-//
-// Deliberately scoped to ONLY this trigger + its one-time backfill, NOT
-// the entire schema.sql -- that file has 26 CREATE POLICY statements with
-// no DROP-IF-EXISTS guards in front of them, and Postgres's CREATE POLICY
-// has no IF NOT EXISTS form, so blindly re-running the whole file on every
-// boot would succeed once and then fail on every subsequent boot. Every
-// statement below (CREATE OR REPLACE, DROP TRIGGER IF EXISTS, ON CONFLICT
-// DO NOTHING) is genuinely idempotent, so this is safe to run every time
-// the server starts, including on a database that's never seen it before
-// or one that already has it applied.
-const SIGNUP_FIX_MIGRATION_SQL = `
-create or replace function handle_new_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  insert into public.profiles ("usernameLower", "username", "ownerId", "createdAt")
-  values (
-    lower(trim(coalesce(new.raw_user_meta_data ->> 'username', split_part(new.email, '@', 1)))),
-    coalesce(new.raw_user_meta_data ->> 'username', split_part(new.email, '@', 1)),
-    new.id,
-    extract(epoch from now()) * 1000
-  )
-  on conflict ("usernameLower") do nothing;
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure handle_new_user();
-
-insert into public.profiles ("usernameLower", "username", "ownerId", "createdAt")
-select
-  lower(trim(coalesce(u.raw_user_meta_data ->> 'username', split_part(u.email, '@', 1)))),
-  coalesce(u.raw_user_meta_data ->> 'username', split_part(u.email, '@', 1)),
-  u.id,
-  extract(epoch from u.created_at) * 1000
-from auth.users u
-where not exists (select 1 from public.profiles p where p."ownerId" = u.id)
-on conflict ("usernameLower") do nothing;
-`;
-
+// Schema changes are an explicit operator action. Normal startup never mutates the database.
 async function applySignupFixMigration() {
-  // Hard opt-out: the owner manages all schema manually in the Supabase SQL
-  // Editor (supabase/all_migrations_combined.sql), so the server should not
-  // even think about the database at boot. Baked into the Dockerfile as
-  // ENV SKIP_DB_MIGRATION=1 -- boot is instant and the log stays clean.
-  if (process.env.SKIP_DB_MIGRATION === "1") {
-    console.log("[Migration] Skipped (SKIP_DB_MIGRATION=1) — schema is managed manually.");
-    return;
-  }
+  if (process.env.APPLY_DB_MIGRATIONS !== "1" || process.env.SKIP_DB_MIGRATION === "1") return;
   const connectionString = process.env.SUPABASE_DB_URL;
-  if (!connectionString) {
-    console.warn(
-      "[Migration] SUPABASE_DB_URL not set -- skipping auto-migration. " +
-      "Either set it (Supabase Dashboard -> Project Settings -> Database -> " +
-      "Connection string -> URI, with the real database password filled in) " +
-      "or run supabase/schema.sql manually in the SQL Editor instead -- " +
-      "either path fixes the same thing."
-    );
-    return;
-  }
-  const client = new PgClient({ connectionString, ssl: { rejectUnauthorized: false } });
+  if (!connectionString) throw new Error("APPLY_DB_MIGRATIONS requires SUPABASE_DB_URL");
+  const databaseUrl = new URL(connectionString);
+  // pg connection-string TLS options otherwise override the verified SSL configuration.
+  for (const option of ["sslmode", "sslcert", "sslkey", "sslrootcert"]) databaseUrl.searchParams.delete(option);
+  const client = new PgClient({
+    connectionString: databaseUrl.toString(),
+    ssl: { rejectUnauthorized: true, ...(process.env.SUPABASE_DB_SSL_CA ? { ca: process.env.SUPABASE_DB_SSL_CA } : {}) },
+  });
   try {
     await client.connect();
-    await client.query(SIGNUP_FIX_MIGRATION_SQL);
-    console.log("[Migration] Signup-fix trigger applied (or already present).");
-  } catch (err) {
-    console.error("[Migration] Failed to apply signup-fix trigger automatically:", err);
-    const anyErr = err as any;
-    if (anyErr?.code === "ENETUNREACH" && String(anyErr?.address || "").includes(":")) {
-      console.error(
-        "[Migration] DIAGNOSIS: your SUPABASE_DB_URL points at Supabase's DIRECT " +
-        "database host (db.<project>.supabase.co) -- that host is IPv6-ONLY, and " +
-        "this hosting environment (e.g. Hugging Face Spaces) has no IPv6 route, so " +
-        "it can never connect. FIX: in the Supabase Dashboard click the Connect " +
-        "button -> choose 'Session pooler' -> copy that URI (it looks like " +
-        "postgresql://postgres.<project>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres) " +
-        "and set THAT as SUPABASE_DB_URL -- the pooler host is IPv4-reachable and " +
-        "auto-migration will work on every boot."
-      );
-    }
-    console.error("[Migration] Fall back to running supabase/schema.sql manually in the Supabase SQL Editor.");
+    await client.query(fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/20261014_security_hardening.sql"), "utf8"));
   } finally {
-    await client.end().catch(() => {});
+    await client.end();
   }
 }
 
 async function startServer() {
-  // Runs first, before anything that depends on profiles existing
-  // correctly (e.g. the admin bootstrap right below) -- safe to call on
-  // every boot, see the comment above SIGNUP_FIX_MIGRATION_SQL.
   await applySignupFixMigration();
   await initGameRecordsManager();
 
   const app = express();
   app.disable("x-powered-by");
 
-  // --- Security Headers & Hardening Middleware ---
-  app.use((_req, res, next) => {
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-Frame-Options", "SAMEORIGIN");
-    res.setHeader("X-XSS-Protection", "1; mode=block");
-    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self)");
-    res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-    next();
-  });
-
-  // --- In-Memory Sliding Window Rate Limiter ---
-  interface RateLimitRule {
-    windowMs: number;
-    max: number;
-  }
-  const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-
-  function createRateLimiter(rule: RateLimitRule, prefix = "global") {
-    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
-      const key = `${prefix}:${ip}`;
-      const now = Date.now();
-      const record = rateLimitStore.get(key);
-
-      if (!record || now > record.resetAt) {
-        rateLimitStore.set(key, { count: 1, resetAt: now + rule.windowMs });
-        return next();
-      }
-
-      record.count += 1;
-      if (record.count > rule.max) {
-        const retryAfter = Math.ceil((record.resetAt - now) / 1000);
-        res.setHeader("Retry-After", String(retryAfter));
-        return res.status(429).json({ error: "Too many requests. Please slow down and try again later." });
-      }
-      next();
-    };
-  }
-
-  // Periodic rate limit cache cleanup every 5 minutes
-  setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of rateLimitStore.entries()) {
-      if (now > v.resetAt) {
-        rateLimitStore.delete(k);
-      }
-    }
-  }, 5 * 60 * 1000);
+  app.use(securityHeaders);
 
   // Apply tiered rate limits across API route groups
   app.use("/api/engine", createRateLimiter({ windowMs: 60 * 1000, max: 120 }, "engine"));
@@ -797,47 +291,37 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-  // --- Bootstrap the first admin ---
-  // /api/admin/set-admin requires an existing admin with manage_admins to
-  // grant access -- which is impossible for the very first admin. If
-  // BOOTSTRAP_ADMIN_USERNAME is set and no admins exist yet, register that
-  // username (using their existing profiles."ownerId", i.e. they must have
-  // played at least one game already so there's a device identity to bind
-  // to) as a Super-Admin-equivalent with every permission. This only ever
-  // does anything once -- as soon as one admin exists, it's a no-op
-  // forever, so it's safe to leave the env var set permanently.
-  if (process.env.SUPABASE_SECRET_KEY && process.env.BOOTSTRAP_ADMIN_USERNAME) {
+  // First-admin provisioning binds to an operator-configured immutable user id.
+  if (process.env.SUPABASE_SECRET_KEY && process.env.BOOTSTRAP_ADMIN_UID) {
     try {
+      const uid = process.env.BOOTSTRAP_ADMIN_UID;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uid)) throw new Error("BOOTSTRAP_ADMIN_UID must be a Supabase user UUID");
       const db = getSupabaseAdmin();
-      const { data: existing, error: existingError } = await db.from("admins").select("username").limit(1);
-      if (existingError) throw existingError;
-      if (!existing || existing.length === 0) {
-        const uname = process.env.BOOTSTRAP_ADMIN_USERNAME.toLowerCase().trim();
-        const { data: profile } = await db.from("profiles").select("ownerId").eq("usernameLower", uname).maybeSingle();
-        if (profile?.ownerId) {
-          await db.from("admins").upsert({
-            username: uname,
-            uid: profile.ownerId,
-            permissions: [...ADMIN_PERMISSIONS],
-            roleLabel: "Super Administrator",
-            addedAt: Date.now(),
-            addedBy: "bootstrap",
-          });
-          console.log(`[Bootstrap] Registered "${uname}" as the first admin (full permissions).`);
-        } else {
-          console.warn(`[Bootstrap] BOOTSTRAP_ADMIN_USERNAME="${uname}" hasn't played a game yet -- can't bind admin access until a profile for ${uname} exists. Will retry on next restart.`);
-        }
+      const { data: existing, error } = await db.from("admins").select("uid").limit(1);
+      if (error) throw error;
+      if (!existing?.length) {
+        const { data: profile, error: profileError } = await db.from("profiles").select("usernameLower").eq("ownerId", uid).single();
+        if (profileError || !profile) throw new Error("Bootstrap account must already have a profile");
+        const { error: insertError } = await db.from("admins").insert({ username: profile.usernameLower, uid,
+          permissions: [...ADMIN_PERMISSIONS], roleLabel: "Owner", addedAt: Date.now(), addedBy: "bootstrap-uid" });
+        if (insertError) throw insertError;
       }
-    } catch (err) {
-      console.error("[Bootstrap] Failed to check/create first admin:", err);
-    }
+    } catch (err) { console.error("[Bootstrap] Failed to provision initial admin:", err); }
   }
 
   // Start the engine now instead of waiting for the first player to request a move.
   engine.warmUp();
 
+  const usernameAuth = createUsernameAuthHandlers();
+  app.post("/api/auth/username-login", usernameAuth.signIn);
+  app.post("/api/auth/username-recovery", usernameAuth.recover);
+
   // --- Real-time Nigerian Draughts Ken Engine Endpoint ---
   app.post("/api/engine/move", async (req, res) => {
+    const controller = new AbortController();
+    const disconnect = () => { if (!res.writableEnded) controller.abort(); };
+    req.on("aborted", disconnect);
+    res.on("close", disconnect);
     try {
       let options: ReturnType<typeof parseEngineMoveRequest>;
       try {
@@ -845,9 +329,10 @@ async function startServer() {
       } catch (err) {
         return res.status(400).json({ error: err instanceof Error ? err.message : "Invalid engine request" });
       }
-      const result = await engine.getMove(options.fen, options.thinkTimeSec, options.depth, true, options.usePst, options.supersedeKey);
-      res.json(result);
+      const result = await engine.getMove(options.fen, options.thinkTimeSec, options.depth, true, options.usePst, options.supersedeKey, controller.signal);
+      if (!res.destroyed) res.json(result);
     } catch (err: any) {
+      if (res.destroyed) return;
       if (err?.message === "Superseded") {
         return res.status(499).json({ error: "Superseded by newer request" });
       }
@@ -857,6 +342,9 @@ async function startServer() {
       }
       console.error("Ken Engine API Error:", err?.message || err);
       res.status(500).json({ error: "Failed to evaluate board position" });
+    } finally {
+      req.off("aborted", disconnect);
+      res.off("close", disconnect);
     }
   });
 
@@ -962,18 +450,9 @@ async function startServer() {
     }
   });
 
-  app.post("/api/games/record", async (req, res) => {
-    try {
-      const data = req.body;
-      if (!data || !data.gameCode) {
-        return res.status(400).json({ ok: false, error: "Missing gameCode" });
-      }
-      const saved = await recordGameEnd(data);
-      res.json({ ok: true, game: saved });
-    } catch (err: any) {
-      console.error("POST /api/games/record error:", err);
-      res.status(500).json({ ok: false, error: "Failed to record game" });
-    }
+  // Only the authoritative game server may persist match results.
+  app.post("/api/games/record", (_req, res) => {
+    res.status(403).json({ ok: false, error: "Game results are recorded by the game server." });
   });
 
   let isLiveMultiplayerActive = () => false;
@@ -1173,7 +652,7 @@ async function startServer() {
       const balance = (wallet?.balance as number) ?? 0;
       const ownerId = wallet?.ownerId ?? null;
 
-      if (ownerId && ownerId !== uid) {
+      if (!ownerId || ownerId !== uid) {
         const admin = await getAdminByUid(uid);
         if (!admin || !admin.permissions.includes("view_users")) {
           return res.status(403).json({ error: "Not authorized to view this wallet" });
@@ -1215,35 +694,15 @@ async function startServer() {
       const uid = await verifyAccessToken(accessToken);
       if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
-      const { username, level } = req.body; // level: number (2-8) or "all"
-      if (!username || (level !== "all" && (typeof level !== "number" || level < 2 || level > 8))) {
+      const { level } = req.body;
+      if (level !== "all" && (!Number.isInteger(level) || level < 2 || level > 8)) {
         return res.status(400).json({ error: "Invalid request" });
       }
-
-      const db = getSupabaseAdmin();
-      const cleanUname = String(username).toLowerCase().trim();
-      const { data: profile } = await db.from("profiles").select("ownerId, maxUnlockedKenLevel").eq("usernameLower", cleanUname).maybeSingle();
-      if (!profile || profile.ownerId !== uid) {
-        return res.status(403).json({ error: "You can only unlock levels on your own profile" });
-      }
-
       const settings = await getCoinSettings();
       const cost = level === "all" ? settings.aiUnlockAllCost : settings.aiUnlockCostPerLevel;
-
-      // Use the LOWERCASED wallet key -- wallet rows are keyed by
-      // usernameLower, so passing the raw (possibly mixed-case) username
-      // here looked up the wrong/non-existent wallet and made the unlock
-      // silently fail even when the player had plenty of coins.
-      const result = await debitWallet(cleanUname, cost, "ai_unlock", level === "all" ? "all" : String(level));
-      if (!result.ok) {
-        return res.status(402).json({ error: "Not enough Kentro Coins", balance: result.balance, cost });
-      }
-
-      const currentMax = (profile.maxUnlockedKenLevel as number) || 1;
-      const newMax = level === "all" ? 8 : Math.max(currentMax, level);
-      await db.from("profiles").update({ maxUnlockedKenLevel: newMax }).eq("usernameLower", cleanUname);
-
-      res.json({ ok: true, balance: result.balance, maxUnlockedKenLevel: newMax });
+      const result = await unlockAiLevel(uid, level === "all" ? 8 : level, cost);
+      if (!result.ok) return res.status(402).json({ error: "Unlock could not be completed", balance: result.balance, cost });
+      res.json({ ok: true, balance: result.balance, maxUnlockedKenLevel: result.maxUnlockedKenLevel });
     } catch (err) {
       console.error("AI unlock purchase error:", err);
       res.status(500).json({ error: "Failed to process unlock" });
@@ -1347,64 +806,37 @@ async function startServer() {
       const uid = await verifyAccessToken(accessToken);
       if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
-      const { coins, accountName, accountNumber, bankName } = req.body;
-      // Identity from the VERIFIED token only. The old version trusted
-      // body.username after merely confirming the caller was logged in as
-      // *somebody* -- letting any player escrow-lock ANY other player's
-      // entire balance into a withdrawal pointed at the attacker's own
-      // bank account details. Same class of hole as the tournament-entry
-      // one; same fix.
-      const { data: wProfile } = await getSupabaseAdmin()
-        .from("profiles").select("usernameLower").eq("ownerId", uid).maybeSingle();
-      const uname = wProfile?.usernameLower || "";
-      const requestedCoins = Number(coins);
-      if (!uname || !Number.isFinite(requestedCoins) || requestedCoins <= 0 || !accountName || !accountNumber) {
+      const { coins, accountName, accountNumber, bankName, requestId } = req.body;
+      const requestedCoins = coins;
+      if (!Number.isSafeInteger(requestedCoins) || requestedCoins <= 0 ||
+          typeof accountName !== "string" || !accountName.trim() || accountName.length > 120 ||
+          typeof accountNumber !== "string" || !/^[0-9]{8,20}$/.test(accountNumber) ||
+          (bankName != null && (typeof bankName !== "string" || bankName.length > 120)) ||
+          (requestId != null && !isUuid(requestId))) {
         return res.status(400).json({ error: "Invalid request" });
       }
-
+      const { data: profile, error: profileError } = await getSupabaseAdmin().from("profiles")
+        .select("usernameLower").eq("ownerId", uid).single();
+      if (profileError || !profile) return res.status(403).json({ error: "No profile for this account" });
       const settings = await getCoinSettings();
-      const eligibility = await checkWithdrawalEligibility(uname, requestedCoins, settings);
-      if (!eligibility.eligible) {
-        return res.status(400).json({ error: eligibility.reason || "Not eligible to withdraw", balance: eligibility.balance });
+      let previousRequest: { ownerId: string; nairaAmount: number } | null = null;
+      if (requestId) {
+        const { data, error } = await getSupabaseAdmin().from("withdrawal_requests")
+          .select("ownerId, nairaAmount").eq("id", requestId).maybeSingle();
+        if (error) throw error;
+        previousRequest = data;
+        if (previousRequest && previousRequest.ownerId !== uid) return res.status(403).json({ error: "Invalid request" });
       }
-
-      // Escrow: debit now, before the admin has even seen this, so the
-      // same coins can't be wagered or spent elsewhere in the meantime.
-      // Re-checked atomically here even though checkWithdrawalEligibility
-      // just confirmed the balance -- that was a separate read, and the
-      // balance could have moved in between (e.g. a match finishing).
-      const debitResult = await debitWallet(uname, requestedCoins, "withdrawal", undefined);
-      if (!debitResult.ok) {
-        return res.status(400).json({ error: `You only have ${debitResult.balance} coins.`, balance: debitResult.balance });
+      // Replays must reach the atomic RPC even after the original escrow reduced the balance.
+      if (!previousRequest) {
+        const eligibility = await checkWithdrawalEligibility(profile.usernameLower, requestedCoins, settings);
+        if (!eligibility.eligible) return res.status(400).json({ error: eligibility.reason || "Not eligible to withdraw", balance: eligibility.balance });
       }
-      const newBalance = debitResult.balance;
-
-      const nairaAmount = Math.floor((requestedCoins / 100) * settings.withdrawalRatePerHundredCoins);
-      const { data: inserted, error: insertError } = await getSupabaseAdmin()
-        .from("withdrawal_requests")
-        .insert({
-          username: uname,
-          ownerId: uid,
-          coins: requestedCoins,
-          nairaAmount,
-          accountName: String(accountName).trim(),
-          accountNumber: String(accountNumber).trim(),
-          bankName: bankName ? String(bankName).trim() : null,
-          status: "pending",
-          submittedAt: Date.now(),
-        })
-        .select("id")
-        .single();
-
-      if (insertError) {
-        // The escrow debit already happened -- if the request row failed to
-        // save, refund immediately rather than leaving coins stuck in limbo
-        // with no record of why.
-        await creditWallet(uname, requestedCoins, "refund", "withdraw-request-failed");
-        throw insertError;
-      }
-
-      res.json({ ok: true, requestId: inserted.id, balance: newBalance, nairaAmount });
+      const nairaAmount = previousRequest?.nairaAmount ?? Math.floor((requestedCoins / 100) * settings.withdrawalRatePerHundredCoins);
+      const result = await submitWithdrawal({ ownerId: uid, requestId: requestId || randomUUID(), coins: requestedCoins,
+        nairaAmount, accountName: accountName.trim(), accountNumber, bankName: bankName?.trim() || null });
+      if (!result.ok) return res.status(400).json({ error: "Withdrawal could not be submitted", balance: result.balance });
+      res.json({ ok: true, requestId: result.requestId, balance: result.balance, nairaAmount: result.nairaAmount });
     } catch (err) {
       console.error("withdraw-request error:", err);
       res.status(500).json({ error: "Failed to submit withdrawal request" });
@@ -1422,39 +854,11 @@ async function startServer() {
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
     try {
-      const db = getSupabaseAdmin();
-      const { data: reqData, error: fetchError } = await db.from("withdrawal_requests").select("*").eq("id", requestId).maybeSingle();
-      if (fetchError) throw fetchError;
-      if (!reqData) return res.status(404).json({ error: "Request not found" });
-      if (reqData.status !== "pending") return res.status(400).json({ error: "Already resolved" });
-
-      if (approve) {
-        const { data: claimed } = await db.from("withdrawal_requests")
-          .update({ status: "paid", resolvedBy: admin.username, resolvedAt: Date.now() })
-          .eq("id", requestId).eq("status", "pending").select("id");
-        if (!claimed || claimed.length === 0) return res.status(400).json({ error: "Already resolved" });
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "approve_withdrawal",
-          target: reqData.username, details: { requestId, coins: reqData.coins, nairaAmount: reqData.nairaAmount }, result: "success",
-        });
-      } else {
-        const { data: claimed } = await db.from("withdrawal_requests")
-          .update({ status: "rejected", resolvedBy: admin.username, resolvedAt: Date.now() })
-          .eq("id", requestId).eq("status", "pending").select("id");
-        if (!claimed || claimed.length === 0) return res.status(400).json({ error: "Already resolved" });
-        let newBalance: number;
-        try {
-          newBalance = await creditWallet(reqData.username, reqData.coins, "refund", requestId);
-        } catch (err) {
-          await db.from("withdrawal_requests").update({ status: "pending", resolvedBy: null, resolvedAt: null }).eq("id", requestId);
-          throw err;
-        }
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "reject_withdrawal",
-          target: reqData.username, details: { requestId, coinsRefunded: reqData.coins, newBalance }, result: "success",
-        });
-      }
-
+      if (!isUuid(requestId) || typeof approve !== "boolean") return res.status(400).json({ error: "Invalid request" });
+      const result = await resolveWithdrawal(requestId, approve, admin.uid, req.ip);
+      if (!result.ok) return res.status(result.errorReason === "escrow_not_verified" ? 409 : 400).json({
+        error: result.errorReason === "escrow_not_verified" ? "Legacy withdrawal requires escrow reconciliation before resolution." : "Withdrawal could not be resolved",
+      });
       res.json({ ok: true });
     } catch (err) {
       console.error("resolve-withdrawal error:", err);
@@ -1529,9 +933,15 @@ async function startServer() {
       }
       const validPerms = permissions.filter((p: string) => (ADMIN_PERMISSIONS as readonly string[]).includes(p));
 
+      if (!isUuid(targetUid)) return res.status(400).json({ error: "Invalid account id" });
       const db = getSupabaseAdmin();
+      const { data: targetProfile, error: targetError } = await db.from("profiles")
+        .select("usernameLower").eq("ownerId", targetUid).single();
+      if (targetError || !targetProfile || targetProfile.usernameLower !== String(targetUsername).toLowerCase().trim()) {
+        return res.status(400).json({ error: "Username and account id must match an existing profile" });
+      }
       const { error } = await db.from("admins").upsert({
-        username: targetUsername.toLowerCase().trim(),
+        username: targetProfile.usernameLower,
         uid: targetUid,
         permissions: validPerms,
         roleLabel: roleLabel || null,
@@ -1733,50 +1143,15 @@ async function startServer() {
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
     try {
+      if (!isUuid(requestId) || typeof approve !== "boolean") return res.status(400).json({ error: "Invalid request" });
       const db = getSupabaseAdmin();
-      const { data: reqData, error: fetchError } = await db.from("purchase_requests").select("*").eq("id", requestId).maybeSingle();
-      if (fetchError) throw fetchError;
-      if (!reqData) return res.status(404).json({ error: "Request not found" });
-      if (reqData.status !== "pending") return res.status(400).json({ error: "Already resolved" });
-
-      if (approve) {
-        const settings = await getCoinSettings();
-        const pkg = settings.coinPackages.find(p => p.id === reqData.packageId) || settings.coinPackages[0];
-        // Atomically CLAIM the row first (status pending -> approved). Two
-        // admins double-clicking used to both pass the read-then-act check
-        // above and credit the coins twice; now the second click finds no
-        // pending row to claim and stops.
-        const { data: claimed } = await db.from("purchase_requests")
-          .update({ status: "approved", resolvedBy: admin.username, resolvedAt: Date.now(), coinsCredited: pkg.coins })
-          .eq("id", requestId).eq("status", "pending").select("id");
-        if (!claimed || claimed.length === 0) return res.status(400).json({ error: "Already resolved" });
-        // Credit the account that actually OWNS the request (rows are
-        // client-inserted; the username string in them is display data).
-        let creditName = reqData.username;
-        if (reqData.ownerId) {
-          const { data: p } = await db.from("profiles").select("usernameLower").eq("ownerId", reqData.ownerId).maybeSingle();
-          if (p?.usernameLower) creditName = p.usernameLower;
-        }
-        let newBalance: number;
-        try {
-          newBalance = await creditWallet(creditName, pkg.coins, "purchase_credit", requestId);
-        } catch (err) {
-          // Credit failed after the claim -- release the claim so it can be retried.
-          await db.from("purchase_requests").update({ status: "pending", resolvedBy: null, resolvedAt: null, coinsCredited: null }).eq("id", requestId);
-          throw err;
-        }
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "approve_purchase",
-          target: reqData.username, details: { requestId, coinsCredited: pkg.coins, newBalance }, result: "success",
-        });
-      } else {
-        await db.from("purchase_requests").update({ status: "rejected", resolvedBy: admin.username, resolvedAt: Date.now() }).eq("id", requestId);
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "reject_purchase",
-          target: reqData.username, details: { requestId }, result: "success",
-        });
-      }
-
+      const { data: purchase, error } = await db.from("purchase_requests").select("packageId").eq("id", requestId).single();
+      if (error || !purchase) return res.status(404).json({ error: "Request not found" });
+      const settings = await getCoinSettings();
+      const pkg = settings.coinPackages.find(p => p.id === purchase.packageId);
+      if (approve && !pkg) return res.status(400).json({ error: "Purchase package is no longer available" });
+      const result = await resolvePurchase(requestId, approve, pkg?.coins || 0, purchase.packageId, admin.uid, req.ip);
+      if (!result.ok) return res.status(400).json({ error: "Purchase could not be resolved" });
       res.json({ ok: true });
     } catch (err) {
       console.error("resolve-purchase error:", err);
@@ -2327,7 +1702,7 @@ async function startServer() {
       if (source === "all") {
         const { error, count } = await db.from("puzzles").delete().neq("id", "00000000-0000-0000-0000-000000000000");
         if (error) throw error;
-        deletedCount = count ?? 2604;
+        deletedCount = count ?? 0;
       } else {
         // Try deleting by source first
         const { error, count } = await db.from("puzzles").delete().in("source", ["bulk_import", "sql_file"]);
@@ -2605,25 +1980,7 @@ async function startServer() {
       }
 
       if (puzzles.length === 0) {
-        const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-        if (dbUrl) {
-          const client = new PgClient({ connectionString: dbUrl });
-          await client.connect();
-          try {
-            await client.query(sqlText);
-            await writeAuditLog({
-              adminUsername: admin.username, adminUid: admin.uid,
-              action: "sql_file_direct_exec", details: { success: true }, result: "success"
-            });
-            return res.json({ ok: true, importedCount: 2604, message: "SQL file executed directly successfully!" });
-          } finally {
-            await client.end();
-          }
-        } else {
-          return res.status(400).json({ 
-            error: "Could not parse SQL INSERT rows automatically. Please ensure your SQL file contains INSERT INTO puzzles statements or JSON array." 
-          });
-        }
+        return res.status(400).json({ error: "No valid puzzle rows found. Upload puzzle JSON or INSERT row data." });
       }
 
       const db = getSupabaseAdmin();
@@ -2881,6 +2238,9 @@ async function startServer() {
   // Admin: Ken 8 Self-Play Fast Batch Simulator Endpoint
   // ------------------------------------------------------------------
   app.post("/api/admin/simulate-ken8-batch", async (req, res) => {
+    if (!KENTRO_ADMIN_ENABLED) return res.status(503).json({ error: "Admin features are temporarily disabled." });
+    const admin = await requirePermission(req.headers["x-access-token"] as string | undefined, "view_games");
+    if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
       const count = Math.min(25, Math.max(1, Number(req.body?.count) || 10));
       const logs: any[] = [];
@@ -3146,49 +2506,7 @@ async function startServer() {
       }
     });
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    const assetsPath = path.join(distPath, 'assets') + path.sep;
-    const versioned = /-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|jpg|jpeg|webp|woff2?|ico)$/;
-    // Precompressed files cost no live CPU. This matters even without Go:
-    // a typical tiny MVP host should keep using the simpler Node-only mode.
-    const encodingAllowed = (header: string, name: string): boolean => {
-      for (const part of header.toLowerCase().split(',')) {
-        const [value, ...params] = part.trim().split(';');
-        if (value !== name) continue;
-        return !params.some((p) => /^q\s*=\s*0(?:\.0*)?\s*$/.test(p.trim()));
-      }
-      return false;
-    };
-    app.get(/^\/assets\/[A-Za-z0-9_./-]+\.(?:js|css)$/, (req, res, next) => {
-      const original = path.resolve(distPath, '.' + req.path);
-      if (!original.startsWith(assetsPath) || !fs.existsSync(original)) return next();
-      const accepted = String(req.headers['accept-encoding'] || '');
-      let extension = '';
-      let encoding = '';
-      if (encodingAllowed(accepted, 'br') && fs.existsSync(original + '.br')) {
-        extension = '.br'; encoding = 'br';
-      } else if (encodingAllowed(accepted, 'gzip') && fs.existsSync(original + '.gz')) {
-        extension = '.gz'; encoding = 'gzip';
-      }
-      if (!extension) return next();
-      res.setHeader('Vary', 'Accept-Encoding');
-      res.setHeader('Content-Encoding', encoding);
-      res.setHeader('Cache-Control', versioned.test(path.basename(original))
-        ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
-      res.type(path.extname(original));
-      res.sendFile(original + extension, { dotfiles: 'deny' }, next);
-    });
-    app.use(express.static(distPath, {
-      etag: true,
-      setHeaders(res, filePath) {
-        res.setHeader('Cache-Control', filePath.startsWith(assetsPath) && versioned.test(path.basename(filePath))
-          ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
-      },
-    }));
-    app.get('*', (req, res) => {
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    mountProductionStatic(app, path.join(process.cwd(), 'dist'));
   }
 
   // Go edge can bind Node to loopback, keeping all game APIs private.

@@ -202,3 +202,61 @@ export async function creditWallet(
   if (error) throw error;
   return data as number;
 }
+
+export interface AtomicFinancialResult {
+  ok: boolean;
+  errorReason?: string;
+  balance?: number;
+  maxUnlockedKenLevel?: number;
+  requestId?: string;
+  nairaAmount?: number;
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireUuid(value: string): void {
+  if (typeof value !== "string" || !uuidPattern.test(value)) throw new Error("A valid account or request UUID is required");
+}
+async function financialRpc(name: string, args: Record<string, unknown>): Promise<AtomicFinancialResult> {
+  const { data, error } = await getSupabaseAdmin().rpc(name, args);
+  if (error) throw error;
+  if (!data || typeof data.ok !== "boolean") throw new Error(`${name} returned no valid result`);
+  return data as AtomicFinancialResult;
+}
+
+/** Charge and profile unlock commit together; retries never charge an unlocked level. */
+export async function unlockAiLevel(ownerId: string, level: number, cost: number): Promise<AtomicFinancialResult> {
+  requireUuid(ownerId);
+  requireCoinAmount(cost, true);
+  if (!Number.isInteger(level) || level < 2 || level > 8) throw new Error("Invalid AI level");
+  return financialRpc("unlock_ai_level", { p_owner_id: ownerId, p_level: level, p_cost: cost });
+}
+
+/** Request id is an idempotency key: escrow and durable request are one transaction. */
+export async function submitWithdrawal(input: {
+  ownerId: string; requestId: string; coins: number; nairaAmount: number;
+  accountName: string; accountNumber: string; bankName: string | null;
+}): Promise<AtomicFinancialResult> {
+  requireUuid(input.ownerId); requireUuid(input.requestId);
+  requireCoinAmount(input.coins); requireCoinAmount(input.nairaAmount, true);
+  if (typeof input.accountName !== "string" || !input.accountName.trim() || input.accountName.length > 120 ||
+      typeof input.accountNumber !== "string" || !/^[0-9]{8,20}$/.test(input.accountNumber) ||
+      (input.bankName !== null && (typeof input.bankName !== "string" || input.bankName.length > 120))) {
+    throw new Error("Invalid bank account details");
+  }
+  return financialRpc("submit_withdrawal", { p_owner_id: input.ownerId, p_request_id: input.requestId,
+    p_coins: input.coins, p_naira_amount: input.nairaAmount, p_account_name: input.accountName,
+    p_account_number: input.accountNumber, p_bank_name: input.bankName });
+}
+
+export async function resolveWithdrawal(requestId: string, approve: boolean, adminUid: string, ip?: string): Promise<AtomicFinancialResult> {
+  requireUuid(requestId); requireUuid(adminUid);
+  if (typeof approve !== "boolean") throw new Error("Resolution must be a boolean");
+  return financialRpc("resolve_withdrawal", { p_request_id: requestId, p_approve: approve, p_admin_uid: adminUid, p_ip: ip || null });
+}
+
+export async function resolvePurchase(requestId: string, approve: boolean, coins: number, packageId: string, adminUid: string, ip?: string): Promise<AtomicFinancialResult> {
+  requireUuid(requestId); requireUuid(adminUid); requireCoinAmount(coins, !approve);
+  if (typeof approve !== "boolean" || typeof packageId !== "string" || !packageId) throw new Error("Invalid purchase resolution");
+  return financialRpc("resolve_purchase", { p_request_id: requestId, p_approve: approve, p_coins: coins,
+    p_package_id: packageId, p_admin_uid: adminUid, p_ip: ip || null });
+}

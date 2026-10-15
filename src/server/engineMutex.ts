@@ -11,6 +11,7 @@ interface Waiter {
   run: (release: () => void) => void;
   cancel: () => void;
   supersedeKey?: string;
+  cleanup?: () => void;
 }
 
 export class Mutex {
@@ -30,7 +31,8 @@ export class Mutex {
   /** Useful for instrumentation without exposing queued requests. */
   get waiting(): number { return this.highQueue.length + this.lowQueue.length; }
 
-  acquire(isHighPriority = true, supersedeKey?: string, onSuperseded?: () => void): Promise<() => void> {
+  acquire(isHighPriority = true, supersedeKey?: string, onSuperseded?: () => void, signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted) return Promise.reject(new Error("Superseded"));
     if (supersedeKey) {
       this.cancelWaiting(supersedeKey);
       if (this.locked && this.currentSupersedeKey === supersedeKey) {
@@ -42,10 +44,17 @@ export class Mutex {
         supersedeKey,
         run: (release) => resolve(release),
         cancel: () => {
+          waiter.cleanup?.();
           try { onSuperseded?.(); } catch { /* callbacks cannot strand waiting jobs */ }
           reject(new Error("Superseded"));
         },
       };
+      const onAbort = () => {
+        this.highQueue = this.highQueue.filter((entry) => entry !== waiter);
+        this.lowQueue = this.lowQueue.filter((entry) => entry !== waiter);
+        waiter.cancel();
+      };
+      waiter.cleanup = () => signal?.removeEventListener("abort", onAbort);
       if (!this.locked) {
         this.locked = true;
         this.activate(waiter);
@@ -57,10 +66,12 @@ export class Mutex {
         return;
       }
       queue.push(waiter);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 
   private activate(waiter: Waiter): void {
+    waiter.cleanup?.();
     this.currentSupersedeKey = waiter.supersedeKey;
     this.currentStopCallback = undefined;
     let released = false;

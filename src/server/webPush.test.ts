@@ -9,9 +9,8 @@ const mac = (key: Buffer, input: Buffer) => createHmac("sha256", key).update(inp
 
 describe("Web Push security and cryptography", () => {
   it("rejects internal, redirect and non-push subscription endpoints", () => {
-    expect(safePushEndpoint("https://fcm.googleapis.com/fcm/send/123")).toBe(true);
-    expect(safePushEndpoint("https://web.push.apple.com/QABC")).toBe(true);
-    for (const invalid of ["http://localhost:8000", "https://127.0.0.1", "https://evil.test", "https://fcm.googleapis.com.evil.test/", "https://u:p@fcm.googleapis.com/", "https://fcm.googleapis.com:443/"]) {
+    for (const valid of ["https://fcm.googleapis.com/fcm/send/123", "https://web.push.apple.com/QABC", "https://fcm.googleapis.com:443/fcm/send/test", "https://updates.push.services.mozilla.com/wpush/v2/test", "https://wns2-db5p.notify.windows.com/w/?token=123"]) expect(safePushEndpoint(valid)).toBe(true);
+    for (const invalid of ["http://localhost:8000", "https://127.0.0.1", "https://[::1]/", "https://169.254.169.254/latest/meta-data", "https://evil.test", "https://fcm.googleapis.com.evil.test/", "https://u:p@fcm.googleapis.com/", "https://fcm.googleapis.com:80/", "https://fcm.googleapis.com:8443/", "https://fcm.googleapis.com:0443/", "https://fcm.googleapis.com./", "https://fcm%2egoogleapis.com/", "https://fcm.googleapis.com/#fragment", "https://fcm.googleapis.com\\@127.0.0.1/", " https://fcm.googleapis.com/", "https://fcm.googleapis.com/\n", "https://arbitrary.push.apple.com/", "https://arbitrary.notify.windows.com/"]) {
       expect(safePushEndpoint(invalid)).toBe(false);
     }
   });
@@ -22,6 +21,16 @@ describe("Web Push security and cryptography", () => {
     const subscription = {endpoint, keys:{p256dh:b64(receiver.getPublicKey()),auth:b64(Buffer.alloc(16,7))}};
     expect(validateSubscription(subscription)).toEqual(subscription);
     expect(validateSubscription({...subscription,keys:{...subscription.keys,auth:"invalid"}})).toBeNull();
+    const invalidPoint = Buffer.alloc(65); invalidPoint[0] = 4;
+    expect(validateSubscription({...subscription,keys:{...subscription.keys,p256dh:b64(invalidPoint)}})).toBeNull();
+    expect(validateSubscription({...subscription,keys:{...subscription.keys,p256dh:`${subscription.keys.p256dh}!`}})).toBeNull();
+    expect(validateSubscription({...subscription,keys:{...subscription.keys,auth:`${subscription.keys.auth}==`}})).toBeNull();
+    // The low four bits of the last character are unused for a 16-byte key.
+    // Node's permissive decoder accepts aliases; subscriptions must be canonical.
+    expect(validateSubscription({...subscription,keys:{...subscription.keys,auth:`${b64(Buffer.alloc(16)).slice(0,-1)}B`}})).toBeNull();
+    expect(validateSubscription({endpoint,keys:{p256dh:b64(receiver.getPublicKey()),auth:Buffer.alloc(16)}})).toBeNull();
+    expect(validateSubscription(null)).toBeNull();
+    expect(validateSubscription([])).toBeNull();
   });
 
   it("produces an RFC 8291 payload that the receiving device decrypts", () => {

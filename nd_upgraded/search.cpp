@@ -323,8 +323,10 @@ void search(Search_Output & so, const Node & node, const Search_Input & si) {
       Move mv = list[0];
       Score sc = quick_score(node);
 
-      so.new_best_move(mv, sc);
-      return;
+      if (sc != score::None) {
+         so.new_best_move(mv, sc);
+         return;
+      }
    }
 
    if (var::Book && si.book) {
@@ -567,7 +569,7 @@ void Search_Output::new_best_move(Move mv, Score sc, Flag flag, Depth depth, con
 
       case Output_Terminal :
 
-         std::printf("%2d/%4.1f%+7.2f%11lld%7.2f%5.1f  %s\n", depth, ply_avg(), double(score) / 100.0, node, time, speed / 1E6, pv.to_string(m_pos, 7).c_str());
+         std::printf("%2d/%4.1f%+7.2f%11lld%7.2f%5.1f  %s\n", depth, ply_avg(), double(score) / 100.0, static_cast<long long>(node), time, speed / 1E6, pv.to_string(m_pos, 7).c_str());
          std::fflush(stdout);
          break;
 
@@ -1540,6 +1542,8 @@ Score Search_Local::qs(const Node & node, Score alpha, Score beta, Depth depth, 
    // init
 
    pv.clear();
+
+   if (node.is_draw(2)) return leaf(Score(0), ply);
 
    if (pos::is_wipe(node)) return end_score(node, ply); // for BT variant
 

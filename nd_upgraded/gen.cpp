@@ -176,11 +176,12 @@ static void add_king_captures_rec(List & list, const Pos & pos, Bit bd, Bit be, 
    Bit ray = bit::beyond(square_make(jump - inc), jump); // ray(jump, inc)
    Bit froms = bit::attack(jump, ray, be);
 
-   // found_any is set if ANY landing square along the ray can continue capturing.
-   // When true, the king MUST keep jumping — no "stop early" moves are generated.
-   bool found_any = false;
-
    for (Square from : froms & be) {
+
+      // Continuation is compulsory from the chosen landing square, not from
+      // every square beyond this victim collectively. A farther landing can
+      // finish legally even when a nearer landing has another capture.
+      bool found = false;
 
       for (Square sq : bit::king_captures(from) & bd) {
 
@@ -189,18 +190,13 @@ static void add_king_captures_rec(List & list, const Pos & pos, Bit bd, Bit be, 
             Inc new_inc = bit::line_inc(from, sq);
 
             assert(new_inc != -inc);
+            found = true;
             if (new_inc == +inc && from != next) continue; // duplicate capture
 
-            found_any = true;
             add_king_captures_rec(list, pos, bd, be, start, sq, new_inc, caps);
          }
       }
-   }
-
-   // Only add terminal moves if no landing square allowed a further capture.
-   // This prevents the king from stopping early to dodge being recaptured.
-   if (!found_any) {
-      for (Square from : froms & be) {
+      if (!found) {
          bool cond = var::Variant == var::Killer && pos.is_piece(jump, King) && from != next;
          if (!cond) list.add_capture(start, from, caps, pos, 1);
       }
