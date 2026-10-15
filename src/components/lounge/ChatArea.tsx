@@ -114,6 +114,27 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const recordingDurationRef = useRef(0);
   const recordingErrorTimerRef = useRef<any>(null);
   const discardRecordingRef = useRef(false);
+  const recordingGenerationRef = useRef(0);
+  const recordingPendingRef = useRef(false);
+  useEffect(() => {
+    recordingGenerationRef.current += 1;
+    setIsRecording(false);
+    return () => {
+      recordingGenerationRef.current += 1;
+      recordingPendingRef.current = false;
+      discardRecordingRef.current = true;
+      const recorder = mediaRecorderRef.current;
+      mediaRecorderRef.current = null;
+      if (recorder) {
+        recorder.onstop = null; recorder.ondataavailable = null; recorder.onerror = null;
+        if (recorder.state !== 'inactive') try { recorder.stop(); } catch {}
+        recorder.stream.getTracks().forEach(track => track.stop());
+      }
+      audioChunksRef.current = [];
+      clearInterval(recordingTimerRef.current);
+      clearTimeout(recordingErrorTimerRef.current);
+    };
+  }, [conversation?.id]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -146,14 +167,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   // browser (Safari has no WebM encoder), the mic is released on every path,
   // and failures show an error instead of sending a fake message.
   const startRecording = async () => {
-    if (isRecording) return;
+    if (isRecording || recordingPendingRef.current) return;
     if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       showRecordingError("Voice notes aren't supported in this browser.");
       return;
     }
+    const generation = recordingGenerationRef.current;
+    recordingPendingRef.current = true;
     let stream: MediaStream | null = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (generation !== recordingGenerationRef.current) { stopRecordingStream(stream); return; }
       const recStream = stream;
       const mimeType = pickRecordingMimeType((t) => MediaRecorder.isTypeSupported(t));
       const mediaRecorder = mimeType ? new MediaRecorder(recStream, { mimeType }) : new MediaRecorder(recStream);
@@ -176,6 +200,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
       mediaRecorder.onstop = () => {
         stopRecordingStream(recStream);
+        if (generation !== recordingGenerationRef.current) return;
         mediaRecorderRef.current = null;
         const chunks = audioChunksRef.current;
         audioChunksRef.current = [];
@@ -188,8 +213,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           return;
         }
         const audioBlob = new Blob(chunks, { type: blobTypeFor(mediaRecorder.mimeType, mimeType) });
+        if (audioBlob.size > 120000) { showRecordingError("Voice note exceeds the 120 KB attachment limit. Record a shorter note."); return; }
         const reader = new FileReader();
         reader.onloadend = () => {
+          if (generation !== recordingGenerationRef.current) return;
           const base64Audio = typeof reader.result === "string" ? reader.result : "";
           if (!base64Audio) {
             showRecordingError("Couldn't encode the voice note.");
@@ -224,8 +251,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         });
       }, 1000);
     } catch (err) {
-      console.warn("Could not start audio recorder:", err);
       stopRecordingStream(stream);
+      if (generation !== recordingGenerationRef.current) return;
+      console.warn("Could not start audio recorder:", err);
       mediaRecorderRef.current = null;
       clearRecordingTimer();
       setIsRecording(false);
@@ -237,7 +265,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           ? "No microphone was found on this device."
           : "Couldn't start recording on this device."
       );
-    }
+    } finally { if (generation === recordingGenerationRef.current) recordingPendingRef.current = false; }
   };
 
   const stopRecording = () => {
@@ -306,9 +334,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
+    e.target.value = '';
+    if (file.size > 120000 || !/^(image\/(png|jpeg|webp|gif)|video\/(mp4|webm|quicktime))$/.test(file.type)) {
+      showRecordingError('Choose a PNG, JPEG, WebP, GIF, MP4 or WebM attachment up to 120 KB.'); return;
+    }
+    const generation = recordingGenerationRef.current;
     const reader = new FileReader();
     reader.onload = () => {
+      if (generation !== recordingGenerationRef.current) return;
       const base64Url = reader.result as string;
       const isVideo = file.type.startsWith("video");
       onSendMessage({
@@ -318,6 +351,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         replyTo: activeReply || undefined
       });
     };
+    reader.onerror = () => showRecordingError("Could not read the attachment.");
     reader.readAsDataURL(file);
     e.target.value = "";
   };

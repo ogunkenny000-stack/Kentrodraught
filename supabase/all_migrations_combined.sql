@@ -1481,6 +1481,7 @@ create table if not exists public.kentro_group_messages (
 );
 alter table public.kentro_group_messages add column if not exists reactions jsonb not null default '{}'::jsonb;
 create index if not exists kentro_group_message_order on public.kentro_group_messages(group_id,created_at desc,id);
+create index if not exists kentro_group_sender_rate on public.kentro_group_messages(sender_id,created_at desc);
 alter table public.kentro_groups enable row level security;
 alter table public.kentro_group_members enable row level security;
 alter table public.kentro_group_messages enable row level security;
@@ -1552,6 +1553,7 @@ begin
  elsif p_action='send' then
   v_id:=coalesce((p_data->>'id')::uuid,gen_random_uuid());
   if length(coalesce(p_data->>'text','')) not between 1 and 200000 then raise exception 'Invalid message'; end if;
+  if not exists(select 1 from public.kentro_group_messages where id=v_id) and (select count(*) from public.kentro_group_messages where sender_id=v_uid and created_at>now()-interval '1 minute')>=30 then raise exception 'Message rate limit reached'; end if;
   insert into public.kentro_group_messages(id,group_id,sender_id,text) values(v_id,p_group,v_uid,p_data->>'text') on conflict(id) do nothing;
   select * into v_message from public.kentro_group_messages where id=v_id and group_id=p_group and sender_id=v_uid and text=p_data->>'text';
   if not found then raise exception 'Message identity conflict' using errcode='42501'; end if;
@@ -1562,6 +1564,7 @@ begin
   select username into v_name from public.profiles where "ownerId"=v_uid;
   select * into v_message from public.kentro_group_messages where id=(p_data->>'id')::uuid and group_id=p_group and not deleted for update;
   if not found then raise exception 'Message unavailable'; end if;
+  if not (v_message.reactions ? v_emoji) and (select count(*) from jsonb_object_keys(v_message.reactions))>=32 then raise exception 'Reaction limit reached'; end if;
   v_reactors:=coalesce(v_message.reactions->v_emoji,'[]');
   if v_reactors ? v_name then
    select coalesce(jsonb_agg(value),'[]') into v_reactors from jsonb_array_elements(v_reactors) where value<>to_jsonb(v_name);

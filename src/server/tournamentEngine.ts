@@ -91,15 +91,13 @@ function schedule(t: TournamentState): Pairing[] {
   let pairs: [string, string][] = [];
   if (f === "roundrobin") pairs = robin(t.engineState!.seed!, t.currentRound);
   else if (f === "groups") {
-    for (const group of [0, 1])
-      pairs.push(
-        ...robin(
-          t.engineState!.seed!.filter(
-            (n) => t.engineState!.groups![n] === group,
-          ),
-          t.currentRound,
-        ),
+    for (const group of [0, 1]) {
+      const seed = t.engineState!.seed!.filter(
+        (n) => t.engineState!.groups![n] === group,
       );
+      if (t.currentRound <= seed.length + (seed.length % 2) - 1)
+        pairs.push(...robin(seed, t.currentRound));
+    }
   } else if (f === "hill") {
     const previous = t.matches
       .filter((m) => m.winner && m.black !== "∅")

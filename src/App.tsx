@@ -1891,7 +1891,7 @@ export default function App() {
       case "draw-cancelled":
         applyClockFrom(data, receivedAt);
         patchRoom({ drawOfferReceived: null, drawOfferSent: false });
-        setStatusMessage(`${data.from} cancelled the draw offer.`);
+        setStatusMessage(data.expired ? "Draw offer expired. Clock resumed." : `${data.from} cancelled the draw offer.`);
         break;
       // Resign is a request the opponent must accept (handleResignResponse).
       case "resign-requested":
@@ -1908,7 +1908,7 @@ export default function App() {
       case "resign-cancelled":
         applyClockFrom(data, receivedAt);
         patchRoom({ resignOfferReceived: null, resignOfferSent: false });
-        setStatusMessage(`${data.from} cancelled the resignation offer.`);
+        setStatusMessage(data.expired ? "Resignation offer expired. Clock resumed." : `${data.from} cancelled the resignation offer.`);
         break;
       case "game-reset-by-opponent": {
         if (!acceptSeq(data)) break;

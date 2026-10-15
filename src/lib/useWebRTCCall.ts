@@ -233,7 +233,7 @@ interface TerminateOptions {
   failure?: { message: string; suggestAudioOnly: boolean };
 }
 
-function createCallController(deps: ControllerDeps): Controller {
+export function createCallController(deps: ControllerDeps): Controller {
   const { wsRef, userRef, mutedRef, toastRef, set } = deps;
   const supported = detectCallSupport();
   const isMobile = typeof navigator !== "undefined" && isMobileUserAgent(navigator.userAgent || "");
@@ -429,6 +429,7 @@ function createCallController(deps: ControllerDeps): Controller {
   };
 
   const teardown = () => {
+    callSeq += 1; // Invalidate permission prompts and renegotiations on every exit.
     clearCallTimers();
     if (stopRingback) {
       stopRingback();
@@ -534,7 +535,10 @@ function createCallController(deps: ControllerDeps): Controller {
     }
     const tryGet = async (c: MediaStreamConstraints): Promise<MediaStream | null> => {
       try {
-        return await md.getUserMedia(c);
+        if (generation !== callSeq) return null;
+        const stream = await md.getUserMedia(c);
+        if (generation !== callSeq) { stopStream(stream); return null; }
+        return stream;
       } catch (e) {
         log("Media", "getUserMedia failed", { constraints: c, error: (e as { name?: string })?.name ?? String(e) });
         return null;

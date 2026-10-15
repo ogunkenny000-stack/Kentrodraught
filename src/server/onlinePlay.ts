@@ -162,7 +162,7 @@ interface Room {
   starting: boolean;
   resultRecorded: boolean;
   gamesStarted: number;
-  pendingEndOffer: { type: "resign" | "draw"; fromUsername: string } | null;
+  pendingEndOffer: { type: "resign" | "draw"; fromUsername: string; expiresAt?: number } | null;
   previousGameCode: string | null;
   gameCode: string;
   seriesId: string;
@@ -2006,6 +2006,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         case "create-room": {
           const player = requirePlayer(ws);
           if (!player) return;
+          if (rooms.size >= 1000) { sendError(ws, "busy", "The game server is at room capacity. Try again shortly."); return; }
           const previousRoomId = player.roomId;
           if (isOnlineGuest(player.username)) {
             try {
@@ -2595,7 +2596,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!seat) return;
           if (!requirePhase(ws, room, ["playing"], "resign")) return;
           if (room.pendingEndOffer) { sendError(ws, "busy", "There is already an offer waiting for an answer."); return; }
-          room.pendingEndOffer = { type: "resign", fromUsername: seat.username };
+          room.pendingEndOffer = { type: "resign", fromUsername: seat.username, expiresAt: now() + 30000 };
           syncClock(room);
           sendToRoom(room, { type: "resign-requested", from: seat.username, clock: clockOf(room), phase: room.phase }, ws);
           sendClockSync(room, ws);
@@ -2652,7 +2653,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!seat) return;
           if (!requirePhase(ws, room, ["playing"], "offer a draw")) return;
           if (room.pendingEndOffer) { sendError(ws, "busy", "There is already an offer waiting for an answer."); return; }
-          room.pendingEndOffer = { type: "draw", fromUsername: seat.username };
+          room.pendingEndOffer = { type: "draw", fromUsername: seat.username, expiresAt: now() + 30000 };
           syncClock(room);
           sendToRoom(room, { type: "draw-offered", from: seat.username, clock: clockOf(room), phase: room.phase }, ws);
           sendClockSync(room, ws);
@@ -2864,6 +2865,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         seat.ws = null; seat.forfeitTimer = seat.awayForfeitTimer = null;
         seat.disconnectedAt = now(); seat.awaySince = null; seat.graceExpired = false;
       }
+      if (room.pendingEndOffer && !room.pendingEndOffer.expiresAt) room.pendingEndOffer.expiresAt = now() + 30000;
       rooms.set(room.id, room);
     }
     sessions.restore(saved.sessions);
@@ -2893,7 +2895,17 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     console.log(`[WS] Restored ${rooms.size} durable rooms; clocks await reconnection.`);
   }
 
-  const recoveryHeartbeat = setInterval(() => safeTimer("durable clock", () => checkpoint(true)), 1000);
+  const recoveryHeartbeat = setInterval(() => safeTimer("durable clock", () => {
+    for (const room of rooms.values()) {
+      const offer = room.pendingEndOffer;
+      if (offer?.expiresAt && now() >= offer.expiresAt) {
+        room.pendingEndOffer = null;
+        syncClock(room);
+        sendToRoom(room, { type: offer.type === 'draw' ? 'draw-cancelled' : 'resign-cancelled', from: offer.fromUsername, expired: true, clock: clockOf(room), phase: room.phase });
+      }
+    }
+    checkpoint(true);
+  }), 1000);
   recoveryHeartbeat.unref();
 
   // Periodic WebSocket heartbeat every 20s to prune dead/stale connections safely
@@ -2953,6 +2965,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   function ensureTournamentRoom(spec: { id: string; tournamentId: string; matchId: string; white: { username: string; uid: string }; black: { username: string; uid: string }; private: boolean; minutes: number; specialRule: string }): void {
     const existing = rooms.get(spec.id);
     if (existing) { if (existing.tournamentId !== spec.tournamentId || existing.tournamentMatchId !== spec.matchId) throw new Error('Room identity conflict'); return; }
+    if (rooms.size >= 1000) throw new Error('Game server room capacity reached');
     if (!/^\d{7,10}$/.test(spec.id) || spec.white.username.toLowerCase() === spec.black.username.toLowerCase()) throw new Error('Invalid tournament room');
     const seat = (player: { username: string; uid: string }, color: Color): Seat => ({ ws: null, username: player.username, key: keyOf(player.username), userId: player.uid, color, ready: true, awayStrikes: 0, awayMs: 0, awaySince: null, awayForfeitTimer: null, disconnectedAt: now(), forfeitTimer: null, graceExpired: false });
     const room: Room = { id: spec.id, tournamentId: spec.tournamentId, tournamentMatchId: spec.matchId, awaitingFirstJoin: true, private: spec.private, seq: 0, phase: 'lobby', players: [seat(spec.white,'W'),seat(spec.black,'B')], spectators: [], gameState: null, started: false,

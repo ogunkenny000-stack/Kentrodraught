@@ -385,6 +385,17 @@ try {
     const result=(await service.query('select kentro_pay_completed_tournament($1,$2) as result',['team-rollback',0.1])).rows[0].result;
     assert.equal(result.ok,true);assert.equal(result.payout+result.rake,21);assert.equal(result.rake,3);
   });
+  await check('group/runtime containment rollback preserves data and confidential RLS',async()=>{
+    const group=await groupAction(alice,null,'create',{name:'Rollback retained'});
+    await owner.query(await fs.readFile(path.join(root,'supabase/rollback/20261016_groups_and_tournament_runtime.sql'),'utf8'));
+    await denied(alice,'select kentro_group_action($1,$2,$3)',[group.id,'send',{text:'disabled'}]);
+    await denied(service,'select kentro_commit_tournament($1,$2,$3)',['runtime',1,{}]);
+    await denied(service,'select kentro_pay_completed_tournament($1,$2)',['team-prize',0]);
+    assert.equal((await bob.query('select * from kentro_groups where id=$1',[group.id])).rowCount,0);
+    assert.equal((await alice.query('select * from kentro_groups where id=$1',[group.id])).rowCount,1);
+    await owner.query(await fs.readFile(path.join(root,'supabase/migrations/20261016_groups_and_tournament_runtime.sql'),'utf8'));
+    await groupAction(alice,group.id,'delete');
+  });
   await check('security migration reruns and exact-policy rollback preserve application data',async()=>{
     const before=(await owner.query('select count(*) as count from coin_transactions')).rows[0].count;
     const file=await fs.readFile(path.join(root,'supabase/migrations/20261014_security_authorization.sql'),'utf8');

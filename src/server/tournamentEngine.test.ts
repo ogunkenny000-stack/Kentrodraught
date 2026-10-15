@@ -119,3 +119,23 @@ describe("server tournament engine", () => {
     );
   });
 });
+
+it.each([5, 9])(
+  "does not replay opponents in smaller group pools for a %s-player event",
+  (size) => {
+    let t = startTournament(fixture("Group Stage + Knockout", size));
+    let code = 0;
+    while (t.engineState?.stage !== "knockout") {
+      const m = t.matches.find((m) => m.status !== "completed")!;
+      m.roomId = "room" + code;
+      t = applyTournamentResult(t, m.roomId, "game" + code++, "W");
+    }
+    const groupMatches = t.matches.filter(
+      (m) => m.round <= Number(t.engineState.groupRounds) && m.black !== "∅",
+    );
+    expect(
+      new Set(groupMatches.map((m) => [m.white, m.black].sort().join(":")))
+        .size,
+    ).toBe(groupMatches.length);
+  },
+);

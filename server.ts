@@ -3,7 +3,7 @@ import { createMediaRouter } from "./src/server/mediaConfig";
 import { TournamentRuntime, hostedTournamentRepository, createTournamentRuntimeRouter } from "./src/server/tournamentRuntime";
 import { PersistentEngine } from "./src/server/nativeEngine";
 import { replayForAnalysis } from "./src/lib/analysisReplay";
-import { classifyMove, type PositionEval } from "./src/lib/analysis";
+import { classifyMove, type PositionEval } from "./src/shared/moveClassification";
 import express from "express";
 import path from "path";
 import fs from "fs";

@@ -125,6 +125,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             return (
               <div
                 key={conv.id}
+                role="button"
+                tabIndex={0}
+                aria-label={"Open " + conv.name}
+                aria-pressed={isActive}
+                onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectConversation(conv.id); } }}
                 onClick={() => onSelectConversation(conv.id)}
                 className={`flex items-center gap-3 p-3.5 transition cursor-pointer relative group ${
                   isActive

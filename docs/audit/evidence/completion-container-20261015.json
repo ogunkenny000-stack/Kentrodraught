@@ -1,0 +1,29 @@
+{
+  "capturedAt": "2026-10-15T11:47:14.430Z",
+  "image": "sha256:442f3a7ba8060100612a9d982b5ceda3db6327399fd6c42f7b279a86c8ddce2b",
+  "imageBytes": 362622258,
+  "runtime": {
+    "uid": 1000,
+    "node": "v22.23.3",
+    "compiler": false,
+    "vite": false,
+    "dataDir": "/app/data/smoke-state"
+  },
+  "shutdownMs": 147,
+  "checks": [
+    "Production HTTP readiness",
+    "Non-root runtime without compiler/Vite",
+    "Actual native engine initialization and bounded search",
+    "Built assets served with cache/encoding headers; private/missing files denied",
+    "Active guest game, resume tokens, paused clock and moves survive actual container SIGKILL/restart",
+    "Production API rejects anonymous paid-level claims and publishes no relay credentials to guests",
+    "Real two-client production WebSocket create/consent/join/legal move/agreed draw",
+    "Configured Docker healthcheck reports healthy",
+    "Graceful SIGTERM exits zero and closes WebSockets",
+    "Completed game metadata/moves survive stop/start in configured durable directory"
+  ],
+  "limits": [
+    "Disposable guest fixture without Supabase credentials",
+    "No hosted account authentication/database, media transport, push delivery or capacity certification"
+  ]
+}

@@ -399,3 +399,14 @@ describe("asynchronous guest entitlement", () => {
     expect(guest.messages.at(-1)).toMatchObject({ type: "error", code: "game-in-progress" });
   });
 });
+
+
+describe('bounded end offers',()=>{
+  it.each(['offer-draw','resign'])('expires unanswered %s and resumes the authoritative clock',async type=>{
+    const f=await game();await send(f.alice,{type});
+    expect(f.room.pendingEndOffer).not.toBeNull();expect(f.room.clock.running).toBeNull();
+    await vi.advanceTimersByTimeAsync(31000);
+    expect(f.room.pendingEndOffer).toBeNull();expect(f.room.clock.running).toBe(f.room.gameState.turn);
+    expect(f.alice.messages.some(m=>m.expired===true)).toBe(true);expect(f.room.phase).toBe('playing');
+  });
+});

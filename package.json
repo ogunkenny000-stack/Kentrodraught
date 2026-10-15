@@ -27,7 +27,9 @@
     "test:nearby": "tsx scripts/e2e/nearby.e2e.ts",
     "test:container": "tsx scripts/audit/container-smoke.ts",
     "test:restart": "tsx scripts/audit/live-restart.ts",
-    "test:tournaments": "tsx scripts/audit/tournament-smoke.ts"
+    "test:tournaments": "tsx scripts/audit/tournament-smoke.ts",
+    "test:groups": "tsx scripts/e2e/groups.e2e.ts",
+    "test:hosted": "node scripts/audit/hosted-supabase.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.17.1",

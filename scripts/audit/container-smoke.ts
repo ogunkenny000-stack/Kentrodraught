@@ -49,8 +49,8 @@ async function dockerHealthy() {
   }
   throw new Error("Docker healthcheck did not become healthy");
 }
-async function peer() {
-  const name = `KGuest_${randomBytes(10).toString("hex")}`;
+async function peer(resume?: { name: string; token: string }) {
+  const name = resume?.name || `KGuest_${randomBytes(10).toString("hex")}`;
   const socket = new WebSocket(base.replace(/^http:/, "ws:"));
   clients.push(socket);
   const inbox: any[] = [];
@@ -70,9 +70,10 @@ async function peer() {
     listeners.add(find); find();
   });
   const send = (message: any) => socket.send(JSON.stringify(message));
-  send({ type: "login", username: name });
-  assert.match((await receive("login-success")).sessionToken, /^[a-f0-9]{32}$/);
-  return { socket, name, send, receive };
+  send({ type: "login", username: name, sessionToken: resume?.token });
+  const token = (await receive("login-success")).sessionToken;
+  assert.match(token, /^[a-f0-9]{32}$/);
+  return { socket, name, token, send, receive };
 }
 
 try {
@@ -102,7 +103,7 @@ try {
   assert.equal(actualScript.status, 200); assert.match(actualScript.headers.get("cache-control") || "", /immutable/);
   assert.match(actualScript.headers.get("vary") || "", /Accept-Encoding/i);
   checks.push("Built assets served with cache/encoding headers; private/missing files denied");
-  const a = await peer(); const b = await peer();
+  let a = await peer(); let b = await peer();
   a.send({ type: "create-room", gameTime: 5, hostTime: 5, guestTime: 5, specialRule: "none", wagerAmount: 0, bestOf: 1 });
   const room = await a.receive("room-info");
   b.send({ type: "join-room", roomId: room.roomId }); await b.receive("room-preview");
@@ -114,6 +115,17 @@ try {
   white.send({ type: "make-move", move });
   assert.equal((await a.receive("move-made")).move.from, move.from);
   assert.equal((await b.receive("move-made")).move.to, move.to);
+  await docker("kill", "--signal", "KILL", container);
+  await docker("start", container); await updateAddress(); await ready();
+  a = await peer({name:a.name,token:a.token});
+  const recoveredA = await a.receive("room-rejoined");
+  assert.equal(recoveredA.gameCode,started.gameCode);assert.equal(recoveredA.gameState.moveHistory.length,1);assert.equal(recoveredA.clock.running,null);
+  b = await peer({name:b.name,token:b.token});await b.receive("room-rejoined");
+  checks.push("Active guest game, resume tokens, paused clock and moves survive actual container SIGKILL/restart");
+  const restricted = await fetch(base+'/api/engine/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fen:"W"+"b".repeat(20)+"e".repeat(10)+"w".repeat(20),purpose:'play',levelId:8})});
+  assert.equal(restricted.status,401);
+  assert.equal((await json('/api/media/ice')).relayConfigured,false);
+  checks.push("Production API rejects anonymous paid-level claims and publishes no relay credentials to guests");
   a.send({ type: "offer-draw" }); await b.receive("draw-offered");
   b.send({ type: "draw-response", accept: true });
   assert.equal((await a.receive("game-ended")).reason, "draw"); await b.receive("game-ended");
@@ -135,7 +147,7 @@ try {
   await docker("exec", container, "node", "-e", "if(!require('fs').existsSync('/app/data/smoke-state/permanent_game_records.json'))process.exit(1)");
   checks.push("Completed game metadata/moves survive stop/start in configured durable directory");
   const evidence = { capturedAt: new Date().toISOString(), image: imageInfo.Id, imageBytes: imageInfo.Size,
-    runtime, shutdownMs, checks, limits: ["Disposable guest fixture without Supabase credentials", "No live-room restart recovery, hosted authentication/database, media, push delivery or capacity certification"] };
+    runtime, shutdownMs, checks, limits: ["Disposable guest fixture without Supabase credentials", "No hosted account authentication/database, media transport, push delivery or capacity certification"] };
   console.log(JSON.stringify(evidence, null, 2));
   if (evidencePath) { await mkdir(path.dirname(evidencePath), { recursive: true }); await writeFile(evidencePath, JSON.stringify(evidence, null, 2) + "\n"); }
 } catch (error) {
