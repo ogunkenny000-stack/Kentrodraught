@@ -25,7 +25,7 @@ export interface TournamentPlayer {
   isHuman: boolean;
   handicap?: string;
   // Set on exactly one roster entry per tournament: the official Ken 5 AI
-  // competitor the spec requires in every tournament (see KEN5_PLAYER below).
+  // Legacy archives may identify an engine entrant.
   isKen5?: boolean;
 }
 
@@ -89,27 +89,6 @@ interface TournamentDashboardProps {
   playVictorySound: (m: boolean) => void;
   canManageTournaments: boolean;
   onBackToHome?: () => void;
-}
-
-// Spec requirement: "Ken 5 always joins every tournament as one of the
-// competitors ... follows the same pairing rules as every other participant."
-// This is a real engine-driven opponent, not a flavor-text bot: App.tsx's
-// getTournamentOpponentLevel() maps the exact username "Ken 5" to actual
-// Ken-Level-5 engine strength, so matches against it use the actual engine.
-function makeKen5Player(): TournamentPlayer {
-  return {
-    username: "Ken 5",
-    rating: 2380,
-    wins: 0,
-    losses: 0,
-    draws: 0,
-    points: 0,
-    streak: 0,
-    country: "NG",
-    team: "Kentro AI Lab",
-    isHuman: false,
-    isKen5: true,
-  };
 }
 
 function TournamentDashboardImpl({
@@ -263,8 +242,8 @@ function TournamentDashboardImpl({
       handicap: formHandicap !== "None" ? formHandicap : undefined
     };
 
-    // Include only the creator and the actual Ken engine competitor.
-    const roster: TournamentPlayer[] = [humanPlayer, makeKen5Player()];
+    // An engine tournament worker is not available; never seed a fake entrant.
+    const roster: TournamentPlayer[] = [humanPlayer];
 
     const newTour: Tournament = {
       id: tourId,
@@ -417,14 +396,19 @@ function TournamentDashboardImpl({
   };
 
   // Join Private Tournament
-  const handleJoinPrivate = () => {
-    const found = tournamentsList.find(t => t.inviteCode.toUpperCase() === joinCode.trim().toUpperCase());
-    if (found) {
-      handleJoinTournament(found);
+  const handleJoinPrivate = async () => {
+    if (!joinCode.trim() || isLoading) return;
+    setIsLoading(true);
+    try {
+      const result = await apiPost("/api/tournaments/invite", { inviteCode: joinCode.trim() });
+      if (!result.tournament?.id || !Array.isArray(result.tournament.players)) throw new Error("The tournament invitation could not be loaded.");
+      const authorizedTournament = result.tournament as Tournament;
+      setTournamentsList(previous => [...previous.filter(tournament => tournament.id !== authorizedTournament.id), authorizedTournament]);
       setJoinCode("");
-    } else {
-      showToast("Invalid invitation code.");
-    }
+      await handleJoinTournament(authorizedTournament);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Could not redeem this invitation. Please try again.");
+    } finally { setIsLoading(false); }
   };
 
   // Start Tournament & Generate Pairings
@@ -972,7 +956,7 @@ function TournamentDashboardImpl({
                   <span>Enter Private Invitation</span>
                 </h3>
                 <p className="text-slate-400 text-[11px] leading-relaxed mb-4">
-                  Have an invitation code from a friend or club organizer? Paste it below to bypass visibility locks.
+                  Have an invitation code from a friend or club organizer? Paste it below to open your invitation securely.
                 </p>
                 
                 <div className="flex gap-2">
@@ -985,6 +969,7 @@ function TournamentDashboardImpl({
                   />
                   <button
                     onClick={handleJoinPrivate}
+                    disabled={isLoading || !joinCode.trim()}
                     className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2 rounded-xl text-xs transition cursor-pointer uppercase"
                   >
                     Join

@@ -14,10 +14,10 @@ export function replayBounds(frameCount: number, requestedPly: number, clipEnd?:
 }
 
 /** Replay only legal, recorded moves. Never accept a client-supplied board snapshot as proof of a move. */
-export function buildReplayFrames(game: Pick<KentroGameRecord, "startingPosition" | "completeMoveHistory">): ReplayFrame[] {
+export function buildReplayFrames(game: Pick<KentroGameRecord, "startingPosition" | "completeMoveHistory"> & { startingTurn?: "W" | "B" }): ReplayFrame[] {
   let board = game.startingPosition && Object.keys(game.startingPosition).length ? { ...game.startingPosition } : createInitialBoard();
-  const frames: ReplayFrame[] = [{ board, move: null, ply: 0, turn: "W" }];
-  let turn: "W" | "B" = "W";
+  let turn: "W" | "B" = game.startingTurn === "B" ? "B" : "W";
+  const frames: ReplayFrame[] = [{ board, move: null, ply: 0, turn }];
   for (const claimed of game.completeMoveHistory || []) {
     const legal = generateLegalMoves(board, turn).find(m => movesAreEquivalent(m, claimed));
     if (!legal) throw new Error(`Replay move ${frames.length} could not be verified.`);

@@ -55,8 +55,8 @@ export function loadEnvTest(): Record<string, string> {
 }
 
 export const TEST_USERS = {
-  A: { username: "kdtest1", uid: "2952058d-b425-4053-9472-c077b14a6813", email: "bellooluwapelumiayomide210+kdtest1@gmail.com" },
-  B: { username: "kdtest2", uid: "d9eebb45-9421-40af-9b60-a0459ab83633", email: "bellooluwapelumiayomide210+kdtest2@gmail.com" },
+  A: { username: "kdtest1", uid: "00000000-0000-4000-8000-000000000011", email: "player-a@example.test" },
+  B: { username: "kdtest2", uid: "00000000-0000-4000-8000-000000000012", email: "player-b@example.test" },
 };
 
 export async function launchChrome(opts: { headless?: boolean; args?: string[] } = {}): Promise<Browser> {

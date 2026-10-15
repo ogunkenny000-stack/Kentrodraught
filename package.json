@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "kentro-draughts",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -16,7 +16,16 @@
     "test": "vitest run",
     "build:edge": "cd go-edge && go build -trimpath -ldflags=\"-s -w\" -o ../dist/kentro-edge .",
     "test:edge": "cd go-edge && go test ./...",
-    "test:perf": "node scripts/performance-smoke.cjs && node --experimental-strip-types scripts/engine-mutex-smoke.mjs"
+    "test:perf": "node scripts/performance-smoke.cjs && node --experimental-strip-types scripts/engine-mutex-smoke.mjs",
+    "migrations:check": "node scripts/build-migrations.cjs --check",
+    "migrations:build": "node scripts/build-migrations.cjs",
+    "test:database": "tsx scripts/audit/database-security.mjs",
+    "test:multiplayer": "tsx scripts/audit/multiplayer-smoke.ts",
+    "test:browser": "tsx scripts/e2e/frontend.e2e.ts",
+    "test:tv": "tsx scripts/e2e/tv.e2e.ts",
+    "test:offline": "tsx scripts/e2e/offline.e2e.ts",
+    "test:nearby": "tsx scripts/e2e/nearby.e2e.ts",
+    "test:container": "tsx scripts/audit/container-smoke.ts"
   },
   "dependencies": {
     "@google/genai": "^2.17.1",

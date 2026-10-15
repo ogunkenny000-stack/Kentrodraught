@@ -28,6 +28,10 @@ import { randomBytes } from "node:crypto";
 import { Board, Move, generateLegalMoves, applyMove } from "../src/gameLogic";
 
 const URL = process.env.SMOKE_URL || "ws://localhost:8123";
+const target = new globalThis.URL(URL);
+if (!["ws:", "wss:"].includes(target.protocol) || !["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)) {
+  throw new Error("PvP smoke is restricted to a disposable loopback server");
+}
 
 type Msg = any;
 

@@ -150,7 +150,7 @@ function GlobalChatLoungeImpl({
         totalUnreadCount={totalUnreadCount}
         onBackToHome={() => onSelectMode && onSelectMode("Home")}
         onOpenMyProfile={() => handleOpenUserProfile(username)}
-        onOpenCreateGroup={() => setShowCreateGroupModal(true)}
+        onOpenCreateGroup={() => window.alert("Shared groups are not available yet. Use direct messages or Grandmaster Hall.")}
         onOpenNewChat={() => setShowNewChatModal(true)}
       />
 
@@ -195,7 +195,7 @@ function GlobalChatLoungeImpl({
             activeFilterTab={activeFilterTab}
             onFilterTabChange={setActiveFilterTab}
             onOpenNewChat={() => setShowNewChatModal(true)}
-            onOpenCreateGroup={() => setShowCreateGroupModal(true)}
+            onOpenCreateGroup={() => window.alert("Shared groups are not available yet. Use direct messages or Grandmaster Hall.")}
             currentUsername={username}
           />
         </div>

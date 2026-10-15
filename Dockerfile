@@ -20,7 +20,7 @@ ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
 RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS runtime
-ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
+ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 KENTRO_DATA_DIR=/app/data
 WORKDIR /app
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules

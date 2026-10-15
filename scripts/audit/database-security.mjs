@@ -102,6 +102,41 @@ try {
     assert.equal((await carol.query("select * from completed_games where \"gameId\"='private-match'")).rowCount,0);
     assert.equal((await anon.query("select * from completed_games where \"gameId\"='private-match'")).rowCount,0);
   });
+  await check('private tournament rows, invite redemption, entry and chat all enforce verified access',async()=>{
+    await owner.query("insert into tournaments(id,name,visibility,\"inviteCode\",status,players,\"maxPlayers\") values('private-tour','Private fixture','private','LEGACY-CODE','registration','[]',4)");
+    for (const actor of [anon,alice,bob,carol]) assert.equal((await actor.query("select * from tournaments where id='private-tour'")).rowCount,0);
+    await denied(alice,"select kentro_redeem_tournament_invite($1,'LEGACY-CODE')",[uid.alice]);
+    await denied(alice,"insert into kentro_tournament_invites(tournament_id,owner_id) values('private-tour',$1)",[uid.alice]);
+    await denied(alice,"select kentro_tournament_chat('private-tour','unauthorized')");
+    const before=await balance('alice');
+    const entry="select * from tournament_entry('private-tour','alice',3,'{\"username\":\"forged\"}','entry')";
+    assert.equal((await service.query(entry)).rows[0].errorReason,'not_allowed'); assert.equal(await balance('alice'),before);
+    assert.equal((await service.query("select kentro_redeem_tournament_invite($1,'WRONG-CODE') as result",[uid.alice])).rows[0].result.error,'not_found');
+    const redeemed=(await service.query("select kentro_redeem_tournament_invite($1,'legacy-code') as result",[uid.alice])).rows[0].result;
+    assert.equal(redeemed.ok,true); assert.equal(redeemed.tournament.id,'private-tour');
+    assert.equal((await alice.query("select * from tournaments where id='private-tour'")).rowCount,1);
+    assert.equal((await administrator.query("select * from tournaments where id='private-tour'")).rowCount,1);
+    assert.equal((await bob.query("select * from tournaments where id='private-tour'")).rowCount,0);
+    assert.equal((await service.query(entry)).rows[0].ok,true); assert.equal(await balance('alice'),before-3);
+    assert.equal((await owner.query("select players->0->>'username' as username from tournaments where id='private-tour'")).rows[0].username,'alice');
+    await alice.query("select kentro_tournament_chat('private-tour','authorized')");
+    await denied(bob,"select kentro_tournament_chat('private-tour','unauthorized')");
+    await denied(alice,"select kentro_tournament_chat('private-tour',null)");
+    await owner.query('update profiles set banned=true where "ownerId"=$1',[uid.alice]);
+    assert.equal((await alice.query("select * from tournaments where id='private-tour'")).rowCount,0);
+    assert.equal((await service.query("select kentro_redeem_tournament_invite($1,'LEGACY-CODE') as result",[uid.alice])).rows[0].result.error,'not_found');
+    await owner.query('update profiles set banned=false where "ownerId"=$1',[uid.alice]);
+    await owner.query("update tournaments set status='cancelled' where id='private-tour'");
+    assert.equal((await service.query("select kentro_redeem_tournament_invite($1,'LEGACY-CODE') as result",[uid.bob])).rows[0].result.error,'not_open');
+    assert.equal((await service.query("select * from refund_tournament_entries('private-tour')")).rows[0].ok,true);
+    assert.equal(await balance('alice'),before);
+  });
+  await check('notification owners may mark read but cannot forge stored content or recipients',async()=>{
+    const id=(await owner.query("insert into kentro_notifications(recipient_id,category,title,body,dedupe_key) values($1,'system','Canonical','Content','fixture') returning id",[uid.alice])).rows[0].id;
+    assert.equal((await bob.query('select * from kentro_notifications where id=$1',[id])).rowCount,0);
+    await denied(alice,"update kentro_notifications set title='forged' where id=$1",[id]);
+    assert.equal((await alice.query('update kentro_notifications set read_at=now() where id=$1',[id])).rowCount,1);
+  });
   await check('wallets without ownerId stay private and purchases are pending genuine-owner claims',async()=>{
     assert.equal((await alice.query("select * from coin_wallets where username='alice'")).rowCount,1);
     assert.equal((await bob.query("select * from coin_wallets where username='alice'")).rowCount,0);
@@ -262,6 +297,29 @@ try {
     await owner.query(file);
     assert.equal((await owner.query('select count(*) as count from coin_transactions')).rows[0].count,before);
     await denied(alice,"update profiles set \"maxUnlockedKenLevel\"=7 where \"usernameLower\"='alice'");
+  });
+  await check('combined migrations match ordered source, rerun safely and retain private boundaries',async()=>{
+    const combined=await fs.readFile(path.join(root,'supabase/all_migrations_combined.sql'),'utf8');
+    for (const file of files) assert.ok(combined.includes(`-- BEGIN MIGRATION ${file}\n`),`${file} missing from combined SQL`);
+    // The preceding emergency authorization rollback deliberately restored old
+    // policies. Apply the complete ordered upgrade before comparing snapshots.
+    for (const f of files) await owner.query(await fs.readFile(path.join(root,'supabase/migrations',f),'utf8'));
+    const snapshot=async()=>({
+      policies:(await owner.query("select tablename,policyname,permissive,roles,cmd,qual,with_check from pg_policies where schemaname='public' order by tablename,policyname")).rows,
+      functions:(await owner.query("select p.oid::regprocedure::text as signature,pg_get_functiondef(p.oid) as definition,p.proacl::text as privileges from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f' order by signature")).rows,
+    });
+    const before=await snapshot();
+    await owner.query(combined); assert.deepEqual(await snapshot(),before);
+    await owner.query(combined); assert.deepEqual(await snapshot(),before);
+    assert.equal((await bob.query("select * from tournaments where id='private-tour'")).rowCount,0);
+    await denied(alice,"select resolve_username_to_email('bob')");
+    await denied(alice,ratedSql,['forgery',uid.alice,uid.bob,0,0,'W',{}]);
+    await owner.query(await fs.readFile(path.join(root,'supabase/rollback/20261015_tournament_privacy.sql'),'utf8'));
+    await denied(service,"select kentro_redeem_tournament_invite($1,'LEGACY-CODE')",[uid.bob]);
+    await denied(service,"select * from tournament_entry('tour','bob',0,'{}','entry')");
+    assert.equal((await bob.query("select * from tournaments where id='private-tour'")).rowCount,0);
+    await owner.query(await fs.readFile(path.join(root,'supabase/migrations/20261015_tournament_privacy.sql'),'utf8'));
+    assert.equal((await alice.query("select * from tournaments where id='private-tour'")).rowCount,1);
   });
   console.log(`${checks} database security checks passed in disposable PostgreSQL`);
 } finally {

@@ -77,7 +77,7 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
         // distinguish "no such account" from "wrong password" itself (a
         // modern anti-enumeration default), but our own resolve-first step
         // already ruled the first case out.
-        setError("Incorrect password.");
+        setError("Username or password is incorrect.");
       } else if (code === "email_not_confirmed") {
         setError("Please confirm your email first -- check your inbox for the confirmation link.");
       } else if (code === "user_already_exists" || code === "email_exists") {
@@ -298,7 +298,7 @@ export function AuthScreen({ onAuthenticated, onPlayOffline, onContinueAsGuest }
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
                 aria-pressed={showPassword}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
+                className="absolute right-0 top-1/2 -translate-y-1/2 min-w-11 min-h-11 flex items-center justify-center text-slate-400 hover:text-slate-200 transition"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>

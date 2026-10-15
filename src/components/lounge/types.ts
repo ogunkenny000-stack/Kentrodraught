@@ -50,7 +50,7 @@ export interface LoungeMessage {
   replyTo?: ReplyContext;
   forwardedFrom?: string;
   reactions: Record<string, string[]>; // emoji -> array of usernames
-  status: "sent" | "delivered" | "seen";
+  status: "sending" | "failed" | "sent" | "delivered" | "seen";
   deletedFor: string[]; // usernames who deleted for themselves
   deletedForEveryone?: boolean;
   timestamp: string | number; // ISO string or epoch ms

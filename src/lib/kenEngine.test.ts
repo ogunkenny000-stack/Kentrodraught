@@ -21,6 +21,14 @@ describe("native engine client", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response()));
     expect((await analyzeKen(board, "W", 100)).move).toEqual(move);
   });
+  it("namespaces cancellation keys to this browser tab", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response());
+    vi.stubGlobal("fetch", fetcher);
+    await analyzeKen(board, "W", 100, "live");
+    const key = JSON.parse(fetcher.mock.calls[0][1].body).supersedeKey;
+    expect(key).toMatch(/^.+:live$/);
+    expect(key.length).toBeLessThanOrEqual(128);
+  });
   it.each([{ move: "1-50" }, { move: moveToHubString(move) + "junk" }, { score: NaN }, { move: null }])("rejects invalid engine results %s", async (data) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(data)));
     await expect(analyzeKen(board, "W", 100)).rejects.toBeInstanceOf(EngineUnavailableError);

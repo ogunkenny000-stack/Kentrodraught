@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { gunzipSync, brotliDecompressSync } = require('node:zlib');
+const { randomBytes } = require('node:crypto');
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kentro-perf-'));
 try {
   const dist = path.join(base, 'dist');
@@ -34,6 +35,19 @@ try {
   assert.deepEqual(gunzipSync(gz), raw);
   assert.deepEqual(brotliDecompressSync(br), raw);
   assert(br.byteLength < gz.byteLength);
+  // Rebuilding a changed or deleted source must not leave stale variants.
+  const entryFile = path.join(dist, entry.slice(1));
+  fs.writeFileSync(entryFile, 'small revision');
+  execFileSync(process.execPath, [path.join(__dirname, 'precompress-assets.cjs')], { env });
+  for (const suffix of ['.gz', '.br']) assert(!fs.existsSync(entryFile + suffix), 'small source retains stale compression');
+  fs.writeFileSync(entryFile, randomBytes(4096));
+  for (const suffix of ['.gz', '.br']) fs.writeFileSync(entryFile + suffix, 'stale');
+  execFileSync(process.execPath, [path.join(__dirname, 'precompress-assets.cjs')], { env });
+  for (const suffix of ['.gz', '.br']) assert(!fs.existsSync(entryFile + suffix), 'incompressible source retains stale compression');
+  fs.unlinkSync(entryFile);
+  for (const suffix of ['.gz', '.br']) fs.writeFileSync(entryFile + suffix, 'orphan');
+  execFileSync(process.execPath, [path.join(__dirname, 'precompress-assets.cjs')], { env });
+  for (const suffix of ['.gz', '.br']) assert(!fs.existsSync(entryFile + suffix), 'removed source retains orphan compression');
   console.log(`Startup + nearby caching: PASS (TV remains lazy); gzip + Brotli byte-perfect: PASS (raw ${raw.length}, gzip ${gz.length}, Brotli ${br.length})`);
 } finally {
   fs.rmSync(base, { recursive: true, force: true });

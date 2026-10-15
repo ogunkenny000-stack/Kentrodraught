@@ -13,6 +13,9 @@ data/*
 !data/eval_nigerian
 scripts/e2e/out
 docs/audit
+playwright-report
+test-results
+coverage
 *.tar
 *.tar.gz
 

@@ -127,7 +127,7 @@ func TestFrontendAndCache(t *testing.T) {
 func TestPrivateBuildFilesAndSymlinks(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()
-	for name, value := range map[string]string{"index.html": "app", "server.cjs": "backend", "server.cjs.map": "source"} {
+	for name, value := range map[string]string{"index.html": "app", "server.cjs": "backend", "server.cjs.map": "source", "kentro-edge": "native executable", "engine.bin": "binary", "index.html.br": "compressed"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -142,11 +142,24 @@ func TestPrivateBuildFilesAndSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, requested := range []string{"/server.cjs", "/server.cjs.map", "/leak.txt", "/.hidden/../room"} {
+	for _, requested := range []string{"/server.cjs", "/server.cjs.map", "/leak.txt", "/.hidden/../room", "/kentro-edge", "/engine.bin", "/index.html.br"} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requested, nil))
 		if recorder.Code != http.StatusNotFound {
 			t.Fatalf("%s leaked with status %d: %s", requested, recorder.Code, recorder.Body.String())
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	for _, requested := range []string{"/", "/room/invite"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requested, nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("shell symlink leaked at %s: %d", requested, recorder.Code)
 		}
 	}
 }

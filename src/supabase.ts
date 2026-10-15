@@ -15,6 +15,27 @@ if (!isSupabaseConfigured) {
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Register before session restoration starts: recovery events can arrive before
+// App mounts, after Supabase has consumed and removed the URL fragment.
+let recoveringPassword = typeof window !== 'undefined' && new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery';
+const recoveryListeners = new Set<(active: boolean) => void>();
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') {
+    recoveringPassword = true;
+    recoveryListeners.forEach(listener => listener(true));
+  }
+});
+export function isPasswordRecovery(): boolean { return recoveringPassword; }
+export function subscribePasswordRecovery(listener: (active: boolean) => void): () => void {
+  recoveryListeners.add(listener);
+  listener(recoveringPassword);
+  return () => { recoveryListeners.delete(listener); };
+}
+export function finishPasswordRecovery(): void {
+  recoveringPassword = false;
+  recoveryListeners.forEach(listener => listener(false));
+}
+
 // Row Level Security policies (see supabase/schema.sql) require auth.uid()
 // to match for every gated read/write, the same way firestore.rules used to
 // require request.auth != null. Real email/password accounts (below) are

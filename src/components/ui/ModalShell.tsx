@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
+import { isTopmostDialog } from "../../lib/dialogFocus";
 
 /**
  * ModalShell -- the one responsive dialog container used by every popup in
@@ -52,8 +53,7 @@ export function ModalShell({
     const handleDialogKeys = (event: KeyboardEvent) => {
       const panel = dialogRef.current as HTMLDivElement | null;
       if (!panel) return;
-      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'));
-      if (openDialogs[openDialogs.length - 1] !== panel) return;
+      if (!isTopmostDialog(panel)) return;
       if (event.key === "Escape" && dismissable) {
         event.stopPropagation();
         event.preventDefault();
@@ -61,7 +61,7 @@ export function ModalShell({
       }
       if (event.key !== "Tab") return;
       const candidates = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled),[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])'));
-      const controls = candidates.filter(element => element.getClientRects().length > 0);
+      const controls = candidates.filter(element => element.getClientRects().length > 0 && element.tabIndex >= 0);
       if (!controls.length) { event.preventDefault(); panel.focus(); return; }
       const first = controls[0], last = controls[controls.length - 1];
       if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }

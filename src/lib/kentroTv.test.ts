@@ -28,6 +28,15 @@ describe("Kentro TV", () => {
   it("rejects forged move histories", () => {
     expect(() => buildReplayFrames({ startingPosition: null, completeMoveHistory: [{ from: 1, to: 50, caps: [] }] })).toThrow();
   });
+  it("replays a custom black-to-move opening and preserves legacy white defaults", () => {
+    const board = createInitialBoard();
+    const move = generateLegalMoves(board, "B")[0];
+    const frames = buildReplayFrames({ startingPosition: board, startingTurn: "B", completeMoveHistory: [move] });
+    expect(frames[0].turn).toBe("B");
+    expect(frames[1].turn).toBe("W");
+    expect(frames[1].board).toEqual(applyMove(board, move).board);
+    expect(() => buildReplayFrames({ startingPosition: board, completeMoveHistory: [move] })).toThrow();
+  });
   it("extracts actual capture and endgame highlights", () => {
     const { moves } = game();
     const clips = selectHighlights(buildReplayFrames({ startingPosition: null, completeMoveHistory: moves }));

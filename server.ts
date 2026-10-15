@@ -1,7 +1,8 @@
-import { Mutex } from "./src/server/engineMutex";
+import { PersistentEngine } from "./src/server/nativeEngine";
+import { replayForAnalysis } from "./src/lib/analysisReplay";
+import { classifyMove, type PositionEval } from "./src/lib/analysis";
 import express from "express";
 import path from "path";
-import { spawn, execSync, ChildProcess } from "child_process";
 import fs from "fs";
 import { WebSocketServer } from "ws";
 import { generateLegalMoves, applyMove, createInitialBoard, checkGameEnd, boardToScanFen, scanFenToBoard, moveToNotationString, convertMoveStr, convertSq, isKing, verifyPuzzleLine, hubMoveStringToNigerian, ngSqToRc } from "./src/gameLogic";
@@ -9,13 +10,19 @@ import type { Board, Move } from "./src/gameLogic";
 import { debitMultipleWallets, creditWallet, getOrCreateWallet, debitWallet, settleMatchPot, HOUSE_WALLET_USERNAME } from "./coinsService";
 import { requirePermission, writeAuditLog, ADMIN_PERMISSIONS, getAdminByUid, type AdminPermission } from "./adminService";
 import compression from "compression";
+import { randomBytes, randomUUID } from "node:crypto";
+import { mountProductionStatic } from "./src/server/staticAssets";
+import { createRateLimiter, securityHeaders } from "./src/server/securityMiddleware";
+import { installBodyParsing } from "./src/server/bodyParsing";
 import { getSupabaseAdmin, verifyAccessToken } from "./supabaseAdmin";
 import { canReadGameRecord, requestAccessToken } from "./src/server/httpAuth";
 import { createAccountAuthRouter } from "./src/server/accountAuth";
+import { createTournamentInviteRouter } from "./src/server/tournamentInvites";
 import { Client as PgClient } from "pg";
 import {
   initGameRecordsManager,
   getNextGameCode,
+  flushGameRecords,
   recordGameStart,
   recordGameEnd,
   linkRematch,
@@ -24,7 +31,7 @@ import {
   getSeriesById,
 } from "./src/server/gameRecordsManager";
 import { attachOnlinePlay } from "./src/server/onlinePlay";
-import { isScanFen, isEngineDepth, MAX_ENGINE_DEPTH, parseEngineMoveRequest } from "./src/server/engineRequest";
+import { parseEngineMoveRequest } from "./src/server/engineRequest";
 import { accountForUsername, insertNotification, sendTournamentReminders } from "./src/server/notifications";
 import { deliverPendingPushes, safePushEndpoint, validateSubscription, vapidSettings } from "./src/server/webPush";
 
@@ -32,395 +39,6 @@ import { deliverPendingPushes, safePushEndpoint, validateSubscription, vapidSett
 // UID permission grants. Missing credentials fail closed in the auth layer.
 const KENTRO_ADMIN_ENABLED = true;
 const KENTRO_COINS_ENABLED = true;
-
-// Fast LRU Cache for evaluated positions, delivering 0ms instantaneous responses
-// for repeated positions, opening moves, backward/forward navigation, and transpositions.
-class EngineLRUCache<V> {
-  private map = new Map<string, V>();
-  constructor(private readonly maxEntries = 5000) {}
-
-  get(key: string): V | undefined {
-    const val = this.map.get(key);
-    if (val !== undefined) {
-      this.map.delete(key);
-      this.map.set(key, val);
-    }
-    return val;
-  }
-
-  set(key: string, val: V): void {
-    if (this.map.has(key)) {
-      this.map.delete(key);
-    } else if (this.map.size >= this.maxEntries) {
-      const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) this.map.delete(oldest);
-    }
-    this.map.set(key, val);
-  }
-
-  clear(): void {
-    this.map.clear();
-  }
-}
-
-// Set ENGINE_DEBUG=1 in the environment for a full request/response transcript in
-// nd_upgraded/engine.log. Off by default. The previous version logged synchronously
-// (fs.appendFileSync) on every single line of every engine interaction -- that blocks
-// Node's single event-loop thread on disk I/O for every request, and the file grew
-// forever with no rotation. This is async and opt-in instead.
-const ENGINE_DEBUG = process.env.ENGINE_DEBUG === "1";
-const ENGINE_LOG_PATH = path.join(process.cwd(), "nd_upgraded", "engine.log");
-
-let stdbufAvailable: boolean | null = null;
-function hasStdbuf(): boolean {
-  if (stdbufAvailable === null) {
-    try {
-      execSync("command -v stdbuf", { stdio: "ignore" });
-      stdbufAvailable = true;
-    } catch {
-      stdbufAvailable = false;
-    }
-  }
-  return stdbufAvailable;
-}
-function engineLog(line: string) {
-  if (!ENGINE_DEBUG) return;
-  fs.appendFile(ENGINE_LOG_PATH, line, () => {
-    /* best-effort logging; never let a log write throw inside a request path */
-  });
-}
-
-interface EngineResult {
-  score: number;
-  depth: number;
-  pv: string;
-  move: string;
-  nodes?: number;
-}
-
-/**
- * Manages ONE long-lived `scan_nigerian hub` process for the lifetime of the server,
- * instead of spawning (and fully re-initializing -- including reloading the 8.5MB
- * eval file) a brand new process for every single move request.
- *
- * Confirmed empirically (2026-07-06) that the hub protocol only needs the
- * hub -> wait -> init -> ready handshake ONCE per process; after that, repeated
- * pos/level/go/stop cycles work correctly on the same process.
- *
- * All commands are serialized through `mutex` since the engine's stdin/stdout is a
- * single conversation that cannot be shared between two concurrent requests.
- */
-class PersistentEngine {
-  private stopped = false;
-
-  stop(): Promise<void> {
-    this.stopped = true;
-    const child = this.proc;
-    this.proc = null;
-    this.readyPromise = null;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-    return new Promise((resolve) => {
-      // Reap the native child before exiting; an immediate process.exit after
-      // kill leaves a zombie under a container init that does not reap children.
-      const deadline = setTimeout(() => child.kill("SIGKILL"), 500);
-      child.once("exit", () => { clearTimeout(deadline); resolve(); });
-      child.kill("SIGTERM");
-    });
-  }
-  private proc: ChildProcess | null = null;
-  private readyPromise: Promise<void> | null = null;
-  private mutex = new Mutex();
-  private binaryPath = path.join(process.cwd(), "nd_upgraded", "scan_nigerian");
-  private workDir = path.join(process.cwd(), "nd_upgraded");
-  private cache = new EngineLRUCache<EngineResult>(5000);
-  private inFlight = new Map<string, Promise<EngineResult>>();
-
-  /** Spawns the engine process and waits for the one-time init handshake. Safe to call
-   * repeatedly -- returns the existing in-flight/ready promise if already starting/started. */
-  private start(): Promise<void> {
-    if (this.stopped) return Promise.reject(new Error("Engine is shutting down"));
-    if (this.proc && !this.proc.killed && this.readyPromise) return this.readyPromise;
-
-    if (!fs.existsSync(this.binaryPath)) {
-      try {
-        console.log("[engine] scan_nigerian binary missing, automatically running scripts/build-engine.cjs...");
-        execSync("node scripts/build-engine.cjs", { cwd: process.cwd(), stdio: "inherit" });
-      } catch (err: any) {
-        console.warn("[engine] Automatic engine build attempt failed:", err?.message);
-      }
-    }
-
-    if (!fs.existsSync(this.binaryPath)) {
-      const msg =
-        `[engine] scan_nigerian C++ binary not present at ${this.binaryPath}. ` +
-        `Build it first: cd nd_upgraded && make -f Makefile_linux (or run "npm run build:engine").`;
-      console.warn(msg);
-      const rejected = Promise.reject(new Error(msg));
-      rejected.catch(() => {});
-      return rejected;
-    }
-
-    // Ensure executable permissions before spawning
-    try {
-      fs.chmodSync(this.binaryPath, 0o755);
-    } catch {}
-
-    this.readyPromise = new Promise<void>((resolve, reject) => {
-      // `stdbuf` (GNU coreutils) forces line-buffered output on Linux; it does not exist on
-      // macOS, and the engine already flushes every line itself, so spawn directly there.
-      const child = hasStdbuf()
-        ? spawn("stdbuf", ["-oL", "-eL", this.binaryPath, "hub"], { cwd: this.workDir })
-        : spawn(this.binaryPath, ["hub"], { cwd: this.workDir });
-      this.proc = child;
-      let buffer = "";
-      let initialized = false;
-
-      const onDown = (why: string) => {
-        engineLog(`ENGINE PROCESS DOWN (${why})\n`);
-        if (!initialized) reject(new Error(`engine exited before init (${why})`));
-        if (this.proc === child) {
-          this.proc = null;
-          this.readyPromise = null;
-        }
-      };
-
-      child.on("error", (err) => {
-        console.error("[engine] spawn error:", err.message);
-        onDown(err.message);
-      });
-      child.on("close", (code) => onDown(`exit code ${code}`));
-      child.stderr.on("data", (d) => engineLog(`STDERR: ${d}`));
-
-      const onInitData = (data: Buffer) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const raw of lines) {
-          const line = raw.trim();
-          engineLog(`STDOUT(init): ${line}\n`);
-          if (line === "wait") {
-            child.stdin.write("init\n");
-          } else if (line === "ready") {
-            initialized = true;
-            child.stdout.off("data", onInitData);
-            console.log("[engine] scan_nigerian initialized and ready");
-            resolve();
-          }
-        }
-      };
-      child.stdout.on("data", onInitData);
-
-      child.stdin.write("hub\n");
-    });
-
-    return this.readyPromise;
-  }
-
-  /** Starts the engine ahead of the first real request, so the first player doesn't
-   * pay the one-time init cost. Failure is logged but never throws. */
-  async warmUp(): Promise<void> {
-    try {
-      await this.start();
-    } catch (err) {
-      // already logged inside start(); nothing more to do here.
-    }
-  }
-
-  /** Fast health check ping: sends "ping" and expects "pong" within 1000ms. */
-  async ping(): Promise<boolean> {
-    try {
-      await this.start();
-      const release = await this.mutex.acquire(true);
-      const child = this.proc;
-      if (!child || !child.stdin.writable) {
-        release();
-        return false;
-      }
-
-      return new Promise<boolean>((resolve) => {
-        let timer: NodeJS.Timeout;
-        const onPingData = (data: Buffer) => {
-          if (data.toString().includes("pong")) {
-            clearTimeout(timer);
-            child.stdout.off("data", onPingData);
-            release();
-            resolve(true);
-          }
-        };
-
-        timer = setTimeout(() => {
-          child.stdout.off("data", onPingData);
-          release();
-          resolve(false);
-        }, 1000);
-
-        child.stdout.on("data", onPingData);
-        child.stdin.write("ping\n");
-      });
-    } catch {
-      return false;
-    }
-  }
-
-  async getMove(
-    fen: string,
-    thinkTimeSec: number,
-    depth?: number,
-    isHighPriority = true,
-    usePst = false,
-    supersedeKey?: string
-  ): Promise<EngineResult> {
-    if (!isScanFen(fen)) throw new Error("Invalid engine position");
-    if (!Number.isFinite(thinkTimeSec) || thinkTimeSec <= 0) throw new Error("Invalid engine time budget");
-    if (depth !== undefined && !isEngineDepth(depth)) throw new Error("Invalid engine search depth");
-    // 1. Instant cache check; every search sets its own depth limit.
-    const cacheKey = `${fen}|${thinkTimeSec.toFixed(3)}|${depth ?? MAX_ENGINE_DEPTH}|${usePst ? 1 : 0}`;
-    const cached = this.cache.get(cacheKey);
-    if (cached) {
-      return { ...cached };
-    }
-
-    // 2. In-flight request deduplication (coalescing)
-    const existingFlight = this.inFlight.get(cacheKey);
-    if (existingFlight) {
-      return existingFlight;
-    }
-
-    const execPromise = this._executeMove(fen, thinkTimeSec, depth, isHighPriority, usePst, supersedeKey);
-    this.inFlight.set(cacheKey, execPromise);
-
-    try {
-      const result = await execPromise;
-      this.cache.set(cacheKey, result);
-      return result;
-    } finally {
-      this.inFlight.delete(cacheKey);
-    }
-  }
-
-  private async _executeMove(
-    fen: string,
-    thinkTimeSec: number,
-    depth?: number,
-    isHighPriority = true,
-    usePst = false,
-    supersedeKey?: string
-  ): Promise<EngineResult> {
-    let isSuperseded = false;
-    const release = await this.mutex.acquire(isHighPriority, supersedeKey, () => {
-      isSuperseded = true;
-    });
-
-    if (isSuperseded) {
-      release();
-      throw new Error("Superseded");
-    }
-
-    // A queued request may outlive the previous process. Start/check it only
-    // after acquiring the search lock, not before waiting in the queue.
-    try {
-      await this.start();
-    } catch (err) {
-      release();
-      throw new Error(`Engine start failed: ${err}`);
-    }
-
-    const child = this.proc;
-    if (!child) {
-      release();
-      throw new Error("Engine process not available");
-    }
-
-    return new Promise<EngineResult>((resolve, reject) => {
-      const result: EngineResult = { score: 0, depth: 0, pv: "", move: "" };
-      let resolved = false;
-      let buffer = "";
-
-      const finish = (r: EngineResult) => {
-        if (resolved) return;
-        resolved = true;
-        child.stdout.off("data", onData);
-        clearTimeout(timer);
-        clearTimeout(softStopTimer);
-        release();
-        // A preempted search did not use the requested budget; never cache it
-        // as though it were a completed full-strength search.
-        if (isSuperseded) reject(new Error("Superseded"));
-        else resolve(r);
-      };
-
-      const fail = (err: Error) => {
-        if (resolved) return;
-        resolved = true;
-        child.stdout.off("data", onData);
-        clearTimeout(timer);
-        clearTimeout(softStopTimer);
-        release();
-        reject(err);
-      };
-
-      // Register preemption hook: if a newer request with the same supersedeKey arrives, stop this one early
-      this.mutex.registerCurrentStop(() => {
-        isSuperseded = true;
-        if (!resolved && child.stdin.writable) {
-          child.stdin.write("stop\n");
-        }
-      });
-
-      // Hard timeout safety valve
-      const timer = setTimeout(() => {
-        engineLog(`TIMEOUT waiting for "done" -- killing engine process, will respawn on next request\n`);
-        child.kill();
-        fail(new Error("Engine timed out"));
-      }, (thinkTimeSec + 2.5) * 1000);
-
-      // Soft stop: signal the engine to conclude search when requested time budget expires
-      const softStopTimer = setTimeout(() => {
-        if (!resolved && child.stdin.writable) {
-          child.stdin.write("stop\n");
-        }
-      }, thinkTimeSec * 1000);
-
-      const onData = (data: Buffer) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const raw of lines) {
-          const line = raw.trim();
-          engineLog(`STDOUT: ${line}\n`);
-
-          if (line.startsWith("info ")) {
-            const depthMatch = line.match(/(?:^|\s)depth=(\d+)/);
-            const scoreMatch = line.match(/(?:^|\s)score=(-?[\d.]+)/);
-            const pvMatch = line.match(/(?:^|\s)pv=(.+)$/);
-            const nodesMatch = line.match(/(?:^|\s)nodes=(\d+)/);
-
-            if (depthMatch) result.depth = parseInt(depthMatch[1], 10);
-            if (scoreMatch) result.score = Math.round(parseFloat(scoreMatch[1]) * 100);
-            if (pvMatch) result.pv = pvMatch[1].trim().replace(/^"|"$/g, "");
-            if (nodesMatch) result.nodes = parseInt(nodesMatch[1], 10);
-          } else if (line.startsWith("done ")) {
-            const moveMatch = line.match(/move=([^\s]+)/);
-            if (moveMatch) result.move = moveMatch[1];
-            finish(result);
-          }
-        }
-      };
-
-      child.stdout.on("data", onData);
-      engineLog(`\n--- REQUEST [${new Date().toISOString()}] FEN: "${fen}" THINKTIME: ${thinkTimeSec}s DEPTH: ${depth} PST: ${usePst} ---\n`);
-
-      child.stdin.write(`set-param name=eval value=${usePst ? "pst" : "pattern"}\n`);
-      child.stdin.write(`pos pos="${fen}"\n`);
-      child.stdin.write(`level move-time=${thinkTimeSec.toFixed(3)}\n`);
-      // Hub level settings persist: omitting this after an easy-level search
-      // otherwise leaves later strongest/time-controlled searches depth-limited.
-      child.stdin.write(`level depth=${depth ?? MAX_ENGINE_DEPTH}\n`);
-      child.stdin.write("go think\n");
-    });
-  }
-}
 
 const engine = new PersistentEngine();
 
@@ -753,19 +371,10 @@ async function startServer() {
   app.disable("x-powered-by");
   // The local Go edge may forward the real peer address. Direct remote peers
   // cannot choose their rate-limit bucket with an arbitrary forwarded header.
-  app.set("trust proxy", "loopback");
+  app.set("trust proxy", process.env.TRUST_PROXY === "loopback" ? "loopback" : false);
   let shuttingDown = false;
 
-  // --- Security Headers & Hardening Middleware ---
-  app.use((_req, res, next) => {
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-Frame-Options", "SAMEORIGIN");
-    res.setHeader("X-XSS-Protection", "1; mode=block");
-    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self)");
-    res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-    next();
-  });
+  app.use(securityHeaders);
 
   // --- In-Memory Sliding Window Rate Limiter ---
   // Lightweight process readiness: no database calls or engine queue work.
@@ -773,44 +382,6 @@ async function startServer() {
     res.setHeader("Cache-Control", "no-store");
     res.status(shuttingDown ? 503 : 200).json({ ok: !shuttingDown, component: "kentro-node" });
   });
-  interface RateLimitRule {
-    windowMs: number;
-    max: number;
-  }
-  const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-
-  function createRateLimiter(rule: RateLimitRule, prefix = "global") {
-    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      const ip = req.ip || req.socket.remoteAddress || "unknown";
-      const key = `${prefix}:${ip}`;
-      const now = Date.now();
-      const record = rateLimitStore.get(key);
-
-      if (!record || now > record.resetAt) {
-        rateLimitStore.set(key, { count: 1, resetAt: now + rule.windowMs });
-        return next();
-      }
-
-      record.count += 1;
-      if (record.count > rule.max) {
-        const retryAfter = Math.ceil((record.resetAt - now) / 1000);
-        res.setHeader("Retry-After", String(retryAfter));
-        return res.status(429).json({ error: "Too many requests. Please slow down and try again later." });
-      }
-      next();
-    };
-  }
-
-  // Periodic rate limit cache cleanup every 5 minutes
-  setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of rateLimitStore.entries()) {
-      if (now > v.resetAt) {
-        rateLimitStore.delete(k);
-      }
-    }
-  }, 5 * 60 * 1000);
-
   // Apply tiered rate limits across API route groups
   app.use("/api/engine", createRateLimiter({ windowMs: 60 * 1000, max: 120 }, "engine"));
   app.use("/api/coins", createRateLimiter({ windowMs: 60 * 1000, max: 60 }, "coins"));
@@ -821,9 +392,9 @@ async function startServer() {
   // connection this cuts first-load transfer of the app bundle dramatically.
   app.use(compression());
   const PORT = Number(process.env.PORT) || 3000;
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  installBodyParsing(app, async req => !!await requirePermission(requestAccessToken(req.headers), "manage_puzzles"));
   app.use('/api/auth', createRateLimiter({ windowMs: 60_000, max: 12 }, 'account-auth'), createAccountAuthRouter());
+  app.use('/api/tournaments', createRateLimiter({ windowMs: 60_000, max: 8 }, 'tournament-invite'), createTournamentInviteRouter());
 
   // Bootstrap only an explicitly configured Auth UID when no admin exists.
   // Username claims and profile edits must never bootstrap authority.
@@ -861,6 +432,10 @@ async function startServer() {
 
   // --- Real-time Nigerian Draughts Ken Engine Endpoint ---
   app.post("/api/engine/move", async (req, res) => {
+    const controller = new AbortController();
+    const disconnected = () => { if (!res.writableEnded) controller.abort(); };
+    req.once("aborted", disconnected);
+    res.once("close", disconnected);
     try {
       let options: ReturnType<typeof parseEngineMoveRequest>;
       try {
@@ -868,9 +443,11 @@ async function startServer() {
       } catch (err) {
         return res.status(400).json({ error: err instanceof Error ? err.message : "Invalid engine request" });
       }
-      const result = await engine.getMove(options.fen, options.thinkTimeSec, options.depth, true, options.usePst, options.supersedeKey);
+      const result = await engine.getMove(options.fen, options.thinkTimeSec, options.depth, true, options.usePst, options.supersedeKey, controller.signal);
+      if (res.destroyed) return;
       res.json(result);
     } catch (err: any) {
+      if (res.destroyed) return;
       if (err?.message === "Superseded") {
         return res.status(499).json({ error: "Superseded by newer request" });
       }
@@ -880,6 +457,9 @@ async function startServer() {
       }
       console.error("Ken Engine API Error:", err?.message || err);
       res.status(500).json({ error: "Failed to evaluate board position" });
+    } finally {
+      req.off("aborted", disconnected);
+      res.off("close", disconnected);
     }
   });
 
@@ -1012,114 +592,25 @@ async function startServer() {
 
   let isLiveMultiplayerActive = () => false;
 
-  // --- Server-Side Deep Game Analysis Worker ---
-  // Continuously polls Supabase for completed_games that lack moveEvaluations,
-  // or runs deep analysis on demand via API. Uses the native C++ engine
-  // at depth 30 / 1.0s per position on the server background, so game reviews
-  // are fast, deep, and complete automatically without keeping a player's tab open.
+  // Review the actual starting position and reject invalid records before search.
+  // An unavailable engine leaves the review pending rather than inventing scores.
   async function runServerSideGameAnalysis(game: any): Promise<Record<number, any> | null> {
     if (!game || !Array.isArray(game.moveHistory) || game.moveHistory.length === 0) return null;
-    const history: Move[] = game.moveHistory;
-
-    let tempBoard: Board = createInitialBoard();
-    const boardsList: Board[] = [tempBoard];
-    for (let i = 0; i < history.length; i++) {
-      tempBoard = applyMove(tempBoard, history[i]).board;
-      boardsList.push(tempBoard);
+    const metadata = game.moveEvaluations?.__kentroGameRecord || {};
+    const startingPosition = game.startingPosition ?? metadata.startingPosition;
+    const startingTurn = game.startingTurn ?? metadata.startingTurn ?? "W";
+    const { boards, turns, moves } = replayForAnalysis(game.moveHistory, startingPosition, startingTurn);
+    const posEvals: PositionEval[] = [];
+    for (let index = 0; index < boards.length; index++) {
+      const result = await engine.getMove(boardToScanFen(boards[index], turns[index]), 0.5, 30, false);
+      if (!Number.isFinite(result.score)) throw new Error("Engine returned an invalid evaluation");
+      const parsed = result.move ? hubMoveStringToNigerian(result.move) : null;
+      posEvals.push({ score: result.score, bestMove: parsed });
+      await new Promise((resolve) => setTimeout(resolve, 40));
     }
-
-    // Evaluate each position at deep strength (1.0 second per position, native C++ engine at depth 30)
-    const posEvals: { score: number; bestMove: Move | null }[] = [];
-    for (let i = 0; i <= history.length; i++) {
-      const turnAtPos: "W" | "B" = i % 2 === 0 ? "W" : "B";
-      const fen = boardToScanFen(boardsList[i], turnAtPos);
-      try {
-        const engRes = await engine.getMove(fen, 0.5, 30, false);
-        const parsedMove = engRes.move ? hubMoveStringToNigerian(engRes.move) : null;
-        posEvals.push({
-          score: typeof engRes.score === "number" ? engRes.score : 0,
-          bestMove: (parsedMove as Move) || null,
-        });
-      } catch (e) {
-        posEvals.push({ score: 0, bestMove: null });
-      }
-      // Brief yield so engine computation never blocks Node event loop or WebSocket traffic
-      await new Promise((r) => setTimeout(r, 40));
-    }
-
-    // Classify every move in the game
-    const evals: Record<number, any> = {};
-    for (let i = 0; i < history.length; i++) {
-      const mover: "W" | "B" = i % 2 === 0 ? "W" : "B";
-      const boardBefore = boardsList[i];
-      const playedMove = history[i];
-      const before = posEvals[i];
-      const after = posEvals[i + 1];
-
-      const moverEvalBefore = before.score;
-      const moverEvalAfter = -after.score;
-      const delta = moverEvalBefore - moverEvalAfter;
-
-      const legalMovesHere = generateLegalMoves(boardBefore, mover);
-      const isForced = legalMovesHere.length === 1;
-      const bestMoveNigerian = before.bestMove;
-      const isBestMove = !!bestMoveNigerian && movesMatch(playedMove, bestMoveNigerian);
-
-      const WIN_THRESHOLD = 400;
-      let quality = "Good";
-      let comment = "";
-      let missedTactic = false;
-
-      if (isForced) {
-        quality = "Forced";
-        comment = "This was your only legal move -- a capture was mandatory.";
-      } else if (moverEvalBefore >= WIN_THRESHOLD && moverEvalAfter < WIN_THRESHOLD) {
-        quality = "Missed Win";
-        comment = "This position was winning, but the move let a decisive advantage slip away.";
-        missedTactic = !isBestMove;
-      } else if (delta > 150) {
-        quality = "Blunder";
-        comment = "Lost a major advantage or gave away pieces.";
-        missedTactic = !isBestMove;
-      } else if (delta > 75) {
-        quality = "Mistake";
-        comment = "A poor move that worsens your position significantly.";
-        missedTactic = !isBestMove;
-      } else if (delta > 35) {
-        quality = "Inaccuracy";
-        comment = "Not the best move. Allows the opponent some counterplay.";
-        missedTactic = !isBestMove;
-      } else if (isBestMove) {
-        const biggestAltCaptureLen = legalMovesHere.reduce((max, m) => Math.max(max, m?.caps?.length ?? 0), 0);
-        const playedCapsLen = playedMove?.caps?.length ?? 0;
-        if (biggestAltCaptureLen > playedCapsLen && delta <= -60) {
-          quality = "Brilliant";
-          comment = "A non-obvious move -- a bigger immediate capture was available, but this was actually stronger.";
-        } else {
-          quality = "Best";
-          comment = "The engine's top choice in this position.";
-        }
-      } else if (delta < 0) {
-        quality = "Excellent";
-        comment = "Excellent move! Improved your position.";
-      } else {
-        quality = "Good";
-        comment = "Solid move, holding the tension.";
-      }
-
-      evals[i] = {
-        index: i,
-        score: after.score,
-        quality,
-        comment,
-        isBestMove,
-        missedTactic,
-        bestMoveHint: !isBestMove && bestMoveNigerian ? moveToNotationString(bestMoveNigerian) : undefined,
-        bestMoveSquares: !isBestMove && bestMoveNigerian ? { from: bestMoveNigerian.from, to: bestMoveNigerian.to } : undefined,
-      };
-    }
-
-    return evals;
+    return Object.fromEntries(moves.map((move, index) => [index, {
+      ...classifyMove(boards[index], turns[index], move, posEvals[index], posEvals[index + 1]), index,
+    }]));
   }
 
   // API endpoint to trigger server-side deep analysis for any game ID immediately
@@ -1316,7 +807,7 @@ async function startServer() {
       if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
       const { tournamentId, playerData } = req.body;
-      if (!tournamentId) return res.status(400).json({ error: "Invalid request" });
+      if (typeof tournamentId !== 'string' || !tournamentId || tournamentId.length > 160) return res.status(400).json({ error: "Invalid request" });
 
       // Identity comes from the VERIFIED token, never the request body.
       // (Previously body.username was trusted after only checking that the
@@ -1365,6 +856,7 @@ async function startServer() {
         if (result.errorReason === "full") return res.status(409).json({ error: "Tournament is full" });
         if (result.errorReason === "already_registered") return res.status(409).json({ error: "Already registered", players: result.players });
         if (result.errorReason === "not_open") return res.status(409).json({ error: "Registration is closed for this tournament" });
+        if (result.errorReason === "not_allowed") return res.status(403).json({ error: "Redeem a valid invitation before joining this private tournament." });
         return res.status(404).json({ error: "Tournament not found" });
       }
 
@@ -1855,7 +1347,7 @@ async function startServer() {
       const type = TYPES.includes(b.type) ? b.type : "Swiss System";
       const visibility = b.visibility === "private" ? "private" : "public";
       const inviteCode = visibility === "private"
-        ? String(b.inviteCode || Math.random().toString(36).substring(2, 7)).toUpperCase().slice(0, 8)
+        ? randomBytes(12).toString('hex').toUpperCase()
         : "";
       const maxPlayers = Math.min(64, Math.max(2, Number(b.maxPlayers) || 8));
       const minPlayers = Math.min(maxPlayers, Math.max(2, Number(b.minPlayers) || 2));
@@ -1867,15 +1359,11 @@ async function startServer() {
       const prize = String(b.prize || "Bragging rights + trophy 🏆").slice(0, 160);
       const spectatorPermission = b.spectatorPermission !== false;
 
-      // Spec: "Ken 5 always joins every tournament as one of the
-      // competitors" -- mirror TournamentDashboard's makeKen5Player().
-      const players: any[] = [{
-        username: "Ken 5", rating: 2380, wins: 0, losses: 0, draws: 0,
-        points: 0, streak: 0, country: "NG", team: "Kentro AI Lab",
-        isHuman: false, isKen5: true,
-      }];
+      // Competitors are registered by the authoritative entry RPC. There is
+      // no tournament AI scheduling worker, so do not invent an AI entrant.
+      const players: any[] = [];
 
-      const tourId = `tour_${Date.now()}`;
+      const tourId = `tour_${randomUUID()}`;
       const newTour = {
         id: tourId,
         name,
@@ -3109,61 +2597,7 @@ async function startServer() {
       }
     });
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    const assetsPath = path.join(distPath, 'assets') + path.sep;
-    const versioned = /-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|jpg|jpeg|webp|woff2?|ico)$/;
-    // Precompressed files cost no live CPU. This matters even without Go:
-    // a typical tiny MVP host should keep using the simpler Node-only mode.
-    app.use((req, res, next) => {
-      let requested: string;
-      try { requested = decodeURIComponent(req.path); } catch { return res.sendStatus(400); }
-      // dist also holds the backend bundle and source map. Never publish them
-      // or hidden paths as website assets.
-      if (requested.split('/').some((part) => part.startsWith('.')) || /\.(?:cjs|map)(?:\.(?:br|gz))?$/i.test(requested)) {
-        res.setHeader('Cache-Control', 'no-store');
-        return res.sendStatus(404);
-      }
-      res.vary('Accept-Encoding');
-      next();
-    });
-    app.get(/^\/assets\/[A-Za-z0-9_./-]+\.(?:js|css)$/, (req, res, next) => {
-      const original = path.resolve(distPath, '.' + req.path);
-      if (!original.startsWith(assetsPath) || !fs.existsSync(original)) return next();
-      let extension = '';
-      let encoding = '';
-      const offered = ['br', 'gzip'].filter((name) => fs.existsSync(original + (name === 'br' ? '.br' : '.gz')));
-      const preferred = req.acceptsEncodings(...offered, 'identity');
-      if (preferred === 'br') {
-        extension = '.br'; encoding = 'br';
-      } else if (preferred === 'gzip') {
-        extension = '.gz'; encoding = 'gzip';
-      }
-      if (!preferred) return res.sendStatus(406);
-      if (!extension) return next();
-      res.setHeader('Vary', 'Accept-Encoding');
-      res.setHeader('Content-Encoding', encoding);
-      res.setHeader('Cache-Control', versioned.test(path.basename(original))
-        ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
-      res.type(path.extname(original));
-      res.sendFile(original + extension, { dotfiles: 'deny' }, (error) => {
-        if (error) next(error);
-      });
-    });
-    app.use(express.static(distPath, {
-      etag: true,
-      setHeaders(res, filePath) {
-        res.setHeader('Cache-Control', filePath.startsWith(assetsPath) && versioned.test(path.basename(filePath))
-          ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
-      },
-    }));
-    app.get('*', (req, res) => {
-      if (req.path.startsWith('/assets/') || path.extname(req.path)) {
-        res.setHeader('Cache-Control', 'no-store');
-        return res.sendStatus(404);
-      }
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    mountProductionStatic(app, path.join(process.cwd(), 'dist'));
   }
 
   // Go edge can bind Node to loopback, keeping all game APIs private.
@@ -3198,7 +2632,16 @@ async function startServer() {
     const finish = () => {
       if (finished) return;
       finished = true;
-      void engine.stop().finally(() => process.exit(0));
+      void Promise.allSettled([engine.stop(), flushGameRecords()]).then(results => {
+        let failed = false;
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            failed = true;
+            console.error('[Server] Shutdown flush failed:', result.reason);
+          }
+        }
+        process.exit(failed ? 1 : 0);
+      });
     };
     const drained = () => { if (httpClosed && websocketClosed) finish(); };
     const deadline = setTimeout(() => {

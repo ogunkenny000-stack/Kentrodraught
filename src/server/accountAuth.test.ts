@@ -57,4 +57,17 @@ describe('server-mediated username authentication privacy', () => {
     const response = await failing.post('login', { username: 'alice', password: 'pw' });
     expect(response.status).toBe(503); expect(JSON.stringify(response.body)).not.toContain('private database');
   });
+  it('bounds attempts for the normalized account independently of supplied client IP headers', async () => {
+    const { deps, post } = await fixture({ signIn: vi.fn(async () => null) });
+    for (let i = 0; i < 12; i++) expect((await post('login', { username: i % 2 ? 'ALICE' : ' alice ', password: 'wrong' })).status).toBe(401);
+    expect((await post('login', { username: 'Alice', password: 'wrong' })).status).toBe(429);
+    expect(deps.resolveEmail).toHaveBeenCalledTimes(12);
+    expect((await post('login', { username: 'Bob', password: 'wrong' })).status).toBe(401);
+  });
+  it('limits reset delivery while keeping repeated responses generic', async () => {
+    const { deps, post } = await fixture();
+    const first = await post('password-reset', { username: 'Alice' });
+    for (let i = 0; i < 5; i++) expect(await post('password-reset', { username: ' alice ' })).toEqual(first);
+    expect(deps.resetPassword).toHaveBeenCalledTimes(3);
+  });
 });

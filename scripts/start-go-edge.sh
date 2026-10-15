@@ -13,7 +13,9 @@ for port in "$BACKEND_PORT" "$EDGE_PUBLIC_PORT"; do
   [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo 'Ports must be 1..65535' >&2; exit 1; }
 done
 [ "$BACKEND_PORT" != "$EDGE_PUBLIC_PORT" ] || { echo 'Backend/public ports must differ' >&2; exit 1; }
-NODE_ENV=production HOST=127.0.0.1 PORT="$BACKEND_PORT" node dist/server.cjs &
+# Only the loopback edge may supply client forwarding headers. The backend is
+# deliberately bound to loopback so it cannot be reached around that edge.
+NODE_ENV=production TRUST_PROXY=loopback HOST=127.0.0.1 PORT="$BACKEND_PORT" node dist/server.cjs &
 NODE_PID=$!
 EDGE_PID=''
 cleanup() {

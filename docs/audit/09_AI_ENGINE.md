@@ -15,11 +15,13 @@ README. No playing-strength, Elo or training improvement is claimed.
 | Evaluator changes | Clear the native transposition table when the persistent HUB process changes between PST and pattern; otherwise an earlier difficulty's scores can be reused by the new evaluator |
 | Hash/table | Piece/turn keys; clustered four-entry replacement with depth and age. `scan.ini` uses one thread and `tt-size=24`, meaning 2²⁴ entries × 16 bytes = 256 MiB for the table |
 | Endgames | Node history now handles 10/32/50-ply draw counts; a current FEN alone has no prior-game counters |
-| Process | One long-lived HUB process, initialized once, serialized through `engineMutex.ts`; completed-result caches and in-flight coalescing reduce duplicate work |
-| Pressure/cancellation | Bounded queues (128 high priority, 32 low priority); superseded waiting promises reject, active requests receive `stop`, and the lock transfers after release |
+| Process | One long-lived HUB process in `src/server/nativeEngine.ts`, initialized once, serialized through `engineMutex.ts`; completed-result caches and in-flight coalescing reduce duplicate work |
+| Pressure/cancellation | Bounded queues (128 high priority, 32 low priority); superseded/disconnected waiting promises reject, active requests receive `stop`, and the lock transfers after release. Browser tabs have separate cancellation namespaces; unrelated streams cannot cancel each other through shared in-flight results |
 | Time/depth | Public requests cap time at 5 seconds and depth at 99. Every search explicitly sets depth so easy-level state cannot constrain a later time-controlled search |
 | Invalid input | Exact dense FEN validation, integer depth validation and bounded cancellation keys prevent HUB command injection through these fields |
-| Invalid output | Browser matches parsed engine choices to its canonical legal list and reports unavailability for invalid output |
+| Invalid output | Both server and browser match parsed engine choices to their canonical legal list and require a finite score. HUB `go analyze` obtains a real evaluation even for forced choices that `go think` can return without an `info` record |
+| Lifecycle | Initialization has a 15-second limit; child exit, stdin errors, malformed output and search timeout reject the current request and retire the process. A later request can start a fresh child. Shutdown aborts queued work and waits for native exit, escalating termination after 500 ms |
+| Game reviews | Replay starts from recorded custom board/first mover, validates every move, and shares classification with browser reviews. Engine failure leaves the review pending; unavailable searches are never saved as invented zero scores |
 | Native build | Source/configuration/weights/build-script/platform/compiler fingerprints and a binary digest prevent reuse of a previously built executable after relevant edits; initialization and a real search must also succeed |
 
 The 128-entry inline move list remains allocation-free for ordinary positions;
@@ -54,8 +56,14 @@ npx vitest run src/rules.test.ts src/rules.regression.test.ts src/server/engineR
 node --experimental-strip-types scripts/engine-mutex-smoke.mjs
 # cancellation, queue bounds, priority and idempotent release: PASS
 
+npx vitest run src/server/nativeEngine.test.ts src/server/nativeEngine.integration.test.ts src/lib/kenEngine.test.ts src/lib/analysis.test.ts
+# 4 files, 45 tests passed; lifecycle fixtures plus actual opening/forced capture/king/endgame searches
+
+ENGINE_AUDIT_URL=http://127.0.0.1:8141 node scripts/audit/engine-http.mjs
+# Actual current-source local HTTP server: PASS (no hosted credentials)
+
 node --experimental-strip-types scripts/engine-benchmark.mjs 0.1
-# five native choices passed canonical legal-move validation
+# Historical checkpoint benchmark below; not rerun for the HTTP lifecycle changes
 ```
 
 The native probe checks every legal choice in 300 seeded mixed positions,
@@ -64,17 +72,25 @@ and list boundary operations. Sanitizers cover this generator/adjudicator
 probe, not the complete optimized search process. The fingerprint regression
 mutates source, header, makefile, weights, configuration, build-script and
 executable inputs in a temporary directory and verifies freshness changes.
-The current source/binary fingerprint check returned `fresh: true`.
+The current source/binary fingerprint check returned `fresh: true`. The HTTP
+check covered native score delivery, malformed-FEN rejection, terminal loss,
+cached-position supersession, client-disconnect queue recovery, and subsequent
+health ping. It uses unique streams and refuses external targets; run it only
+against an isolated local fixture server because it deliberately starts searches.
 
 ## Reproducible measurement
 
-The saved [engine-benchmark.json](engine-benchmark.json) records a Linux x64 run
+The previously saved [engine-benchmark.json](engine-benchmark.json) records a Linux x64 run
 with full pattern evaluation, depth limit 8 and a nominal 0.1-second budget.
 Each case clears the transposition table. Elapsed times include HUB traffic and
 that table clear, and forced moves may return without searching. The benchmark
 validates each returned choice against the complete canonical TypeScript list.
 Zero depth/nodes for the forced move are the script's defaults when the engine
 returns a choice without an `info` record.
+
+That benchmark talks directly to `go think`. The repaired HTTP bridge uses
+`go analyze` and verifies an actual finite evaluation, so these saved timings
+do not describe the current forced-move HTTP path.
 
 | Position | Legal choices | Elapsed ms | Reported depth | Reported nodes |
 | --- | ---: | ---: | ---: | ---: |

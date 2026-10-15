@@ -1,4 +1,4 @@
-# Online multiplayer audit — 2026-10-14
+# Online multiplayer audit — continued 2026-10-15
 
 The authoritative WebSocket room lifecycle was reviewed and exercised on the
 recovery branch. The first real socket smoke run reproduced a missing consent
@@ -69,3 +69,51 @@ Draw and resignation offers preserve the product's existing two-party semantics
 and pause clocks pending an answer. A peer can leave an offer unanswered;
 changing that policy requires a product decision about offer timeouts. No
 unsupported transport, alternate board, or rules engine was added.
+
+## Continuation from the owner's GitHub checkpoint
+
+The 15 October continuation starts at `35bed25`, preserving its private-room,
+canonical-authentication and authoritative-rating changes. Older recovered files
+were not copied over this checkpoint.
+
+`KENTRO_DATA_DIR` now selects the local record directory; an unset or blank value
+retains the historical `./data` location. Configure it before server startup and
+mount a writable persistent volume at that exact path. Sequence, archive and
+rematch-series JSON files use the same resolved directory, independent of a
+later working-directory change. `flushGameRecords()` awaits in-flight writes,
+drains mutations made during a write and reports disk errors while keeping dirty
+data eligible for retry. The synchronous process-exit fallback uses a separate
+temporary filename from asynchronous writes. Atomic renames prevent partial JSON
+replacement; this is not an fsync/power-loss guarantee or multi-process storage.
+
+Custom game records now retain both the starting side and final side to move,
+including a Black-first position. The server supplies these fields at start and
+completion and stores them in existing Supabase replay metadata without a new
+schema requirement. Opening/final boards and terminal move histories are copied
+so subsequent caller mutations cannot silently change a stored replay. Legacy
+rows without first-mover metadata default to White; their final side is inferred
+from move parity.
+
+Fresh checks for this continuation:
+
+- `npx vitest run src/server/gameRecordsManager.test.ts src/server/gameRecordsManager.restart.test.ts src/server/onlinePlay.regression.test.ts src/server/serverReliability.test.ts`: **64 tests passed** after the final record changes.
+- The real subprocess restart check sends SIGTERM while the two-second write
+  debounce is still pending, awaits flushing, then loads the files in a new
+  process with a different working directory. It checks private-record exclusion,
+  participant metadata, the terminal result, custom Black-first replay, rematch
+  scoring and a newer sequence number. Deleting the counter file also recovers
+  a safe sequence from saved records. No Supabase credentials are supplied.
+- `npx tsx scripts/audit/multiplayer-smoke.ts`: **all 26 real WebSocket stages
+  passed** against the actual online-play module and independent `ws` clients.
+  This wrapper creates and removes its own temporary data directory, disables
+  coins, refuses Supabase credentials and binds only to loopback. The underlying
+  smoke client now rejects non-loopback targets. It checks call signalling;
+  actual audio/video transport is outside this test.
+
+Completed JSON archives remain a bounded local cache (500 records and 200
+series), rather than unlimited archival storage. Hosted persistence and pending
+rating synchronization require configured Supabase and staging verification.
+The test proves orderly process-restart preservation of these saved files;
+active rooms remain in memory and do not resume after a server restart. Volume
+mounting, server-level graceful shutdown, container restart and hosted identity
+must also be checked through the complete deployment path.

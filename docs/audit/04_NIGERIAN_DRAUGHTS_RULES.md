@@ -40,6 +40,7 @@ position starts with no historical count and is not an immediate material draw.
 | Native lone-king positions ended immediately, ignoring elapsed moves and the opponent's king requirement | Move adjudication to historical `Node` counters with 10/32/50-ply thresholds and win priority |
 | Local custom-position adjudication reconstructed history from the ordinary start | Allow the real initial board and first mover in `checkGameEnd`; the app now supplies both |
 | Dense FEN import accepted malformed input | Require a side-to-move character and exactly 50 valid square characters before conversion |
+| Reviewing a custom game reconstructed the ordinary opening with White to move | Shared review replay now accepts the saved starting board and first mover, matches every recorded move to a canonical legal choice, and rejects illegal histories before native searches |
 
 These repairs preserve the existing free-choice and delayed-promotion rules.
 They do not impose the international maximum-capture rule.
@@ -52,6 +53,9 @@ NATIVE_RULES_SANITIZE=1 npx vitest run src/rules.audit.test.ts src/nativeRules.a
 
 npx vitest run src/rules.test.ts src/rules.regression.test.ts src/server/engineRequest.test.ts
 # 3 files, 62 tests passed
+
+npx vitest run src/server/nativeEngine.test.ts src/server/nativeEngine.integration.test.ts src/lib/kenEngine.test.ts src/lib/analysis.test.ts
+# 4 files, 45 tests passed; includes custom Black-first review and real native searches
 ```
 
 The native audit compiles the actual C++ generator/adjudicator into an isolated

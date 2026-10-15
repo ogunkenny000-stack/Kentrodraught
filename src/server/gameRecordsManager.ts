@@ -1,11 +1,16 @@
 import fs from "fs";
 import path from "path";
 import { KentroGameRecord, RematchSeriesData, SeriesGameSummary } from "../types/gameRecords";
+import type { Board } from "../gameLogic";
+import type { Color } from "../shared/protocol";
 import { uniqueCompletedMatches } from "../lib/completedMatches";
 import { getSupabaseAdmin } from "../../supabaseAdmin";
 import { applyAuthoritativeRating } from "./authoritativeRatings";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+// Keep the historical location unless deployment explicitly mounts a durable
+// directory. Resolve once, before initialization, so changing cwd later cannot
+// split sequence numbers and game records across directories.
+const DATA_DIR = path.resolve(process.env.KENTRO_DATA_DIR?.trim() || path.join(process.cwd(), "data"));
 const SEQ_FILE = path.join(DATA_DIR, "game_seq.json");
 const RECORDS_FILE = path.join(DATA_DIR, "permanent_game_records.json");
 const SERIES_FILE = path.join(DATA_DIR, "rematch_series.json");
@@ -74,6 +79,9 @@ function maxSeqAmong(codes: Iterable<string>, prefix: string): number {
 // process exit the same data is flushed synchronously.
 // ---------------------------------------------------------------------------
 const dirty = { seq: false, records: false, series: false };
+type PersistKind = keyof typeof dirty;
+const writeEpoch = { seq: 0, records: 0, series: 0 };
+const inFlightKinds = new Set<PersistKind>();
 let persistTimer: NodeJS.Timeout | null = null;
 let persistInFlight: Promise<void> | null = null;
 
@@ -86,30 +94,43 @@ function recordsPayload() {
 function seriesPayload() {
   return JSON.stringify(Array.from(seriesCache.values()).slice(-MAX_CACHED_SERIES), null, 2);
 }
+function turnAfter(startingTurn: Color | undefined, moveCount: number): Color {
+  const first = startingTurn === "B" ? "B" : "W";
+  return moveCount % 2 === 0 ? first : first === "W" ? "B" : "W";
+}
 
-async function writeAtomic(file: string, contents: string): Promise<void> {
-  const tmp = `${file}.${process.pid}.tmp`;
+async function writeAtomic(kind: PersistKind, file: string, contents: string, epoch: number): Promise<void> {
+  const tmp = `${file}.${process.pid}.async.tmp`;
   await fs.promises.writeFile(tmp, contents, "utf-8");
-  await fs.promises.rename(tmp, file);
+  if (writeEpoch[kind] !== epoch) {
+    await fs.promises.unlink(tmp).catch(() => {});
+    return;
+  }
+  // Commit without yielding between the epoch check and rename. Otherwise a
+  // newer synchronous exit snapshot could be replaced by a queued old rename.
+  fs.renameSync(tmp, file);
 }
 
 function writeAtomicSync(file: string, contents: string): void {
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.sync.tmp`;
   fs.writeFileSync(tmp, contents, "utf-8");
   fs.renameSync(tmp, file);
 }
 
-async function flushAsync(): Promise<void> {
+async function flushAsync(): Promise<boolean> {
   // Recheck after waiting: several callers may have awaited the same flush.
   while (persistInFlight) await persistInFlight;
+  let failed = false;
   const run = (async () => {
     const jobs: Promise<void>[] = [];
-    const enqueue = (kind: keyof typeof dirty, file: string, contents: string) => {
+    const enqueue = (kind: PersistKind, file: string, contents: string) => {
       dirty[kind] = false;
-      jobs.push(writeAtomic(file, contents).catch((error) => {
+      inFlightKinds.add(kind);
+      jobs.push(writeAtomic(kind, file, contents, writeEpoch[kind]).catch((error) => {
+        failed = true;
         dirty[kind] = true;
         console.error(`[GameRecords] Failed to persist ${kind}:`, error);
-      }));
+      }).finally(() => inFlightKinds.delete(kind)));
     };
     try {
       ensureDataDir();
@@ -117,6 +138,7 @@ async function flushAsync(): Promise<void> {
       if (dirty.records) enqueue("records", RECORDS_FILE, recordsPayload());
       if (dirty.series) enqueue("series", SERIES_FILE, seriesPayload());
     } catch (error) {
+      failed = true;
       console.error("[GameRecords] Failed to prepare persistence:", error);
     }
     // Each rejected job restores its own dirty flag. Still wait for all jobs
@@ -131,10 +153,28 @@ async function flushAsync(): Promise<void> {
     const retry = (Object.keys(dirty) as (keyof typeof dirty)[]).find((kind) => dirty[kind]);
     if (retry && !persistTimer) schedulePersist(retry);
   }
+  return !failed;
+}
+
+/** Drain queued writes before the server exits; report a disk failure to the caller. */
+export async function flushGameRecords(): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  do {
+    if (!await flushAsync()) throw new Error("Game record persistence failed; pending data remains dirty");
+    // Mutations during an in-flight write belong to a newer snapshot.
+  } while (dirty.seq || dirty.records || dirty.series);
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
 }
 
 function schedulePersist(kind: keyof typeof dirty): void {
   dirty[kind] = true;
+  writeEpoch[kind]++;
   if (persistTimer) return;
   persistTimer = setTimeout(() => {
     persistTimer = null;
@@ -150,12 +190,23 @@ export function flushGameRecordsSync(): void {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
+  for (const kind of inFlightKinds) dirty[kind] = true;
   try {
     if (!dirty.seq && !dirty.records && !dirty.series) return;
     ensureDataDir();
-    if (dirty.seq) { writeAtomicSync(SEQ_FILE, seqPayload()); dirty.seq = false; }
-    if (dirty.records) { writeAtomicSync(RECORDS_FILE, recordsPayload()); dirty.records = false; }
-    if (dirty.series) { writeAtomicSync(SERIES_FILE, seriesPayload()); dirty.series = false; }
+    const snapshots: [PersistKind, string, () => string][] = [
+      ["seq", SEQ_FILE, seqPayload], ["records", RECORDS_FILE, recordsPayload], ["series", SERIES_FILE, seriesPayload],
+    ];
+    for (const [kind, file, payload] of snapshots) {
+      if (!dirty[kind]) continue;
+      writeEpoch[kind]++;
+      try {
+        writeAtomicSync(file, payload());
+        dirty[kind] = false;
+      } catch (error) {
+        console.error(`[GameRecords] Failed to flush ${kind} on exit:`, error);
+      }
+    }
   } catch (e) {
     console.error("[GameRecords] Failed to flush on exit:", e);
   }
@@ -173,8 +224,10 @@ function installExitHooks(handleSignals: boolean): void {
   // conventional 128+signal code so `pkill`/Ctrl-C behave as before.
   for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
     process.once(sig, () => {
-      flushGameRecordsSync();
-      process.exit(code);
+      void flushGameRecords().then(() => process.exit(code), (error) => {
+        console.error(`[GameRecords] ${sig} flush failed:`, error);
+        process.exit(1);
+      });
     });
   }
 }
@@ -300,7 +353,8 @@ export function recordGameStart(params: {
   playerColors: Record<string, "W" | "B">;
   gameMode: string;
   timeControl: string;
-  startingPosition?: any;
+  startingPosition?: Board | null;
+  startingTurn?: Color;
   ratingsBefore?: Record<string, number>;
 }): KentroGameRecord {
   const existing = recordsCache.get(params.gameCode);
@@ -323,10 +377,12 @@ export function recordGameStart(params: {
     playerColors: params.playerColors,
     gameMode: params.gameMode,
     timeControl: params.timeControl,
-    startingPosition: params.startingPosition || null,
+    startingPosition: params.startingPosition ? structuredClone(params.startingPosition) : null,
+    startingTurn: params.startingTurn === "B" ? "B" : "W",
     completeMoveHistory: [],
     moveHistoryStrings: [],
-    currentPosition: params.startingPosition || null,
+    currentPosition: params.startingPosition ? structuredClone(params.startingPosition) : null,
+    currentTurn: params.startingTurn === "B" ? "B" : "W",
     gameStartTime: Date.now(),
     gameEndTime: 0,
     durationSeconds: 0,
@@ -369,7 +425,10 @@ export async function recordGameEnd(params: {
   participantUserIds?: string[];
   completeMoveHistory: any[];
   moveHistoryStrings?: string[];
-  currentPosition?: any;
+  currentPosition?: Board | null;
+  currentTurn?: Color;
+  startingPosition?: Board | null;
+  startingTurn?: Color;
   finalResult: "1–0" | "0–1" | "½–½";
   resultReason: string;
   winnerColor: "W" | "B" | null;
@@ -418,9 +477,12 @@ export async function recordGameEnd(params: {
         playerColors: { [white]: "W", [black]: "B" },
         gameMode: params.playMode || "Multiplayer",
         timeControl: params.timeControl || "Standard",
-        completeMoveHistory: params.completeMoveHistory || [],
+        startingPosition: params.startingPosition ? structuredClone(params.startingPosition) : null,
+        startingTurn: params.startingTurn === "B" ? "B" : "W",
+        completeMoveHistory: structuredClone(params.completeMoveHistory || []),
         moveHistoryStrings: params.moveHistoryStrings || [],
-        currentPosition: params.currentPosition || null,
+        currentPosition: params.currentPosition ? structuredClone(params.currentPosition) : null,
+        currentTurn: params.currentTurn ?? turnAfter(params.startingTurn, params.completeMoveHistory?.length || 0),
         gameStartTime: startTime,
         gameEndTime: endTime,
         durationSeconds,
@@ -436,9 +498,10 @@ export async function recordGameEnd(params: {
     } else {
       rec.gameEndTime = endTime;
       rec.durationSeconds = durationSeconds;
-      rec.completeMoveHistory = params.completeMoveHistory || [];
+      rec.completeMoveHistory = structuredClone(params.completeMoveHistory || []);
       rec.moveHistoryStrings = params.moveHistoryStrings || [];
-      rec.currentPosition = params.currentPosition || rec.currentPosition;
+      rec.currentPosition = params.currentPosition ? structuredClone(params.currentPosition) : rec.currentPosition;
+      rec.currentTurn = params.currentTurn ?? turnAfter(rec.startingTurn, rec.completeMoveHistory.length);
       rec.finalResult = params.finalResult;
       rec.resultReason = params.resultReason;
       rec.winner = params.winnerUsername;
@@ -531,7 +594,9 @@ export async function recordGameEnd(params: {
           durationSeconds: rec.durationSeconds,
           timeControl: rec.timeControl,
           startingPosition: rec.startingPosition ?? null,
+          startingTurn: rec.startingTurn ?? "W",
           currentPosition: rec.currentPosition ?? null,
+          currentTurn: rec.currentTurn ?? "W",
         }
       },
       playMode: rec.gameMode || "Multiplayer",
@@ -593,7 +658,10 @@ function rowToRecord(row: any): KentroGameRecord {
     gameMode: row.playMode || "Multiplayer",
     timeControl: extra.timeControl || "Standard",
     startingPosition: extra.startingPosition || null,
+    startingTurn: extra.startingTurn === "B" ? "B" : "W",
     currentPosition: extra.currentPosition || null,
+    currentTurn: extra.currentTurn === "B" || extra.currentTurn === "W" ? extra.currentTurn
+      : turnAfter(extra.startingTurn, Array.isArray(row.moveHistory) ? row.moveHistory.length : 0),
     completeMoveHistory: Array.isArray(row.moveHistory) ? row.moveHistory : [],
     moveHistoryStrings: Array.isArray(row.moveHistoryStrings) ? row.moveHistoryStrings : [],
     gameStartTime: row.timestamp ? Number(row.timestamp) - (extra.durationSeconds || 60) * 1000 : Date.now(),

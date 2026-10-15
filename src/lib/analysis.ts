@@ -1,6 +1,7 @@
-import { Board, Move, createInitialBoard, generateLegalMoves, applyMove, movesAreEquivalent, moveToNotationString } from "../gameLogic";
+import { Board, Move, generateLegalMoves, movesAreEquivalent, moveToNotationString } from "../gameLogic";
 import { analyzeKen } from "./kenEngine";
 import { MoveEvalResult } from "../types";
+import { replayForAnalysis } from "./analysisReplay";
 
 export interface PositionEval {
   score: number; // relative to the side to move in that position (engine convention)
@@ -108,27 +109,21 @@ export function classifyMove(
  * is new. */
 export async function analyzeMoveHistory(
   history: Move[],
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  startingPosition?: Board | null,
+  startingTurn: "W" | "B" = "W"
 ): Promise<Record<number, MoveEvalResult>> {
   const evals: Record<number, MoveEvalResult> = {};
-
-  let tempBoard = createInitialBoard();
-  const boardsList: Board[] = [tempBoard];
-  for (let i = 0; i < history.length; i++) {
-    tempBoard = applyMove(tempBoard, history[i]).board;
-    boardsList.push(tempBoard);
-  }
+  const { boards: boardsList, turns, moves } = replayForAnalysis(history, startingPosition, startingTurn);
 
   const posEvals: PositionEval[] = [];
   for (let i = 0; i <= history.length; i++) {
     onProgress?.(Math.round((i / (history.length + 1)) * 100));
-    const turnAtPos: "W" | "B" = i % 2 === 0 ? "W" : "B";
-    posEvals.push(await evaluatePosition(boardsList[i], turnAtPos, 0.5));
+    posEvals.push(await evaluatePosition(boardsList[i], turns[i], 0.5));
   }
 
   for (let i = 0; i < history.length; i++) {
-    const mover: "W" | "B" = i % 2 === 0 ? "W" : "B";
-    const result = classifyMove(boardsList[i], mover, history[i], posEvals[i], posEvals[i + 1]);
+    const result = classifyMove(boardsList[i], turns[i], moves[i], posEvals[i], posEvals[i + 1]);
     evals[i] = { ...result, index: i };
   }
 

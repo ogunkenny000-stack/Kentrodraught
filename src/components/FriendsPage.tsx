@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase, handleSupabaseError, OperationType } from "../supabase";
 import { X, Users, UserPlus, Swords, MessageSquare, Trash2 } from "lucide-react";
 import { AdminTappableName } from "../lib/adminProfileContext";
+import { friendRequestId, isIncomingFriendRequest, sameFriendPair } from "../lib/friendRequests";
 
 interface FriendsPageProps {
   username: string;
@@ -16,6 +17,7 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
   const [addUsername, setAddUsername] = useState("");
   const [adding, setAdding] = useState(false);
   const [friendError, setFriendError] = useState("");
+  const addingRef = useRef(false);
 
   // Identical merge-by-id pattern to GlobalChatLounge.tsx's friends
   // subscription -- both read/write the exact same table and row shape, so
@@ -69,9 +71,16 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
   const friends = contactsList.filter((c) => c.status === "accepted");
   const requests = contactsList.filter(c => c.status === "pending");
   const acceptFriend = async (id: string) => {
-    const { data, error } = await supabase.from("friends").update({ status: "accepted" }).eq("id", id).select("id");
-    if (error || !data?.length) setFriendError("Could not accept this request. Please refresh and try again.");
-    else setContactsList(rows => rows.map(row => row.id === id ? { ...row, status: "accepted" } : row));
+    const request = contactsList.find(row => row.id === id);
+    if (!request || !isIncomingFriendRequest(request, username)) return;
+    setFriendError("");
+    try {
+      const { data, error } = await supabase.from("friends").update({ status: "accepted" }).eq("id", id).eq("status", "pending").select("id");
+      if (error || !data?.length) throw error || new Error('Request unavailable');
+      setContactsList(rows => rows.map(row => row.id === id ? { ...row, status: "accepted" } : row));
+    } catch {
+      setFriendError("Could not accept this request. Please refresh and try again.");
+    }
   };
 
   // "Person you play frequently with" -- derived straight from real match
@@ -94,26 +103,43 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
 
   const addFriend = async (target: string, targetElo: number = 1500) => {
     const clean = target.trim();
-    if (!clean || clean.toLowerCase() === username.toLowerCase()) return;
+    if (addingRef.current || !clean || clean.toLowerCase() === username.toLowerCase()) return;
+    addingRef.current = true;
     setAdding(true);
     setFriendError("");
     try {
-      const friendId = [username.toLowerCase(), clean.toLowerCase()].sort().join("_");
-      const { error } = await supabase.from("friends").upsert({
-        id: friendId,
+      const { data: profile, error: profileError } = await supabase.from("profiles")
+        .select("username").eq("usernameLower", clean.toLowerCase()).maybeSingle();
+      if (profileError || !profile?.username) throw profileError || new Error('Unknown username');
+      const canonicalTarget = profile.username;
+      // Check legacy IDs too. Adding a friend must never overwrite an existing
+      // accepted friendship or change who sent a pending request.
+      const { data: existing, error: existingError } = await supabase.from("friends").select("id,user1,user2,status,sender");
+      if (existingError) throw existingError;
+      const prior = (existing || []).find(row => sameFriendPair(row, username, canonicalTarget));
+      if (prior) {
+        setFriendError(prior.status === 'accepted' ? 'You are already friends.'
+          : isIncomingFriendRequest(prior, username) ? 'This player has already sent you a request. Accept it below.' : 'Your friend request is already pending.');
+        return;
+      }
+      const row = {
+        id: friendRequestId(username, canonicalTarget),
         user1: username,
-        user2: clean,
+        user2: canonicalTarget,
         user1Elo: userElo || 1500,
         user2Elo: targetElo,
         status: "pending",
         sender: username,
-      });
+      };
+      const { error } = await supabase.from("friends").insert(row);
       if (error) throw error;
+      setContactsList(rows => rows.some(item => item.id === row.id) ? rows : [...rows, row]);
       setAddUsername("");
     } catch (err) {
       console.error("Failed to add friend:", err);
       setFriendError("Could not add that friend. Check the username and try again.");
     } finally {
+      addingRef.current = false;
       setAdding(false);
     }
   };
@@ -168,7 +194,7 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
         {requests.length > 0 && <div className="mb-5 space-y-2">
           <h3 className="text-xs text-slate-400">Friend requests</h3>
           {requests.map(request => {
-            const incoming = request.sender?.toLowerCase() !== username.toLowerCase();
+            const incoming = isIncomingFriendRequest(request, username);
             const other = request.user1.toLowerCase() === username.toLowerCase() ? request.user2 : request.user1;
             return <div key={request.id} className="flex items-center justify-between gap-2 text-xs text-white">
               <span>{other} {incoming ? "sent you a request" : "· request pending"}</span>

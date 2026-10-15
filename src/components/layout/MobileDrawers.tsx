@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
 import { MenuSidebar } from "../MenuSidebar";
 import { PlayMode, BoardTheme } from "../../types";
+import { isTopmostDialog } from "../../lib/dialogFocus";
 
 function useDrawerFocus(open: boolean, ref: { current: HTMLDivElement | null }) {
   useEffect(() => {
@@ -12,8 +13,7 @@ function useDrawerFocus(open: boolean, ref: { current: HTMLDivElement | null }) 
     const onTab = (event: KeyboardEvent) => {
       const panel = ref.current;
       if (!panel || event.key !== "Tab") return;
-      const dialogs = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]'));
-      if (dialogs[dialogs.length - 1] !== panel) return;
+      if (!isTopmostDialog(panel)) return;
       const controls = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),[tabindex]:not([tabindex="-1"])'))
         .filter(element => element.getClientRects().length > 0 && element.tabIndex >= 0);
       if (!controls.length) { event.preventDefault(); panel.focus(); return; }
@@ -77,7 +77,9 @@ export function MobileDrawers(props: MobileDrawersProps) {
   useEffect(() => {
     if (!isLeftDrawerOpen && !isRightDrawerOpen) return;
     const onEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setIsLeftDrawerOpen(false); setIsRightDrawerOpen(false); }
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (leftRef.current && isTopmostDialog(leftRef.current)) setIsLeftDrawerOpen(false);
+      else if (rightRef.current && isTopmostDialog(rightRef.current)) setIsRightDrawerOpen(false);
     };
     window.addEventListener("keydown", onEscape);
     return () => window.removeEventListener("keydown", onEscape);

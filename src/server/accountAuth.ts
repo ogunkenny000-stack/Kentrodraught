@@ -1,6 +1,7 @@
 import express from 'express';
 import { createClient, type Session } from '@supabase/supabase-js';
 import { getSupabaseAdmin } from '../../supabaseAdmin';
+import { createAttemptLimiter } from './securityMiddleware';
 
 export interface AccountAuthDependencies {
   configured(): boolean;
@@ -50,6 +51,10 @@ const defaults: AccountAuthDependencies = {
  * username to another person's account email. */
 export function createAccountAuthRouter(deps: AccountAuthDependencies = defaults) {
   const router = express.Router();
+  // Supplement the outer IP limiter: distributed requests cannot try an
+  // unlimited number of passwords or send repeated reset emails to one user.
+  const accountAttempt = createAttemptLimiter({ windowMs: 15 * 60_000, max: 12 });
+  const resetAttempt = createAttemptLimiter({ windowMs: 15 * 60_000, max: 3 });
   router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   router.post('/login', async (req, res) => {
     if (!deps.configured()) return res.status(503).json({ error: 'Sign-in is not configured.' });
@@ -58,6 +63,8 @@ export function createAccountAuthRouter(deps: AccountAuthDependencies = defaults
     if (!username || username.length > 64 || !password || password.length > 1024) {
       return res.status(400).json({ error: 'Enter a valid username and password.' });
     }
+    const retryAfter = accountAttempt(username);
+    if (retryAfter) { res.setHeader('Retry-After', String(retryAfter)); return res.status(429).json({ error: 'Too many sign-in attempts. Please try again later.' }); }
     try {
       const email = await deps.resolveEmail(username);
       const session = email ? await deps.signIn(email, password) : null;
@@ -71,6 +78,9 @@ export function createAccountAuthRouter(deps: AccountAuthDependencies = defaults
     if (!deps.configured()) return res.status(503).json({ error: 'Password recovery is not configured.' });
     const username = typeof req.body?.username === 'string' ? req.body.username.trim().toLowerCase() : '';
     if (!username || username.length > 64) return res.status(400).json({ error: 'Enter a valid username.' });
+    // Throttled, unknown and provider-failure reset requests receive the
+    // same response, preserving the existing non-enumerating contract.
+    if (resetAttempt(username)) return res.json({ ok: true, message: 'If this account exists, password recovery instructions have been sent.' });
     try {
       const email = await deps.resolveEmail(username);
       if (email) await deps.resetPassword(email);

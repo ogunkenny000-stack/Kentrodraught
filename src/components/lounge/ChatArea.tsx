@@ -758,12 +758,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     <span>{formatMessageTime(msg.timestamp)}</span>
                     {isMe && !isDeleted && (
                       <span>
-                        {msg.status === "seen" ? (
-                          <CheckCheck className="w-3 h-3 text-amber-400 stroke-[2.5]" title="Read/Seen" />
+                        {msg.status === "failed" ? (<span role="alert" className="text-rose-300 font-sans">Not sent. Try again.</span>) : msg.status === "sending" ? (<span className="font-sans">Sending…</span>) : msg.status === "seen" ? (
+                          <CheckCheck className="w-3 h-3 text-amber-400 stroke-[2.5]" role="img" aria-label="Read/Seen" />
                         ) : msg.status === "delivered" ? (
-                          <CheckCheck className="w-3 h-3 text-slate-400" title="Delivered" />
+                          <CheckCheck className="w-3 h-3 text-slate-400" role="img" aria-label="Delivered" />
                         ) : (
-                          <Check className="w-3 h-3 text-slate-500" title="Sent" />
+                          <Check className="w-3 h-3 text-slate-500" role="img" aria-label="Sent" />
                         )}
                       </span>
                     )}
@@ -849,9 +849,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
                   {/* Delete Button */}
                   <button
-                    onClick={() => onDeleteMessage(msg.id, isMe)}
+                    onClick={() => onDeleteMessage(msg.id, false)}
                     className="p-1 text-slate-400 hover:text-rose-400 rounded-full hover:bg-slate-800 transition cursor-pointer"
-                    title={isMe ? "Delete for everyone" : "Delete for me"}
+                    title="Hide in this view until reload"
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>

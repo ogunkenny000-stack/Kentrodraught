@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useReducer, useMemo, useCallback, lazy, Suspense } from "react";
-import { supabase, handleSupabaseError, OperationType, authReady, onAuthStateChange, signOutUser, resendVerificationEmail, isSupabaseConfigured } from "./supabase";
+import { supabase, handleSupabaseError, OperationType, authReady, signOutUser, resendVerificationEmail, isSupabaseConfigured, isPasswordRecovery, subscribePasswordRecovery } from "./supabase";
 import type { User as SupabaseAuthUser } from "@supabase/supabase-js";
 import { AuthScreen } from "./AuthScreen";
+import { PasswordRecoveryScreen } from "./PasswordRecoveryScreen";
 import { apiGet, apiPost } from "./apiClient";
 import InstallAppPrompt from "./InstallAppPrompt";
 
@@ -29,7 +30,7 @@ import { gameSocket, GameSocketEvent } from "./lib/gameSocket";
 import {
   ClockSnapshot, createLocalClock, advanceLocalClock, freezeClock, flagLocalClock, useClockDeadline,
 } from "./lib/useServerClock";
-import { roomReducer, initialRoomState, isSameUser, findMe } from "./lib/roomState";
+import { roomReducer, initialRoomState, isSameUser, findMe, type RoomState } from "./lib/roomState";
 import type { Color, RoomPhase, ServerErrorCode } from "./shared/protocol";
 import { EvaluationBar } from "./components/EvaluationBar";
 import { BestMoveArrow } from "./components/BestMoveArrow";
@@ -645,56 +646,47 @@ export default function App() {
     }
   };
 
+  const [passwordRecovery, setPasswordRecovery] = useState(isPasswordRecovery);
+  useEffect(() => subscribePasswordRecovery(setPasswordRecovery), []);
+
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-
-    (async () => {
-      try {
-        await authReady;
-        const { data: { session } } = await supabase.auth.getSession();
-        const user = session?.user ?? null;
-        // Best-effort identity proof for the game server (contract §1).
-        gameSocket.setAccessToken(session?.access_token ?? null);
-        setAuthUser(user);
-        if (user) {
-          setGuestActive(false);
-          setGuestEnabled(false);
-          const uname = (user.user_metadata?.username as string | undefined) || null;
-          setUsername(uname);
-          if (uname) safeStorage.setItem("lidraughts_username", uname);
-        } else {
-          const guest = isGuestActive();
-          setGuestEnabled(guest);
-          setUsername(guest ? getGuestName() : null);
-          safeStorage.removeItem("lidraughts_username");
-        }
-      } catch (err) {
-        console.error("Auth bootstrap failed:", err);
-        setAuthUser(null);
-        setUsername(null);
-      } finally {
-        setAuthChecked(true);
+    let active = true;
+    let authRevision = 0;
+    const applySession = (user: SupabaseAuthUser | null, token: string | null) => {
+      if (!active) return;
+      gameSocket.setAccessToken(token);
+      setAuthUser(user);
+      if (user) {
+        setGuestActive(false);
+        setGuestEnabled(false);
+        const uname = (user.user_metadata?.username as string | undefined) || null;
+        setUsername(uname);
+        if (uname) safeStorage.setItem("lidraughts_username", uname);
+      } else {
+        const guest = isGuestActive();
+        setGuestEnabled(guest);
+        setUsername(guest ? getGuestName() : null);
+        safeStorage.removeItem("lidraughts_username");
       }
-
-      unsubscribe = onAuthStateChange((changedUser) => {
-        // Token can refresh without a username change. Keep WebSocket login
-        // proof fresh for the next network reconnect.
-        supabase.auth.getSession().then(({ data }) => gameSocket.setAccessToken(data.session?.access_token ?? null)).catch(() => {});
-        setAuthUser(changedUser);
-        if (changedUser) {
-          setGuestActive(false);
-          setGuestEnabled(false);
-          const uname = (changedUser.user_metadata?.username as string | undefined) || null;
-          setUsername(uname);
-          if (uname) safeStorage.setItem("lidraughts_username", uname);
-        } else {
-          setUsername(isGuestActive() ? getGuestName() : null);
-          safeStorage.removeItem("lidraughts_username");
-        }
-      });
-    })();
-
-    return () => unsubscribe?.();
+      setAuthChecked(true);
+    };
+    // Subscribe synchronously and use the supplied session. Awaiting another
+    // auth call inside this callback can deadlock Supabase's storage lock.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      authRevision++;
+      applySession(session?.user ?? null, session?.access_token ?? null);
+    });
+    const bootstrapRevision = authRevision;
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active || bootstrapRevision !== authRevision) return;
+      if (error) throw error;
+      applySession(data.session?.user ?? null, data.session?.access_token ?? null);
+    }).catch(error => {
+      if (!active || bootstrapRevision !== authRevision) return;
+      console.error("Auth bootstrap failed:", error);
+      applySession(null, null);
+    });
+    return () => { active = false; subscription.unsubscribe(); };
   }, []);
 
   const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
@@ -724,7 +716,7 @@ export default function App() {
   // Socket handlers dispatch actions; decisions that depend on current room
   // state are made inside the reducer, so no handler can act on a stale
   // closure. RESET_ROOM is the single exit path for leaving/cancel/spectate.
-  const [room, dispatchRoom] = useReducer(roomReducer, initialRoomState, (init) => {
+  const [room, dispatchRoom] = useReducer(roomReducer, initialRoomState, (init): RoomState => {
     try {
       const active = loadActiveRoom();
       if (active && active.roomId) {
@@ -1248,16 +1240,7 @@ export default function App() {
 
         let whiteName = "White";
         let blackName = "Black";
-        if (playMode === "Multiplayer") {
-          const whiteUser = roomPlayers.find(p => p.color === "W");
-          const blackUser = roomPlayers.find(p => p.color === "B");
-          if (whiteUser) whiteName = whiteUser.username;
-          if (blackUser) blackName = blackUser.username;
-        } else if (playMode === "Tournament") {
-          const isWhite = tournamentRound === 1 || tournamentRound === 3;
-          whiteName = isWhite ? (username || "You") : `Ken Level ${getTournamentKenLevelId(tournamentRound)}`;
-          blackName = isWhite ? `Ken Level ${getTournamentKenLevelId(tournamentRound)}` : (username || "You");
-        } else if (playMode === "Human_vs_AI") {
+        if (playMode === "Human_vs_AI") {
           whiteName = username || "You";
           blackName = `Ken Level ${kenLevelId}`;
         } else if (playMode === "AI_vs_Human") {
@@ -1274,7 +1257,8 @@ export default function App() {
           blackName = "Black Player";
         }
 
-        const winnerName = outcome === "win" ? (yourColor === "W" || playMode === "Human_vs_AI" || (playMode === "Tournament" && (tournamentRound === 1 || tournamentRound === 3)) || ((playMode === "Training" || playMode === "Analysis") && analysisPlayerColor === "W") ? "White" : "Black") : (outcome === "loss" ? (yourColor === "W" || playMode === "Human_vs_AI" || (playMode === "Tournament" && (tournamentRound === 1 || tournamentRound === 3)) || ((playMode === "Training" || playMode === "Analysis") && analysisPlayerColor === "W") ? "Black" : "White") : "Draw");
+        const playsWhite = playMode === "AI_vs_Human" ? false : (playMode === "Training" || playMode === "Analysis") ? analysisPlayerColor === "W" : true;
+        const winnerName = outcome === "draw" ? "Draw" : (outcome === "win") === playsWhite ? "White" : "Black";
 
         const completedGameData = {
           gameId,
@@ -3540,7 +3524,7 @@ export default function App() {
     if (loadedMoves.length > 0 && Object.keys(loadedEvals).length < loadedMoves.length && !isReviewing) {
       setIsReviewing(true);
       setReviewProgress(0);
-      analyzeMoveHistory(loadedMoves, setReviewProgress)
+      analyzeMoveHistory(loadedMoves, setReviewProgress, initialPositionRef.current.board, initialPositionRef.current.turn)
         .then((evals) => setMoveEvaluations(evals))
         .catch((err) => console.error("AI Game Review failed:", err))
         .finally(() => { setIsReviewing(false); setReviewProgress(100); });
@@ -3922,7 +3906,7 @@ export default function App() {
     setReviewProgress(0);
 
     try {
-      const evals = await analyzeMoveHistory(moveHistory, setReviewProgress);
+      const evals = await analyzeMoveHistory(moveHistory, setReviewProgress, initialPositionRef.current.board, initialPositionRef.current.turn);
       setMoveEvaluations(evals);
     } catch (err) {
       console.error("AI Game Review failed:", err);
@@ -4454,8 +4438,10 @@ export default function App() {
 
   // Still checking whether a Supabase session exists -- avoid flashing the
   // sign-in screen on reload, but if username is already known, do not block the UI.
-  if (playMode === "OfflineNearby" && !authUser) {
-    return <OfflineNearby username="Guest" onBack={() => { window.history.replaceState({}, "", window.location.pathname); setPlayMode("Home"); }} />;
+  if (passwordRecovery) return <PasswordRecoveryScreen />;
+
+  if (playMode === "OfflineNearby") {
+    return <OfflineNearby username={username || "Guest"} onBack={() => { window.history.replaceState({}, "", window.location.pathname); setPlayMode("Home"); }} />;
   }
 
   if (!authChecked && !username) {
@@ -4807,8 +4793,6 @@ export default function App() {
               onBack={() => { setInitialReplay(null); window.history.replaceState(window.history.state, "", window.location.pathname); handleModeChange("Home"); }}
               initialReplay={initialReplay}
             />
-          ) : playMode === "OfflineNearby" ? (
-            <OfflineNearby username={username || "Player"} onBack={() => { window.history.replaceState({}, "", window.location.pathname); handleModeChange("Home"); }} />
           ) : playMode === "Learn" ? (
             <ComingSoonPane
               icon={GraduationCap}

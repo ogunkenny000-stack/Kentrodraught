@@ -24,5 +24,6 @@ alter table puzzles enable row level security;
 
 -- Everyone signed in can read puzzles; writes go through the server's
 -- service-role key only (admin endpoints), same as coin settings.
+drop policy if exists "puzzles_select_authenticated" on puzzles;
 create policy "puzzles_select_authenticated" on puzzles
   for select to authenticated using (true);

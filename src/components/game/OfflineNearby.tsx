@@ -98,6 +98,7 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
   const setRematchIncoming = (value: boolean) => updateRequests({ rematchIncoming: value });
   const setRematchOutgoing = (value: boolean) => updateRequests({ rematchOutgoing: value });
   const peerRef = useRef<RTCPeerConnection | null>(null);
+  const pairingGeneration = useRef(0);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const mySide: Side = role === 'guest' ? 'B' : 'W';
   const otherSide: Side = mySide === 'W' ? 'B' : 'W';
@@ -120,10 +121,12 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
   };
 
   const closePeer = () => {
+    pairingGeneration.current++;
     if (channelRef.current) {
       channelRef.current.onopen = null;
       channelRef.current.onclose = null;
       channelRef.current.onmessage = null;
+      channelRef.current.onerror = null;
       channelRef.current.close();
     }
     if (peerRef.current) {
@@ -223,6 +226,7 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
   const installChannel = (channel: RTCDataChannel) => {
     channelRef.current = channel;
     channel.onopen = () => {
+      if (channelRef.current !== channel) return;
       setConnected(true);
       setWasConnected(true);
       setError('');
@@ -230,11 +234,12 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
       channel.send(JSON.stringify({ type: 'hello', name: localName.trim().slice(0, 24) || 'Player' }));
     };
     channel.onclose = () => {
+      if (channelRef.current !== channel) return;
       setConnected(false);
       setNotice('Nearby connection closed. To play again, reconnect both devices.');
     };
     channel.onmessage = event => {
-      if (typeof event.data === 'string') receiveRef.current(event.data);
+      if (channelRef.current === channel && typeof event.data === 'string') receiveRef.current(event.data);
     };
     channel.onerror = () => setError('Nearby connection failed. Keep both devices on the same hotspot or Wi-Fi.');
   };
@@ -250,6 +255,7 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
     const peer = new RTCPeerConnection({ iceServers: [], iceTransportPolicy: 'all' });
     peerRef.current = peer;
     peer.onconnectionstatechange = () => {
+      if (peerRef.current !== peer) return;
       if (peer.connectionState === 'connected' && channelRef.current?.readyState === 'open') {
         setConnected(true);
         setError('');
@@ -259,49 +265,63 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
       }
     };
     if (nextRole === 'host') installChannel(peer.createDataChannel('kentro-nearby', { ordered: true }));
-    else peer.ondatachannel = event => installChannel(event.channel);
+    else peer.ondatachannel = event => { if (peerRef.current === peer) installChannel(event.channel); };
     return peer;
   };
 
   const host = async () => {
     setBusy(true); setError(''); setOfferCode(''); setAnswerCode(''); setIncomingCode('');
+    let generation = pairingGeneration.current;
     try {
       const peer = buildPeer('host');
-      await peer.setLocalDescription(await peer.createOffer());
+      generation = pairingGeneration.current;
+      const offer = await peer.createOffer();
+      if (generation !== pairingGeneration.current) return;
+      await peer.setLocalDescription(offer);
+      if (generation !== pairingGeneration.current) return;
       await waitForGathering(peer);
+      if (generation !== pairingGeneration.current) return;
       if (!peer.localDescription) throw new Error('No nearby offer available.');
       ensureNearbyCandidates(peer.localDescription.sdp);
       setOfferCode(makePairingCode(peer.localDescription));
       setNotice('Share the invitation with your opponent using Nearby Share, Quick Share or AirDrop.');
-    } catch (e) { setError(e instanceof Error ? e.message : 'Unable to create a nearby match.'); closePeer(); }
-    finally { setBusy(false); }
+    } catch (e) { if (generation === pairingGeneration.current) { setError(e instanceof Error ? e.message : 'Unable to create a nearby match.'); setBusy(false); closePeer(); } }
+    finally { if (generation === pairingGeneration.current) setBusy(false); }
   };
 
   const join = async () => {
     setBusy(true); setError('');
+    let generation = pairingGeneration.current;
     try {
       const offer = parsePairingCode(incomingCode, 'offer');
       const peer = buildPeer('guest');
+      generation = pairingGeneration.current;
       await peer.setRemoteDescription(offer);
-      await peer.setLocalDescription(await peer.createAnswer());
+      if (generation !== pairingGeneration.current) return;
+      const answer = await peer.createAnswer();
+      if (generation !== pairingGeneration.current) return;
+      await peer.setLocalDescription(answer);
+      if (generation !== pairingGeneration.current) return;
       await waitForGathering(peer);
+      if (generation !== pairingGeneration.current) return;
       if (!peer.localDescription) throw new Error('No reply generated.');
       ensureNearbyCandidates(peer.localDescription.sdp);
       setAnswerCode(makePairingCode(peer.localDescription));
       setNotice('Send this reply back to the host. The host finishes the connection.');
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not join.'); closePeer(); }
-    finally { setBusy(false); }
+    } catch (e) { if (generation === pairingGeneration.current) { setError(e instanceof Error ? e.message : 'Could not join.'); setBusy(false); closePeer(); } }
+    finally { if (generation === pairingGeneration.current) setBusy(false); }
   };
 
   const finishHost = async () => {
     setBusy(true); setError('');
+    const generation = pairingGeneration.current;
     try {
       const peer = peerRef.current;
       if (!peer || roleRef.current !== 'host') throw new Error('Create a host invitation first.');
       await peer.setRemoteDescription(parsePairingCode(incomingCode, 'answer'));
-      setNotice('Connecting to your opponent over Wi-Fi...');
-    } catch (e) { setError(e instanceof Error ? e.message : 'Invalid reply.'); }
-    finally { setBusy(false); }
+      if (generation === pairingGeneration.current) setNotice('Connecting to your opponent over Wi-Fi...');
+    } catch (e) { if (generation === pairingGeneration.current) setError(e instanceof Error ? e.message : 'Invalid reply.'); }
+    finally { if (generation === pairingGeneration.current) setBusy(false); }
   };
 
   const pasteFromClipboard = async () => {
@@ -364,9 +384,13 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
   };
 
   // Only tear down the peer when leaving this mode, not on every render.
-  useEffect(() => () => {
-    channelRef.current?.close();
-    peerRef.current?.close();
+  useEffect(() => () => { closePeer(); }, []);
+  useEffect(() => {
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      if (channelRef.current?.readyState === 'open' && !matchRef.current.result) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
   }, []);
 
   const leaveNearby = () => {

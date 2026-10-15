@@ -702,6 +702,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         gameMode: "Multiplayer",
         timeControl: timed ? `${room.gameTime} min${room.incrementSec ? ` + ${room.incrementSec}s` : ""}` : "Untimed",
         startingPosition: room.startBoard,
+        startingTurn: room.startTurn,
       });
     } catch (err) {
       console.error("[GameRecord] Failed to record game start:", err);
@@ -970,6 +971,9 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         }),
         completeMoveHistory: moves,
         currentPosition: room.gameState?.board,
+        currentTurn: room.gameState?.turn,
+        startingPosition: room.startBoard,
+        startingTurn: room.startTurn,
         finalResult,
         resultReason: opts?.reason || (result.isDraw ? "Draw" : "Win"),
         winnerColor: result.winnerColor,

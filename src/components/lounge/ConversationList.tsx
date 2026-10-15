@@ -193,11 +193,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                       {isMeLastSender && (
                         <span className="shrink-0">
                           {lastMsg?.status === "seen" ? (
-                            <CheckCheck className="w-3.5 h-3.5 text-amber-400 stroke-[2.5]" title="Read/Seen" />
+                            <CheckCheck className="w-3.5 h-3.5 text-amber-400 stroke-[2.5]" role="img" aria-label="Read/Seen" />
                           ) : lastMsg?.status === "delivered" ? (
-                            <CheckCheck className="w-3.5 h-3.5 text-slate-400" title="Delivered" />
+                            <CheckCheck className="w-3.5 h-3.5 text-slate-400" role="img" aria-label="Delivered" />
                           ) : (
-                            <Check className="w-3.5 h-3.5 text-slate-500" title="Sent" />
+                            <Check className="w-3.5 h-3.5 text-slate-500" role="img" aria-label="Sent" />
                           )}
                         </span>
                       )}

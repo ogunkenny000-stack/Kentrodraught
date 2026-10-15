@@ -74,9 +74,9 @@ try {
   assert(await desktop.evaluate(() => Array.from(document.querySelectorAll<HTMLInputElement>("form input")).every(input => input.labels?.length)), "registration fields retain labels and reserved guest usernames are rejected");
   await snapshot(desktop, "frontend-10-registration-desktop");
   await clickVisible(desktop, "Sign In", true);
-  await desktop.click("#auth-username", { clickCount: 3 });
-  await desktop.keyboard.press("Backspace");
   await clickVisible(desktop, "Forgot password?");
+  await desktop.locator("#auth-username").fill("");
+  assert(await desktop.$eval("#auth-username", input => (input as HTMLInputElement).value === ""), "recovery validation starts with an empty username");
   await clickVisible(desktop, "Send Reset Link", true);
   await waitForText(desktop, "Username must be at least 3 characters");
   assert(!(await desktop.$("#auth-password")), "password recovery validates username and does not ask for the old password");

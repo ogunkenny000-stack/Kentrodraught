@@ -26,6 +26,16 @@ import (
 
 var hashedAsset = regexp.MustCompile(`-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|jpg|jpeg|webp|woff2?|ico)$`)
 
+// dist also contains the private Node bundle and may contain the optional
+// native edge binary. Serve only browser assets, including for direct URLs.
+func publicAsset(file string) bool {
+	switch strings.ToLower(filepath.Ext(file)) {
+	case ".html", ".js", ".css", ".json", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".woff", ".woff2", ".ttf", ".otf", ".ico", ".txt", ".wasm", ".webmanifest":
+		return true
+	}
+	return false
+}
+
 func newHandler(dir, backend string) (http.Handler, error) {
 	target, err := url.Parse(backend)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.Path != "" && target.Path != "/" || target.User != nil || target.RawQuery != "" || target.Fragment != "" {
@@ -85,7 +95,7 @@ func newHandler(dir, backend string) (http.Handler, error) {
 			return
 		}
 		cleaned := filepath.Clean("/" + r.URL.Path)
-		if strings.Contains(r.URL.Path, "/.") || strings.HasSuffix(strings.ToLower(cleaned), ".cjs") || strings.HasSuffix(strings.ToLower(cleaned), ".map") {
+		if strings.Contains(r.URL.Path, "/.") || strings.ContainsRune(r.URL.Path, '\x00') || (filepath.Ext(cleaned) != "" && !publicAsset(cleaned)) {
 			http.NotFound(w, r)
 			return
 		}
@@ -107,6 +117,14 @@ func newHandler(dir, backend string) (http.Handler, error) {
 				return
 			}
 			requested = filepath.Join(absoluteDir, "index.html")
+		}
+		if !publicAsset(requested) || !withinRoot(absoluteDir, requested) {
+			http.NotFound(w, r)
+			return
+		}
+		if info, err := os.Stat(requested); err != nil || !info.Mode().IsRegular() {
+			http.NotFound(w, r)
+			return
 		}
 		if strings.HasPrefix(cleaned, "/assets/") && hashedAsset.MatchString(filepath.Base(requested)) {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
