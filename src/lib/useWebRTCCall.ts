@@ -1,3 +1,4 @@
+import { supabase } from "../supabase";
 // Voice / video call hook (WebRTC) for Nigerian Draughts.
 //
 // Design:
@@ -243,6 +244,7 @@ function createCallController(deps: ControllerDeps): Controller {
   let polite = false; // callee is polite in perfect negotiation
   let peer: string | null = null;
   let callType: CallType = "video";
+  let iceServers = ICE_SERVERS;
   let callSeq = 0; // bumps on every new call; async continuations check it
 
   let pc: RTCPeerConnection | null = null;
@@ -516,6 +518,15 @@ function createCallController(deps: ControllerDeps): Controller {
 
   // ---- media ----
   const acquireMedia = async (type: CallType): Promise<MediaStream | null> => {
+    const generation = callSeq;
+    try {
+      const { data } = await supabase.auth.getSession();
+      const response = await fetch('/api/media/ice', { signal: AbortSignal.timeout(3000), headers: data.session ? { 'x-access-token': data.session.access_token } : {} });
+      const config = response.ok ? await response.json() : null;
+      if (generation === callSeq) iceServers = Array.isArray(config?.iceServers) && config.iceServers.length <= 8 ? config.iceServers : ICE_SERVERS;
+    } catch { if (generation === callSeq) iceServers = ICE_SERVERS; }
+    if (generation !== callSeq) return null;
+
     const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
     if (!md || typeof md.getUserMedia !== "function") {
       toast(UNSUPPORTED_CALLS_MESSAGE);
@@ -1012,7 +1023,7 @@ function createCallController(deps: ControllerDeps): Controller {
       } catch {}
     }
     const conn = new RTCPeerConnection({
-      iceServers: ICE_SERVERS,
+      iceServers,
       iceCandidatePoolSize: 1,
       bundlePolicy: "max-bundle",
     });
@@ -1020,7 +1031,7 @@ function createCallController(deps: ControllerDeps): Controller {
     audioTx = null;
     videoTx = null;
     const seq = callSeq;
-    log("PeerConnection", `Created RTCPeerConnection (${ICE_SERVERS.length} ICE servers, polite=${polite})`);
+    log("PeerConnection", `Created RTCPeerConnection (${iceServers.length} ICE servers, polite=${polite})`);
 
     conn.onicecandidate = (ev) => {
       if (pc !== conn) return;
@@ -1472,11 +1483,13 @@ function createCallController(deps: ControllerDeps): Controller {
       return;
     }
     try {
+      const generation = callSeq;
       const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(facing), audio: false });
+      if (generation !== callSeq) { stopStream(s); return; }
       const t = s.getVideoTracks()[0];
-      if (!t) return;
-      if (!isActiveCall(state)) {
-        stopTrack(t);
+      if (!t) { stopStream(s); return; }
+      if (generation !== callSeq || !isActiveCall(state)) {
+        stopStream(s);
         return;
       }
       if (cameraTrack) stopTrack(cameraTrack);
@@ -1503,7 +1516,9 @@ function createCallController(deps: ControllerDeps): Controller {
     if (!cameraTrack) return;
     const next: "user" | "environment" = facing === "user" ? "environment" : "user";
     try {
+      const generation = callSeq;
       const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints(next), audio: false });
+      if (generation !== callSeq) { stopStream(s); return; }
       const t = s.getVideoTracks()[0];
       if (!t) return;
       const old = cameraTrack;
@@ -1563,12 +1578,13 @@ function createCallController(deps: ControllerDeps): Controller {
       toast("Screen sharing isn't available on this device.");
       return;
     }
+    const generation = callSeq;
     try {
       const ds = await md.getDisplayMedia({ video: true, audio: false });
       const t = ds.getVideoTracks()[0];
-      if (!t) return;
-      if (!isActiveCall(state)) {
-        stopTrack(t);
+      if (!t) { stopStream(ds); return; }
+      if (generation !== callSeq || !isActiveCall(state)) {
+        stopStream(ds);
         return;
       }
       screenTrack = t;
@@ -1583,6 +1599,7 @@ function createCallController(deps: ControllerDeps): Controller {
         await videoTx.sender.replaceTrack(t);
         await applySenderParams(videoTx.sender, "video");
       }
+      if (generation !== callSeq) { stopStream(ds); return; }
       set.isScreenSharing(true);
       set.localScreenStream?.(new MediaStream([t]));
       sendSignaling({ type: "call-screen-share", sharing: true });

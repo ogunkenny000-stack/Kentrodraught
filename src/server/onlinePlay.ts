@@ -56,7 +56,7 @@ type WS = any;
 
 export interface OnlinePlayDeps {
   recoveryPath?: string | false;
-  onGameCompleted?: (game: { gameCode: string; white: string; black: string; winner: Color | null; draw: boolean; roomId: string }) => void | Promise<void>;
+  onGameCompleted?: (game: { gameCode: string; white: string; black: string; winner: Color | null; draw: boolean; roomId: string; tournamentId?: string }) => void | Promise<void>;
   coinsEnabled: boolean;
   getCoinSettings: () => Promise<{ matchRakePercent: number } & Record<string, any>>;
   resolveEntryFee: (room: { gameTime: number; specialRule: string; wagerAmount?: number }, settings: any) => number;
@@ -113,6 +113,9 @@ interface GameState {
 
 interface Room {
   id: string;
+  tournamentId?: string;
+  tournamentMatchId?: string;
+  awaitingFirstJoin?: boolean;
   terminalResult?: { isDraw: boolean; winnerColor: Color | null; reason: string };
   private: boolean;
   seq: number;
@@ -221,13 +224,18 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   let storageFailed = false;
   const recovery = new DurableState<any>(deps.recoveryPath ?? (process.env.NODE_ENV === 'test' && !process.env.KENTRO_DATA_DIR ? false : path.join(process.env.KENTRO_DATA_DIR || path.join(process.cwd(), 'data'), 'live_rooms.json')));
   const excluded = new Set(['ws', 'expireTimer', 'flagTimer', 'deletionTimer', 'seriesNextGameTimer', 'awayForfeitTimer', 'forfeitTimer']);
-  function checkpoint(): void {
+  let checkpointFingerprint = "";
+  function checkpoint(force = false): void {
     if (shuttingDown || !recovery.file) return;
     if (storageFailed) throw new Error('Room persistence unavailable; restart after repairing storage');
     try {
       const persistedRooms = JSON.parse(JSON.stringify([...rooms.values()], (key, value) => excluded.has(key) ? undefined : value));
+      for (const room of persistedRooms) room.seq = Math.ceil(room.seq / 256) * 256;
+      const fingerprint = JSON.stringify({ rooms: persistedRooms, sessions: sessions.snapshot(), guestTrials: localGuestTrials() });
+      if (!force && fingerprint === checkpointFingerprint) return;
       for (const room of persistedRooms) { const live = rooms.get(room.id)!; room.clock = { ...live.clock, whiteMs: clockRemainingMs(live.clock, "W", now()), blackMs: clockRemainingMs(live.clock, "B", now()), running: null }; }
       recovery.write({ rooms: persistedRooms, sessions: sessions.snapshot(), guestTrials: localGuestTrials() });
+      checkpointFingerprint = fingerprint;
     } catch (error) { storageFailed = true; throw error; }
   }
 
@@ -684,6 +692,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     room.phase = crown ? "setup" : "playing";
     room.started = true;
     room.resultRecorded = false;
+    room.terminalResult = undefined;
     room.pendingEndOffer = null;
     room.pendingRematch = null;
     room.gameState = {
@@ -1011,7 +1020,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         .catch((err) => console.error("[GameRecord/Notifications] Failed to save game result or send alert:", err));
     }
 
-    if (deps.onGameCompleted) void Promise.resolve(deps.onGameCompleted({ gameCode: room.gameCode, white: whitePlayer, black: blackPlayer, winner: result.winnerColor, draw: result.isDraw, roomId: room.id })).catch(error => console.error('[Tournament] Result synchronization pending', error));
+    if (deps.onGameCompleted) void Promise.resolve().then(() => deps.onGameCompleted!({ gameCode: room.gameCode, white: whitePlayer, black: blackPlayer, winner: result.winnerColor, draw: result.isDraw, roomId: room.id, tournamentId: room.tournamentId })).catch(error => console.error('[Tournament] Result synchronization pending', error));
 
     // ---- Classic single game ----
     if (!room.bestOf || room.bestOf <= 1) {
@@ -1391,6 +1400,13 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
 
   function attachToSeat(room: Room, seat: Seat, player: OnlinePlayer): void {
     const ws = player.ws;
+    if (room.awaitingFirstJoin) {
+      room.awaitingFirstJoin = false;
+      for (const other of room.players) if (other !== seat && !isLive(other.ws)) {
+        other.disconnectedAt = now();
+        other.forfeitTimer = setTimeout(() => safeTimer('tournament join deadline', () => onGraceExpired(room, other)), 120_000);
+      }
+    }
     seat.ws = ws;
     seat.disconnectedAt = null;
     seat.graceExpired = false;
@@ -1871,7 +1887,8 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           // session was bound to. The second path is what lets a player who
           // lost the token (new phone, cleared storage) get their seat back
           // instead of being locked out for the rest of the game.
-          const tokenMatches = !!existing && (
+          const ownsTournamentSeat = [...rooms.values()].some(room => room.tournamentId && room.players.some(seat => seat.key === key && (userId ? seat.userId === userId : !accountAuthRequired())));
+          const tokenMatches = ownsTournamentSeat || !!existing && (
             (!!presentedToken && presentedToken === existing.token) ||
             (!!userId && !!existing.userId && userId === existing.userId)
           );
@@ -2107,6 +2124,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             room.players.find((p) => p.ws === ws);
 
           if (existingSeat) {
+            const other = player.roomId && player.roomId !== room.id ? rooms.get(player.roomId) : null;
+            if (other && (isLivePhase(other) || isSeriesUnderway(other)) && seatByKey(other, player.key)) {
+              sendJson(ws, { type: "room-error", error: "Finish or leave your current match before joining another game." }); return;
+            }
+            if (other) abandonRoom(player, "leave");
             attachToSeat(room, existingSeat, player);
             player.roomId = room.id;
             sendJson(ws, { type: "join-success", yourColor: existingSeat.color, roomId: room.id });
@@ -2490,6 +2512,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!player) return;
           const room = requireRoom(ws, player);
           if (!room) return;
+          if (room.tournamentId) { sendError(ws, "busy", "Tournament rematches are scheduled by the server."); return; }
           const seat = requireSeat(ws, room);
           if (!seat) return;
           if (!requirePhase(ws, room, ["ended"], "request a rematch")) return;
@@ -2526,6 +2549,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!player) return;
           const room = requireRoom(ws, player);
           if (!room) return;
+          if (room.tournamentId) { sendError(ws, "busy", "Tournament games are paired by the server."); return; }
           const seat = requireSeat(ws, room);
           if (!seat) return;
           if (!requirePhase(ws, room, ["ended"], "answer a rematch")) return;
@@ -2848,7 +2872,8 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       if (live.userId) { const bound = userSessions.get(live.userId) || new Set<Session>(); bound.add(live); userSessions.set(live.userId, bound); }
     }
     for (const room of rooms.values()) {
-      if (isLivePhase(room) || isSeriesUnderway(room)) for (const seat of room.players) {
+      if (room.awaitingFirstJoin) { /* Unclaimed pairings wait for the first competitor. */ }
+      else if (isLivePhase(room) || isSeriesUnderway(room)) for (const seat of room.players) {
         seat.forfeitTimer = setTimeout(() => safeTimer('restart grace', () => onGraceExpired(room, seat)), 120_000);
       } else armDeletionTimer(room);
       if (room.terminalResult) {
@@ -2856,7 +2881,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         const white = room.players.find(p => p.color === 'W')?.username || '';
         const black = room.players.find(p => p.color === 'B')?.username || '';
         void recordGameEnd({ gameCode: room.gameCode, completeMoveHistory: room.gameState?.moveHistory || [], currentPosition: room.gameState?.board, currentTurn: room.gameState?.turn, startingPosition: room.startBoard, startingTurn: room.startTurn, private: room.private, participantUserIds: room.players.flatMap(p => p.userId ? [p.userId] : []), winnerColor: result.winnerColor, winnerUsername: result.isDraw ? null : result.winnerColor === 'W' ? white : black, loserUsername: result.isDraw ? null : result.winnerColor === 'W' ? black : white, isDraw: result.isDraw, finalResult: result.isDraw ? '½–½' : result.winnerColor === 'W' ? '1–0' : '0–1', resultReason: result.reason }).catch(error => console.error('[Recovery] Terminal sync pending', error));
-        if (deps.onGameCompleted) void Promise.resolve(deps.onGameCompleted({ gameCode: room.gameCode, white, black, winner: result.winnerColor, draw: result.isDraw, roomId: room.id })).catch(error => console.error('[Recovery] Tournament sync pending', error));
+        if (deps.onGameCompleted) void Promise.resolve().then(() => deps.onGameCompleted!({ gameCode: room.gameCode, white, black, winner: result.winnerColor, draw: result.isDraw, roomId: room.id, tournamentId: room.tournamentId })).catch(error => console.error('[Recovery] Tournament sync pending', error));
         if (room.bestOf <= 1) settleWithRetry(room, result, 'restart recovery');
         else if (room.seriesOver) {
           const ranked = room.players.slice().sort((a,b) => (room.seriesScore[b.username] || 0) - (room.seriesScore[a.username] || 0));
@@ -2867,6 +2892,9 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     }
     console.log(`[WS] Restored ${rooms.size} durable rooms; clocks await reconnection.`);
   }
+
+  const recoveryHeartbeat = setInterval(() => safeTimer("durable clock", () => checkpoint(true)), 1000);
+  recoveryHeartbeat.unref();
 
   // Periodic WebSocket heartbeat every 20s to prune dead/stale connections safely
   const heartbeatInterval = setInterval(() => {
@@ -2892,9 +2920,10 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   /** Stop transport timers on process shutdown without adjudicating games. */
   function shutdown(): void {
     if (shuttingDown) return;
-    checkpoint();
+    checkpoint(true);
     shuttingDown = true;
     clearInterval(heartbeatInterval);
+    clearInterval(recoveryHeartbeat);
     onlineUsersBroadcast.cancel();
     openRoomsBroadcast.cancel();
     for (const room of rooms.values()) {
@@ -2921,8 +2950,22 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
 
   console.log(`[WS] Online play attached (maxPayload ${MAX_WS_PAYLOAD_BYTES} bytes, coins ${deps.coinsEnabled && supabaseConfigured() ? "enabled" : "disabled — no SUPABASE_SECRET_KEY"}).`);
 
+  function ensureTournamentRoom(spec: { id: string; tournamentId: string; matchId: string; white: { username: string; uid: string }; black: { username: string; uid: string }; private: boolean; minutes: number; specialRule: string }): void {
+    const existing = rooms.get(spec.id);
+    if (existing) { if (existing.tournamentId !== spec.tournamentId || existing.tournamentMatchId !== spec.matchId) throw new Error('Room identity conflict'); return; }
+    if (!/^\d{7,10}$/.test(spec.id) || spec.white.username.toLowerCase() === spec.black.username.toLowerCase()) throw new Error('Invalid tournament room');
+    const seat = (player: { username: string; uid: string }, color: Color): Seat => ({ ws: null, username: player.username, key: keyOf(player.username), userId: player.uid, color, ready: true, awayStrikes: 0, awayMs: 0, awaySince: null, awayForfeitTimer: null, disconnectedAt: now(), forfeitTimer: null, graceExpired: false });
+    const room: Room = { id: spec.id, tournamentId: spec.tournamentId, tournamentMatchId: spec.matchId, awaitingFirstJoin: true, private: spec.private, seq: 0, phase: 'lobby', players: [seat(spec.white,'W'),seat(spec.black,'B')], spectators: [], gameState: null, started: false,
+      clockLimitType: clockLimitTypeFor(spec.minutes), clock: untimedClock(), flagTimer: null, incrementSec: 0, startBoard: null, startTurn: 'W', deletionTimer: null, gameTime: spec.minutes, specialRule: spec.specialRule as SpecialRule,
+      hostTime: spec.minutes, guestTime: spec.minutes, creator: spec.white.username, bestOf: 1, seriesGameNumber: 1, seriesScore: {}, seriesDraws: 0, seriesOver: false, seriesNextGameTimer: null, setupPhase: null,
+      feesCharged: true, potSettled: true, potSettling: false, potId: spec.id, starting: false, resultRecorded: false, gamesStarted: 0, pendingEndOffer: null, previousGameCode: null, gameCode: spec.id, seriesId: 'tournament:'+spec.tournamentId, gameStartTime: 0, pendingRematch: null, chatTail: [] };
+    rooms.set(room.id, room);beginGame(room, room.id, 'Tournament: ');
+    checkpoint();
+  }
+
   return {
     wss,
+    ensureTournamentRoom,
     shutdown,
     revokeUser,
     /** Live room map (read-only use: /api/games/next-code avoids codes of live rooms). */

@@ -25,7 +25,9 @@
     "test:tv": "tsx scripts/e2e/tv.e2e.ts",
     "test:offline": "tsx scripts/e2e/offline.e2e.ts",
     "test:nearby": "tsx scripts/e2e/nearby.e2e.ts",
-    "test:container": "tsx scripts/audit/container-smoke.ts"
+    "test:container": "tsx scripts/audit/container-smoke.ts",
+    "test:restart": "tsx scripts/audit/live-restart.ts",
+    "test:tournaments": "tsx scripts/audit/tournament-smoke.ts"
   },
   "dependencies": {
     "@google/genai": "^2.17.1",

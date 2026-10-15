@@ -42,9 +42,18 @@ try {
   const resumedB=await peer(port,'restart_b',bt);await resumedB.receive('login-success');const restoredB=await resumedB.receive('room-rejoined');assert.equal(restoredB.gameState.turn,'B');
   const black=restoredA.yourColor==='B'?resumedA:resumedB;
   const next=generateLegalMoves(restoredB.gameState.board,'B')[0];black.send({type:'make-move',move:next});await resumedA.receive('move-made');await resumedB.receive('move-made');
-  resumedA.send({type:'offer-draw'});await resumedB.receive('draw-offered');resumedB.send({type:'draw-response',accept:true});await resumedA.receive('game-ended');
+  resumedA.send({type:'offer-draw'});await resumedB.receive('draw-offered');resumedB.send({type:'draw-response',accept:true});await resumedA.receive('game-ended');await resumedB.receive('game-ended');
+  // A subsequent rematch must never recover the previous game's terminal result.
+  resumedA.send({type:'rematch-request'});await resumedB.receive('rematch-requested');
+  resumedB.send({type:'rematch-response',accept:true});
+  const rematch=await resumedA.receive('game-started');await resumedB.receive('game-started');
+  assert.notEqual(rematch.gameCode,start.gameCode);
+  await stop('SIGKILL');port=await boot();
+  const againA=await peer(port,'restart_a',at);await againA.receive('login-success');const active=await againA.receive('room-rejoined');
+  assert.equal(active.phase,'playing');assert.equal(active.gameCode,rematch.gameCode);assert.equal(active.gameState.moveHistory.length,0);
+  const againB=await peer(port,'restart_b',bt);await againB.receive('login-success');await againB.receive('room-rejoined');
   await stop('SIGTERM');
   assert.equal((await stat(path.join(directory,'live_rooms.json'))).mode&0o777,0o600);
-  const saved=JSON.parse(await readFile(path.join(directory,'live_rooms.json'),'utf8'));assert.equal(JSON.parse(saved.payload).rooms[0].gameState.moveHistory.length,2);
-  console.log('PASS actual SIGKILL/restart: private room, resume authentication, paused clocks, canonical board/history, continuing moves, agreed draw, SIGTERM, protected file mode.');
+  const saved=JSON.parse(await readFile(path.join(directory,'live_rooms.json'),'utf8'));assert.equal(JSON.parse(saved.payload).rooms[0].gameState.moveHistory.length,0);assert.equal(JSON.parse(saved.payload).rooms[0].terminalResult,undefined);
+  console.log('PASS actual SIGKILL/restart: private room, resume authentication, paused clocks, canonical board/history, continuing moves, agreed draw, rematch SIGKILL/restart without stale terminal result, SIGTERM, protected file mode.');
 } finally { if(child&&!child.killed)child.kill('SIGKILL');sockets.forEach(s=>s.terminate());await rm(directory,{recursive:true,force:true}); }

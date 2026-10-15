@@ -1,3 +1,6 @@
+import { authorizeEngineRequest, EngineAccessError } from './src/server/engineAccess';
+import { createMediaRouter } from "./src/server/mediaConfig";
+import { TournamentRuntime, hostedTournamentRepository, createTournamentRuntimeRouter } from "./src/server/tournamentRuntime";
 import { PersistentEngine } from "./src/server/nativeEngine";
 import { replayForAnalysis } from "./src/lib/analysisReplay";
 import { classifyMove, type PositionEval } from "./src/lib/analysis";
@@ -368,6 +371,8 @@ async function startServer() {
   await initGameRecordsManager({ handleSignals: false });
 
   const app = express();
+  const tournamentRuntime = new TournamentRuntime(hostedTournamentRepository, spec => onlinePlay.ensureTournamentRoom(spec), () => getNextGameCode(onlinePlay.rooms), path.join(process.env.KENTRO_DATA_DIR || path.join(process.cwd(), 'data'), 'tournament_outbox.json'));
+
   app.disable("x-powered-by");
   // The local Go edge may forward the real peer address. Direct remote peers
   // cannot choose their rate-limit bucket with an arbitrary forwarded header.
@@ -380,7 +385,8 @@ async function startServer() {
   // Lightweight process readiness: no database calls or engine queue work.
   app.get("/api/health", (_req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    res.status(shuttingDown ? 503 : 200).json({ ok: !shuttingDown, component: "kentro-node" });
+    const ready = !shuttingDown && onlinePlay.storageHealthy() && tournamentRuntime.storageHealthy();
+    res.status(ready ? 200 : 503).json({ ok: ready, component: "kentro-node" });
   });
   // Apply tiered rate limits across API route groups
   app.use("/api/engine", createRateLimiter({ windowMs: 60 * 1000, max: 120 }, "engine"));
@@ -394,6 +400,8 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   installBodyParsing(app, async req => !!await requirePermission(requestAccessToken(req.headers), "manage_puzzles"));
   app.use('/api/auth', createRateLimiter({ windowMs: 60_000, max: 12 }, 'account-auth'), createAccountAuthRouter());
+  app.use('/api/tournaments', createRateLimiter({ windowMs: 60000, max: 30 }, 'tournament-runtime'), createTournamentRuntimeRouter(tournamentRuntime));
+  app.use('/api/media', createRateLimiter({ windowMs: 60000, max: 12 }, 'media-configuration'), createMediaRouter());
   app.use('/api/tournaments', createRateLimiter({ windowMs: 60_000, max: 8 }, 'tournament-invite'), createTournamentInviteRouter());
 
   // Bootstrap only an explicitly configured Auth UID when no admin exists.
@@ -443,11 +451,14 @@ async function startServer() {
       } catch (err) {
         return res.status(400).json({ error: err instanceof Error ? err.message : "Invalid engine request" });
       }
+      options = await authorizeEngineRequest(req.body, requestAccessToken(req.headers), undefined, process.env.NODE_ENV !== "production" && !(process.env.SUPABASE_URL || process.env.SUPABASE_SECRET_KEY));
+      if (controller.signal.aborted) return;
       const result = await engine.getMove(options.fen, options.thinkTimeSec, options.depth, true, options.usePst, options.supersedeKey, controller.signal);
       if (res.destroyed) return;
       res.json(result);
     } catch (err: any) {
       if (res.destroyed) return;
+      if (err instanceof EngineAccessError) return res.status(err.status).json({ error: err.message });
       if (err?.message === "Superseded") {
         return res.status(499).json({ error: "Superseded by newer request" });
       }
@@ -836,6 +847,7 @@ async function startServer() {
         streak: 0,
         country: typeof playerData?.country === "string" ? playerData.country : "NG",
         isHuman: true,
+        team: typeof playerData?.team === "string" ? playerData.team.trim().slice(0, 40) : undefined,
       };
 
       const { data, error } = await getSupabaseAdmin().rpc("tournament_entry", {
@@ -1266,13 +1278,15 @@ async function startServer() {
       if (!tournamentId || !winnerUsername) return res.status(400).json({ error: "Invalid request" });
 
       const settings = await getCoinSettings();
-      const { data, error } = await getSupabaseAdmin().rpc("pay_tournament_prize", {
-        p_tournament_id: tournamentId,
-        p_winner_username: String(winnerUsername).toLowerCase().trim(),
-        p_rake_percent: settings.tournamentRakePercent,
-      });
+      const { data: tournament, error: lookupError } = await getSupabaseAdmin().from('tournaments').select('engineState').eq('id', tournamentId).single();
+      if (lookupError) throw lookupError;
+      const canonical = Array.isArray(tournament?.engineState?.champions) && tournament.engineState.champions.length > 0;
+      if (canonical && !tournament.engineState.champions.some((name: string) => name.toLowerCase() === String(winnerUsername).toLowerCase().trim())) return res.status(409).json({ error: 'Only the canonical tournament champions can receive the prize.' });
+      const { data, error } = canonical
+        ? await getSupabaseAdmin().rpc('kentro_pay_completed_tournament', { p_id: tournamentId, p_rake: settings.tournamentRakePercent })
+        : await getSupabaseAdmin().rpc('pay_tournament_prize', { p_tournament_id: tournamentId, p_winner_username: String(winnerUsername).toLowerCase().trim(), p_rake_percent: settings.tournamentRakePercent });
       if (error) throw error;
-      const result = data?.[0] as { ok: boolean; errorReason: string | null; payout: number | null; rake: number | null } | undefined;
+      const result = (canonical ? data : data?.[0]) as { ok: boolean; errorReason: string | null; payout: number | null; rake: number | null } | undefined;
       if (!result) throw new Error("pay_tournament_prize returned no result");
 
       if (!result.ok) {
@@ -1343,14 +1357,14 @@ async function startServer() {
       const name = String(b.name || "").trim().slice(0, 80);
       if (!name) return res.status(400).json({ error: "Tournament name is required" });
 
-      const TYPES = ["Swiss System", "Knockout Bracket", "Round Robin", "Arena Blitz"];
+      const TYPES = ["Swiss System", "Knockout Bracket", "Round Robin", "Arena Blitz", "Swiss Tournament", "Arena Tournament", "Single Elimination", "Double Elimination", "Team Tournament", "League Tournament", "Knockout Cup", "Group Stage + Knockout", "King of the Hill", "Robin Hood Tournament (Handicap Tournament)", "Custom Tournament"];
       const type = TYPES.includes(b.type) ? b.type : "Swiss System";
       const visibility = b.visibility === "private" ? "private" : "public";
       const inviteCode = visibility === "private"
         ? randomBytes(12).toString('hex').toUpperCase()
         : "";
-      const maxPlayers = Math.min(64, Math.max(2, Number(b.maxPlayers) || 8));
-      const minPlayers = Math.min(maxPlayers, Math.max(2, Number(b.minPlayers) || 2));
+      const maxPlayers = Math.min(64, Math.max(2, Math.trunc(Number(b.maxPlayers) || 8)));
+      const minPlayers = Math.min(maxPlayers, Math.max(2, Math.trunc(Number(b.minPlayers) || 2)));
       const TIME_CONTROLS = ["Blitz 5m", "Rapid 10m", "Classical 20m", "Untimed"];
       const timeControl = TIME_CONTROLS.includes(b.timeControl) ? b.timeControl : "Blitz 5m";
       const HANDICAPS = ["None", "Short One", "Short Two", "Short Three", "Crown Crown"];
@@ -1401,7 +1415,7 @@ async function startServer() {
         adminUsername: admin.username, adminUid: admin.uid, action: "create_tournament",
         details: { tournamentId: tourId, name, type, visibility, maxPlayers, timeControl, handicap }, result: "success",
       });
-      res.json({ ok: true, id: tourId, inviteCode });
+      res.json({ ok: true, id: tourId, inviteCode, tournament: newTour });
     } catch (err) {
       console.error("admin create tournament error:", err);
       res.status(500).json({ error: "Failed to create tournament" });
@@ -2613,6 +2627,7 @@ async function startServer() {
   // logic lives in src/server/onlinePlay.ts; the coin + pricing helpers it
   // needs are injected from here so they stay shared with the HTTP API.
   const onlinePlay = attachOnlinePlay(server, {
+    onGameCompleted: tournamentRuntime.record,
     coinsEnabled: KENTRO_COINS_ENABLED,
     getCoinSettings,
     resolveEntryFee,
@@ -2621,10 +2636,14 @@ async function startServer() {
     sanitizeCustomBoard,
     findLegalMatch,
   });
+  const tournamentTimer = setInterval(() => { if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) void tournamentRuntime.reconcile().catch(error => console.error('[Tournament] Reconciliation pending', error)); }, 10000);
+  tournamentTimer.unref();
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) void tournamentRuntime.reconcile().catch(error => console.error('[Tournament] Startup pending', error));
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[Server] ${signal}: draining connections (up to 5 seconds)`);
+    clearInterval(tournamentTimer);
     onlinePlay.shutdown();
     let httpClosed = false;
     let websocketClosed = false;
@@ -2632,7 +2651,7 @@ async function startServer() {
     const finish = () => {
       if (finished) return;
       finished = true;
-      void Promise.allSettled([engine.stop(), flushGameRecords()]).then(results => {
+      void Promise.allSettled([engine.stop(), flushGameRecords(), tournamentRuntime.close()]).then(results => {
         let failed = false;
         for (const result of results) {
           if (result.status === 'rejected') {

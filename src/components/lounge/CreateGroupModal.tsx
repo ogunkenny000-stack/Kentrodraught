@@ -1,10 +1,11 @@
+import { ModalShell } from "../ui/ModalShell";
 import React, { useState } from "react";
-import { X, Users, Check, Sparkles } from "lucide-react";
+import { Users, Check, Sparkles } from "lucide-react";
 
 interface CreateGroupModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateGroup: (name: string, description: string, icon: string, initialMembers: string[]) => void;
+  onCreateGroup: (name: string, description: string, icon: string, initialMembers: string[]) => void | Promise<void>;
   onlineUsers: string[];
   currentUsername: string;
 }
@@ -16,6 +17,8 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
   onlineUsers,
   currentUsername
 }) => {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedIcon, setSelectedIcon] = useState("🇳🇬");
@@ -40,14 +43,15 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
     setMemberInput("");
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
-    onCreateGroup(name.trim(), description.trim(), selectedIcon, selectedMembers);
-    setName("");
-    setDescription("");
-    setSelectedMembers([]);
-    onClose();
+    if (!name.trim() || saving) return;
+    setSaving(true); setError('');
+    try {
+      await onCreateGroup(name.trim(), description.trim(), selectedIcon, selectedMembers);
+      setName(''); setDescription(''); setSelectedMembers([]); onClose();
+    } catch (failure) { setError((failure as any)?.message || 'Could not create the group.'); }
+    finally { setSaving(false); }
   };
 
   // Available online users excluding self
@@ -56,8 +60,10 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none">
+    <ModalShell open={isOpen} onClose={onClose} title="Create group" dismissable={!saving}>
       <div className="w-full max-w-md bg-[#090b16] border border-amber-500/20 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+        {error && <p role="alert" className="p-3 text-sm text-rose-300">{error}</p>}
+        {saving && <p role="status" className="p-3 text-sm">Saving group and invitations…</p>}
         {/* Header */}
         <div className="p-4 border-b border-slate-900 bg-slate-950/60 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -73,12 +79,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+
         </div>
 
         {/* Form Body */}
@@ -90,11 +91,12 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               {selectedIcon}
             </div>
             <div className="flex-1 flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+              <label htmlFor="group-name" className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
                 Group Name
               </label>
               <input
                 type="text"
+                id="group-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Lagos Draughts Masters"
@@ -115,6 +117,8 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                 <button
                   key={ic}
                   type="button"
+                  aria-label={"Emblem " + ic}
+                  aria-pressed={selectedIcon === ic}
                   onClick={() => setSelectedIcon(ic)}
                   className={`w-8 h-8 rounded-lg border text-base flex items-center justify-center transition cursor-pointer ${
                     selectedIcon === ic
@@ -130,11 +134,12 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
 
           {/* Description */}
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            <label htmlFor="group-description" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
               Topic / Description
             </label>
             <input
               type="text"
+              id="group-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="e.g. Tactical analysis and rapid match scheduling"
@@ -153,6 +158,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             <div className="flex gap-2">
               <input
                 type="text"
+                aria-label="Invite username"
                 value={memberInput}
                 onChange={(e) => setMemberInput(e.target.value)}
                 placeholder="Enter player username..."
@@ -201,13 +207,13 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
           {/* Submit */}
           <button
             type="submit"
-            disabled={!name.trim()}
+            disabled={!name.trim() || saving}
             className="mt-2 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-30 disabled:cursor-not-allowed text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider transition cursor-pointer shadow-lg shadow-amber-500/10"
           >
             Create Tactical Group
           </button>
         </form>
       </div>
-    </div>
+    </ModalShell>
   );
 };

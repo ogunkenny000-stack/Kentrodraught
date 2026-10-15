@@ -287,6 +287,104 @@ try {
     await denied(service,ratedSql,[...args.slice(0,6),{white:{rating:1600},black:{rating:1400,rd:200,vol:0.06}}]);
     assert.equal((await service.query(ratedSql,args)).rows[0].result.ok,true);
   });
+  const groupAction = async (client,id,action,data={}) => (await client.query('select kentro_group_action($1,$2,$3) as result',[id,action,data])).rows[0].result;
+  let sharedGroup;
+  await check('groups require actual accounts and explicit recipient membership consent',async()=>{
+    await denied(anon,"select kentro_group_action(null,'create','{\"name\":\"fake\"}')");
+    sharedGroup=await groupAction(alice,null,'create',{name:'Verified club',description:'fixture'});
+    assert.equal(sharedGroup.createdBy,'alice');
+    assert.equal((await bob.query('select * from kentro_groups where id=$1',[sharedGroup.id])).rowCount,0);
+    await groupAction(alice,sharedGroup.id,'invite',{username:'bob'});
+    assert.equal((await bob.query('select kentro_group_list() as result')).rows[0].result[0].invited,true);
+    await denied(bob,"select kentro_group_action($1,'send',$2)",[sharedGroup.id,{text:'before consent'}]);
+    await groupAction(bob,sharedGroup.id,'accept');await groupAction(bob,sharedGroup.id,'accept');
+    assert.equal((await bob.query('select * from kentro_groups where id=$1',[sharedGroup.id])).rowCount,1);
+  });
+  await check('group messages bind sender and retry UUID while removed and unrelated users cannot read',async()=>{
+    const id='40000000-0000-4000-8000-000000000001';
+    await groupAction(bob,sharedGroup.id,'send',{id,text:'hello',sender:'alice'});
+    await groupAction(bob,sharedGroup.id,'send',{id,text:'hello'});
+    await denied(bob,"select kentro_group_action($1,'send',$2)",[sharedGroup.id,{id,text:'changed retry'}]);
+    const feed=(await alice.query('select kentro_group_feed($1) as result',[sharedGroup.id])).rows[0].result;
+    assert.equal(feed.length,1);assert.equal(feed[0].sender,'bob');
+    assert.equal((await carol.query('select * from kentro_group_messages')).rowCount,0);
+    assert.deepEqual((await carol.query('select kentro_group_feed($1) as result',[sharedGroup.id])).rows[0].result,[]);
+    await denied(bob,"update kentro_group_messages set sender_id=$1 where id=$2",[uid.alice,id]);
+    await denied(carol,"select kentro_group_action($1,'delete_message',$2)",[sharedGroup.id,{id}]);
+    await groupAction(bob,sharedGroup.id,'delete_message',{id});
+    assert.equal((await alice.query('select kentro_group_feed($1) as result',[sharedGroup.id])).rows[0].result[0].deleted,true);
+  });
+  await check('group administration preserves one owner and revokes removed/banned access',async()=>{
+    await groupAction(alice,sharedGroup.id,'promote',{username:'bob'});
+    await denied(bob,"select kentro_group_action($1,'remove',$2)",[sharedGroup.id,{username:'alice'}]);
+    await groupAction(bob,sharedGroup.id,'invite',{username:'carol'});await groupAction(carol,sharedGroup.id,'accept');
+    await denied(bob,"select kentro_group_action($1,'promote',$2)",[sharedGroup.id,{username:'carol'}]);
+    await owner.query("update profiles set banned=true where \"usernameLower\"='carol'");
+    await denied(carol,"select kentro_group_action($1,'send',$2)",[sharedGroup.id,{text:'banned'}]);
+    assert.equal((await carol.query('select * from kentro_groups')).rowCount,0);
+    await owner.query("update profiles set banned=false where \"usernameLower\"='carol'");
+    await denied(alice,"select kentro_group_action($1,'leave')",[sharedGroup.id]);
+    await groupAction(alice,sharedGroup.id,'transfer',{username:'bob'});await groupAction(alice,sharedGroup.id,'leave');
+    assert.equal((await alice.query('select * from kentro_groups where id=$1',[sharedGroup.id])).rowCount,0);
+    assert.equal((await owner.query("select * from kentro_group_members where group_id=$1 and role='owner'",[sharedGroup.id])).rowCount,1);
+    await groupAction(bob,sharedGroup.id,'remove',{username:'carol'});
+    assert.deepEqual((await carol.query('select kentro_group_feed($1) as result',[sharedGroup.id])).rows[0].result,[]);
+    await groupAction(bob,sharedGroup.id,'delete');
+    assert.equal((await owner.query('select * from kentro_group_messages where group_id=$1',[sharedGroup.id])).rowCount,0);
+  });
+  await check('tournament runtime compare-and-swap is service-only and serializes overlapping commits',async()=>{
+    await owner.query("insert into tournaments(id,status,players,matches,logs) values('runtime','active','[]','[]','[]')");
+    const state={status:'active',players:[],matches:[],currentRound:1,maxRounds:3,logs:[],engineState:{format:'swiss'}};
+    await denied(alice,'select kentro_commit_tournament($1,$2,$3)',['runtime',0,state]);
+    const other=await roleClient('service_role');
+    const results=await Promise.all([service.query('select kentro_commit_tournament($1,$2,$3) as result',['runtime',0,state]),other.query('select kentro_commit_tournament($1,$2,$3) as result',['runtime',0,state])]);
+    assert.equal(results.filter(result=>result.rows[0].result!==null).length,1);
+    assert.equal(Number((await owner.query('select \"engineVersion\" from tournaments where id=\'runtime\'')).rows[0].engineVersion),1);
+  });
+  await check('group creation retries preserve identity and reactions bind canonical members',async()=>{
+    const id='50000000-0000-4000-8000-000000000001';
+    const first=await groupAction(alice,id,'create',{name:'Retry club'});
+    assert.deepEqual(await groupAction(alice,id,'create',{name:'Retry club'}),first);
+    await denied(bob,'select kentro_group_action($1,$2,$3)',[id,'create',{name:'Retry club'}]);
+    await denied(alice,'select kentro_group_action($1,$2,$3)',[id,'create',{name:'Changed retry'}]);
+    const msg='50000000-0000-4000-8000-000000000002';
+    await groupAction(alice,id,'send',{id:msg,text:'Actual message'});
+    await groupAction(alice,id,'react',{id:msg,emoji:'👍',sender:'bob'});
+    let feed=(await alice.query('select kentro_group_feed($1) as result',[id])).rows[0].result;
+    assert.deepEqual(feed[0].reactions,{'👍':['alice']});
+    await groupAction(alice,id,'react',{id:msg,emoji:'👍'});
+    feed=(await alice.query('select kentro_group_feed($1) as result',[id])).rows[0].result;
+    assert.deepEqual(feed[0].reactions,{'👍':[]});
+    await groupAction(alice,id,'delete');
+  });
+  async function prizeFixture(id,pool=21){
+    await owner.query(`insert into tournaments(id,status,players,"maxPlayers") values($1,'registration','[]',2)`,[id]);
+    for(const name of ['alice','bob'])await service.query(`select * from tournament_entry($1,$2,11,$3,'fixture')`,[id,name,{username:name}]);
+    await owner.query(`update tournaments set status='completed',"prizePool"=$2,"engineState"=$3 where id=$1`,[id,pool,{champions:['alice','bob']}]);
+  }
+  await check('canonical team prizes split integer remainders and settle exactly once under concurrency',async()=>{
+    await prizeFixture('team-prize');
+    const beforeA=await balance('alice'),beforeB=await balance('bob');
+    await denied(alice,'select kentro_pay_completed_tournament($1,$2)',['team-prize',0]);
+    const other=await roleClient('service_role');
+    const results=await Promise.all([service.query('select kentro_pay_completed_tournament($1,$2) as result',['team-prize',0]),other.query('select kentro_pay_completed_tournament($1,$2) as result',['team-prize',0])]);
+    assert.equal(results.filter(r=>r.rows[0].result.ok).length,1);
+    assert.equal(await balance('alice'),beforeA+11);assert.equal(await balance('bob'),beforeB+10);
+    assert.equal((await owner.query("select * from coin_transactions where type='tournament_prize' and \"refId\"='team-prize'")).rowCount,2);
+  });
+  await check('prize payment rejects unfunded pools and rolls back every beneficiary on failure',async()=>{
+    await prizeFixture('team-rollback',1000);
+    await denied(service,'select kentro_pay_completed_tournament($1,$2)',['team-rollback',0]);
+    await owner.query(`update tournaments set "prizePool"=21 where id='team-rollback'`);
+    const beforeA=await balance('alice'),beforeB=await balance('bob');
+    await owner.query("create function audit_fail_prize() returns trigger language plpgsql as $$ begin if new.username='bob' and new.type='tournament_prize' then raise exception 'simulated second beneficiary failure'; end if; return new; end $$; create trigger audit_fail_prize before insert on coin_transactions for each row execute function audit_fail_prize()");
+    await denied(service,'select kentro_pay_completed_tournament($1,$2)',['team-rollback',0.1]);
+    assert.equal(await balance('alice'),beforeA);assert.equal(await balance('bob'),beforeB);
+    assert.equal((await owner.query(`select "prizePaid" from tournaments where id='team-rollback'`)).rows[0].prizePaid,false);
+    await owner.query('drop trigger audit_fail_prize on coin_transactions');
+    const result=(await service.query('select kentro_pay_completed_tournament($1,$2) as result',['team-rollback',0.1])).rows[0].result;
+    assert.equal(result.ok,true);assert.equal(result.payout+result.rake,21);assert.equal(result.rake,3);
+  });
   await check('security migration reruns and exact-policy rollback preserve application data',async()=>{
     const before=(await owner.query('select count(*) as count from coin_transactions')).rows[0].count;
     const file=await fs.readFile(path.join(root,'supabase/migrations/20261014_security_authorization.sql'),'utf8');

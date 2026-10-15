@@ -4871,84 +4871,12 @@ export default function App() {
             <TournamentDashboard
               username={username || "You"}
               userRating={profileStats?.elo || 1500}
-              onStartMatch={(opponent, color, handicap, matchId, timeControl) => {
+              onSpectateMatch={code => { setPlayMode('Multiplayer'); handleSpectateRoom(code); }}
+              onStartMatch={(_opponent, _color, _handicap, matchId, _timeControl, roomCode) => {
+                if (!roomCode) { setStatusMessage('The tournament room is not ready.'); return; }
                 setActiveTournamentMatchId(matchId);
-                setActiveTournamentOpponent(opponent);
-                patchRoom({ yourColor: color });
-                setIsFlipped(color === "B");
-                setBoard(createInitialBoard());
-                setTurn("W");
-                setMoveHistory([]);
-                setSelectedSq(null);
-                setHistoryViewIndex(null);
-                setGameStartTime(Date.now());
-                setGameRecorded(false);
-                setGameOverInfo(null);
-                startLocalClock(clockLimitType, "W");
-
-                // Apply Handicap Rules to Board
-                // NOTE: this previously treated `board` as a numeric array (values
-                // 1/-1/2/-2, `nextBoard.findIndex(...)`) left over from an old board
-                // representation. The real Board type (see gameLogic.ts) is a plain
-                // object keyed by square number (1-50) holding "w"/"W"/"b"/"B"/null,
-                // so `[...currentBoard]` on it threw at runtime ("not iterable") the
-                // instant any tournament match with a handicap other than "None" was
-                // launched. Rewritten to operate on the real Board shape, matching
-                // the same square-removal approach already used correctly for
-                // multiplayer rooms in server.ts.
-                if (handicap && handicap !== "None") {
-                  setBoard((currentBoard) => {
-                    const nextBoard: Board = { ...currentBoard };
-                    const colorToRemove = color; // the handicapped side (see handleLaunchMatch)
-                    const removeCount =
-                      handicap === "Short One" ? 1 : handicap === "Short Two" ? 2 : handicap === "Short Three" ? 3 : 0;
-
-                    if (removeCount > 0) {
-                      let removed = 0;
-                      // Remove from the back rank inward so the missing piece(s) mirror
-                      // the "corner" convention already used for the multiplayer version
-                      // of this same rule.
-                      for (let sq = 1; sq <= 50 && removed < removeCount; sq++) {
-                        const targetSq = colorToRemove === "W" ? 51 - sq : sq;
-                        if (nextBoard[targetSq] === colorToRemove.toLowerCase()) {
-                          nextBoard[targetSq] = null;
-                          removed++;
-                        }
-                      }
-                    } else if (handicap === "Crown Crown") {
-                      // Real Crown Crown rule (matches the interactive
-                      // multiplayer version): each side removes one man from
-                      // its FRONT row and crowns a King on its BACK row; the
-                      // back-row man who was standing there slides forward
-                      // into the vacated front square. 20 pieces per side,
-                      // 19 men + 1 King. Tournament matches apply it
-                      // deterministically (center-most squares) since
-                      // there's no interactive setup phase here.
-                      const apply = (side: "W" | "B") => {
-                        const man = side.toLowerCase() as "w" | "b";
-                        const frontRow = side === "W" ? [33, 32, 34, 31, 35] : [18, 19, 17, 20, 16];
-                        const backRow = side === "W" ? [48, 47, 49, 46, 50] : [3, 2, 4, 1, 5];
-                        const frontSq = frontRow.find((q) => nextBoard[q] === man);
-                        const backSq = backRow.find((q) => nextBoard[q] === man || !nextBoard[q]);
-                        if (frontSq === undefined || backSq === undefined) return;
-                        nextBoard[frontSq] = null;                 // the sacrifice
-                        if (nextBoard[backSq] === man) {
-                          nextBoard[frontSq] = man;                // back-row man slides forward
-                        }
-                        nextBoard[backSq] = side;                  // crowned King on the back row
-                      };
-                      apply("W");
-                      apply("B");
-                    }
-
-                    return nextBoard;
-                  });
-                }
-
-                setIsTournamentGameInProgress(true);
-                safeStorage.setItem("lidraughts_tournament_game_in_progress", "true");
-                setStatusMessage(`Tournament Match: Playing against ${opponent}. Time Limit: ${timeControl}. Handicap: ${handicap}. Good luck!`);
-                playGameStartSound(muted);
+                setPlayMode('Multiplayer');
+                sendSocketMessage({ type: 'join-room-accept', roomId: roomCode });
               }}
               activeMatchId={activeTournamentMatchId}
               activeMatchOutcome={activeTournamentOutcome}

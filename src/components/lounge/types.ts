@@ -58,6 +58,7 @@ export interface LoungeMessage {
 }
 
 export interface LoungeGroup {
+  invited?: boolean;
   id: string;
   name: string;
   description: string;

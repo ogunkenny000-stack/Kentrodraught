@@ -38,6 +38,7 @@ export interface TournamentMatch {
   status: "pending" | "playing" | "completed";
   handicapInfo?: string;
   moveHistory?: string[];
+  roomId?: string;
 }
 
 export interface TournamentChatMsg {
@@ -51,6 +52,7 @@ export interface TournamentChatMsg {
 }
 
 export interface Tournament {
+  engineState?: { endsAt?: number; champions?: string[] };
   id: string;
   name: string;
   description: string;
@@ -79,7 +81,7 @@ export interface Tournament {
 interface TournamentDashboardProps {
   username: string;
   userRating: number;
-  onStartMatch: (opponent: string, playerColor: "W" | "B", handicap: string, matchId: string, timeControl: string) => void;
+  onStartMatch: (opponent: string, playerColor: "W" | "B", handicap: string, matchId: string, timeControl: string, roomId?: string) => void;
   activeMatchId: string | null;
   activeMatchOutcome: "win" | "loss" | "draw" | null;
   onResetMatchOutcome: () => void;
@@ -88,6 +90,7 @@ interface TournamentDashboardProps {
   playPromoSound: (m: boolean) => void;
   playVictorySound: (m: boolean) => void;
   canManageTournaments: boolean;
+  onSpectateMatch?: (roomId: string) => void;
   onBackToHome?: () => void;
 }
 
@@ -95,6 +98,7 @@ function TournamentDashboardImpl({
   username,
   userRating,
   onStartMatch,
+  onSpectateMatch,
   activeMatchId,
   activeMatchOutcome,
   onResetMatchOutcome,
@@ -184,33 +188,12 @@ function TournamentDashboardImpl({
     }
   };
 
+  useEffect(() => { void loadTournaments(); const timer = setInterval(() => void loadTournaments(), 5000); return () => clearInterval(timer); }, []);
+  useEffect(() => { if (activeMatchOutcome) { onResetMatchOutcome(); void loadTournaments(); } }, [activeMatchOutcome]);
   useEffect(() => {
-    loadTournaments();
-  }, []);
-
-  // Handle active game completion reporting
-  useEffect(() => {
-    if (activeTour && activeMatchId && activeMatchOutcome) {
-      handleMatchResultReport(activeMatchId, activeMatchOutcome);
-    }
-  }, [activeMatchOutcome]);
-
-
-  // Handle timer countdown
-  useEffect(() => {
-    if (activeTour && activeTour.status === "active" && timeRemaining > 0) {
-      const timerId = setInterval(() => {
-        setTimeRemaining(prev => {
-          if (prev <= 1) {
-            handleCompleteTournament();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(timerId);
-    }
-  }, [activeTour, timeRemaining]);
+    const update = () => setTimeRemaining(Math.max(0, Math.ceil(((activeTour?.engineState?.endsAt || Date.now()) - Date.now()) / 1000)));
+    update(); const timer = setInterval(update, 1000); return () => clearInterval(timer);
+  }, [activeTour?.engineState?.endsAt]);
 
   // Auto scroll chat to bottom
   useEffect(() => {
@@ -219,75 +202,15 @@ function TournamentDashboardImpl({
 
   // Create Tournament Handler
   const handleCreateTournament = async () => {
-    if (!formName.trim()) {
-      showToast("Please enter a tournament name.");
-      return;
-    }
-    playPromoSound(muted);
-    const code = formVisibility === "private" ? (formInviteCode || Math.random().toString(36).substring(2, 7).toUpperCase()) : "";
-    const tourId = `tour_${Date.now()}`;
-    
-    // Add human player to roster
-    const humanPlayer: TournamentPlayer = {
-      username: username || "You",
-      rating: userRating || 1500,
-      wins: 0,
-      losses: 0,
-      draws: 0,
-      points: 0,
-      streak: 0,
-      country: "NG",
-      team: formTeamName,
-      isHuman: true,
-      handicap: formHandicap !== "None" ? formHandicap : undefined
-    };
-
-    // An engine tournament worker is not available; never seed a fake entrant.
-    const roster: TournamentPlayer[] = [humanPlayer];
-
-    const newTour: Tournament = {
-      id: tourId,
-      name: formName,
-      description: formDesc || "Kentro Draughts ultimate tournament challenge.",
-      type: formType,
-      visibility: formVisibility,
-      inviteCode: code,
-      maxPlayers: formMaxPlayers,
-      minPlayers: formMinPlayers,
-      registrationDeadline: "Immediate",
-      startTime: "Immediate",
-      timeControl: formTimeControl,
-      handicap: formHandicap,
-      tieBreak: formTieBreak,
-      prize: formPrize,
-      spectatorPermission: formSpectator,
-      status: "registration",
-      currentRound: 1,
-      maxRounds: formType.includes("Arena") ? 1 : 3,
-      players: roster,
-      matches: [],
-      chat: [
-        { id: "welcome", sender: "Organizer", message: `Welcome to ${formName}! Match pairings will start once tournament gets active.`, timestamp: Date.now(), isAnnouncement: true }
-      ],
-      logs: [`Tournament created by ${username || "You"}.`, `${username || "You"} registered in team ${formTeamName}.`],
-      createdAt: new Date().toISOString()
-    };
-
+    if (!formName.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const { error } = await supabase.from("tournaments").insert(newTour);
-      if (error) throw error;
-      setTournamentsList(prev => [newTour, ...prev]);
-      setActiveTour(newTour);
-      setViewState("active");
-      addNotification("Tournament created successfully! Roster populated.");
-    } catch (err) {
-      console.error("Supabase save tournament error, using local state:", err);
-      setActiveTour(newTour);
-      setViewState("active");
-    } finally {
-      setIsLoading(false);
-    }
+      const result = await apiPost('/api/admin/tournaments', { name: formName, description: formDesc, type: formType, visibility: formVisibility,
+        maxPlayers: formMaxPlayers, minPlayers: formMinPlayers, timeControl: formTimeControl, handicap: formHandicap, tieBreak: formTieBreak,
+        prize: formPrize, spectatorPermission: formSpectator });
+      setActiveTour(result.tournament); setViewState('active'); await loadTournaments();
+    } catch (error) { showToast((error as Error).message || 'Could not create the tournament.'); }
+    finally { setIsLoading(false); }
   };
 
   // Delete specific tournament
@@ -368,7 +291,7 @@ function TournamentDashboardImpl({
         // No username: the server derives it from the verified session --
         // the ONLY wallet this can ever charge is the caller's own.
         tournamentId: tour.id,
-        playerData: { rating: userRating || 1500, country: "NG" },
+        playerData: { country: "NG", team: formTeamName },
       });
 
       // Trust the server's authoritative roster (result.players) rather than
@@ -411,278 +334,22 @@ function TournamentDashboardImpl({
     } finally { setIsLoading(false); }
   };
 
-  // Start Tournament & Generate Pairings
+  // Server-owned pairings, results and progression. The browser never reports a winner.
   const handleStartTournament = async () => {
-    if (!activeTour || !canManageTournaments) return;
-    playPromoSound(muted);
-    
-    const logs = [...activeTour.logs, "Tournament started! Generating round 1 pairings."];
-    const pairings = generatePairings(activeTour.players, activeTour.currentRound, activeTour.type);
-    
-    const updatedTour: Tournament = {
-      ...activeTour,
-      status: "active",
-      matches: pairings,
-      logs
-    };
-
-    try {
-      const { error } = await supabase.from("tournaments").update({
-        status: "active",
-        matches: pairings,
-        logs
-      }).eq("id", activeTour.id).select("id");
-      if (error) throw error;
-      setActiveTour(updatedTour);
-      setTimeRemaining(updatedTour.type.includes("Arena") ? 600 : 3600);
-      await loadTournaments();
-      addNotification("Tournament battle has begun! Good luck!");
-    } catch (e) {
-      console.error("Supabase activate tournament fail:", e);
-      showToast("Could not start the tournament. Please try again.");
-    }
+    if (!activeTour || !canManageTournaments || isLoading) return;
+    setIsLoading(true);
+    try { const result = await apiPost('/api/tournaments/start', { tournamentId: activeTour.id }); setActiveTour(result.tournament); await loadTournaments(); }
+    catch (error) { showToast((error as Error).message); }
+    finally { setIsLoading(false); }
   };
-
-  // Generate pairing matches based on format
-  const generatePairings = (players: TournamentPlayer[], round: number, type: string): TournamentMatch[] => {
-    const pairings: TournamentMatch[] = [];
-    const shuff = [...players].sort((a, b) => b.rating - a.rating); // Seeded by rating
-    
-    if (type.includes("Single Elimination") || type.includes("Knockout Cup")) {
-      // Bracket knockout style
-      for (let i = 0; i < shuff.length; i += 2) {
-        if (i + 1 < shuff.length) {
-          pairings.push({
-            id: `match_r${round}_${i}`,
-            round,
-            white: shuff[i].username,
-            black: shuff[i + 1].username,
-            winner: null,
-            status: "pending"
-          });
-        } else {
-          // Bye
-          pairings.push({
-            id: `match_r${round}_${i}`,
-            round,
-            white: shuff[i].username,
-            black: "Bye",
-            winner: "W",
-            status: "completed"
-          });
-        }
-      }
-    } else if (type.includes("Double Elimination")) {
-      // Simplification of double elimination Winners Bracket
-      for (let i = 0; i < shuff.length; i += 2) {
-        if (i + 1 < shuff.length) {
-          pairings.push({
-            id: `match_de_r${round}_${i}`,
-            round,
-            white: shuff[i].username,
-            black: shuff[i + 1].username,
-            winner: null,
-            status: "pending",
-            handicapInfo: "Double Elimination Bracket Match"
-          });
-        }
-      }
-    } else {
-      // Swiss, Arena, Round Robin, League standard score pairings
-      const sortedByPoints = [...players].sort((a, b) => b.points - a.points);
-      const paired = new Set<string>();
-
-      for (let i = 0; i < sortedByPoints.length; i++) {
-        if (paired.has(sortedByPoints[i].username)) continue;
-        
-        let foundOpponent = false;
-        for (let j = i + 1; j < sortedByPoints.length; j++) {
-          if (!paired.has(sortedByPoints[j].username)) {
-            pairings.push({
-              id: `match_r${round}_${i}_${j}`,
-              round,
-              white: sortedByPoints[i].username,
-              black: sortedByPoints[j].username,
-              winner: null,
-              status: "pending"
-            });
-            paired.add(sortedByPoints[i].username);
-            paired.add(sortedByPoints[j].username);
-            foundOpponent = true;
-            break;
-          }
-        }
-        
-        if (!foundOpponent) {
-          // Bye
-          pairings.push({
-            id: `match_r${round}_${i}_bye`,
-            round,
-            white: sortedByPoints[i].username,
-            black: "Bye",
-            winner: "W",
-            status: "completed"
-          });
-          paired.add(sortedByPoints[i].username);
-        }
-      }
-    }
-
-    return pairings;
-  };
-
-  // Launch draughts match for the user
-  const handleLaunchMatch = (match: TournamentMatch) => {
+  const handleLaunchMatch = async (match: TournamentMatch) => {
     if (!activeTour) return;
-    const isWhite = match.white === username;
-    const opponent = isWhite ? match.black : match.white;
-    const handicapRule = activeTour.handicap !== "None" ? activeTour.handicap : "None";
-    
-    // Set match status to playing
-    const updatedMatches = activeTour.matches.map(m => m.id === match.id ? { ...m, status: "playing" as const } : m);
-    setActiveTour({ ...activeTour, matches: updatedMatches });
-
-    // Inform user and trigger callback to launch interactive draught board match
-    addNotification(`Match launched! You play as ${isWhite ? "White" : "Black"} against ${opponent}.`);
-    onStartMatch(opponent, isWhite ? "W" : "B", handicapRule, match.id, activeTour.timeControl);
-  };
-
-  // Handle reporting back the completed draught match result
-  const handleMatchResultReport = async (matchId: string, outcome: "win" | "loss" | "draw") => {
-    if (!activeTour) return;
-    if (!canManageTournaments) {
-      showToast("Your match finished. An organizer must confirm the official tournament result.", "info");
-      onResetMatchOutcome();
-      await loadTournaments();
-      return;
-    }
-    
-    const isWin = outcome === "win";
-    const isLoss = outcome === "loss";
-    const isDraw = outcome === "draw";
-
-    // Deduce winner based on your perspective
-    let winnerSymbol: "W" | "B" | "D" = "D";
-    const userMatch = activeTour.matches.find(m => m.id === matchId);
-    if (userMatch) {
-      const userIsWhite = userMatch.white === username;
-      if (isWin) {
-        winnerSymbol = userIsWhite ? "W" : "B";
-      } else if (isLoss) {
-        winnerSymbol = userIsWhite ? "B" : "W";
-      } else {
-        winnerSymbol = "D";
-      }
-    }
-
-    // Update active matches with winner
-    const updatedMatches = activeTour.matches.map(m => {
-      if (m.id === matchId) {
-        return { ...m, winner: winnerSymbol, status: "completed" as const };
-      }
-      return m;
-    });
-
-    // Award points to human player
-    const updatedPlayers = activeTour.players.map(p => {
-      if (p.username === username) {
-        const addedPts = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
-        return {
-          ...p,
-          wins: p.wins + (outcome === "win" ? 1 : 0),
-          losses: p.losses + (outcome === "loss" ? 1 : 0),
-          draws: p.draws + (outcome === "draw" ? 1 : 0),
-          points: p.points + addedPts,
-          streak: outcome === "win" ? p.streak + 1 : 0
-        };
-      }
-      return p;
-    });
-
-    // Do not invent results for other matches or human opponents.
-    const fullyCompletedMatches = updatedMatches;
-    const finalizedPlayers = updatedPlayers;
-    if (fullyCompletedMatches.some(m => m.round === activeTour.currentRound && m.status !== "completed")) {
-      const { error } = await supabase.from("tournaments").update({
-        matches: fullyCompletedMatches, players: finalizedPlayers,
-      }).eq("id", activeTour.id).select("id");
-      if (error) { showToast("Could not save the confirmed match result."); onResetMatchOutcome(); return; }
-      setActiveTour({ ...activeTour, matches: fullyCompletedMatches, players: finalizedPlayers });
-      onResetMatchOutcome();
-      return;
-    }
-
-    const currentRound = activeTour.currentRound;
-    const maxRounds = activeTour.maxRounds;
-    
-    let nextRound = currentRound;
-    let newStatus = activeTour.status;
-    let nextMatches = fullyCompletedMatches;
-    let logs = [...activeTour.logs, `Round ${currentRound} games completed.`];
-
-    if (currentRound < maxRounds) {
-      nextRound += 1;
-      logs.push(`Generating round ${nextRound} pairings.`);
-      const pairingsForNextRound = generatePairings(finalizedPlayers, nextRound, activeTour.type);
-      nextMatches = [...fullyCompletedMatches, ...pairingsForNextRound];
-    } else {
-      newStatus = "completed";
-      logs.push("Championship concluded! Calculating rankings and distribution of awards.");
-    }
-
-    const nextTourState: Tournament = {
-      ...activeTour,
-      status: newStatus,
-      currentRound: nextRound,
-      matches: nextMatches,
-      players: finalizedPlayers,
-      logs
-    };
-
-    setActiveTour(nextTourState);
-    if (newStatus === "completed") {
-      setViewState("results");
-      playVictorySound(muted);
-    }
-    
-    // Save state to Supabase
     try {
-      const { error } = await supabase.from("tournaments").update({
-        status: newStatus,
-        currentRound: nextRound,
-        matches: nextMatches,
-        players: finalizedPlayers,
-        logs
-      }).eq("id", activeTour.id);
-      if (error) throw error;
-    } catch (e) {
-      console.error("Supabase report match result failed:", e);
-    }
-
-    // Reset parent callback trigger
-    onResetMatchOutcome();
+      const result = await apiPost('/api/tournaments/join-match', { tournamentId: activeTour.id, matchId: match.id });
+      onStartMatch(match.white === username ? match.black : match.white, result.color, activeTour.handicap, match.id, activeTour.timeControl, result.roomId);
+    } catch (error) { showToast((error as Error).message); }
   };
-
-  const handleCompleteTournament = async () => {
-    if (!activeTour || !canManageTournaments) return;
-    const logs = [...activeTour.logs, "Tournament duration expired. Concluding tournament standings."];
-    const completedTour: Tournament = {
-      ...activeTour,
-      status: "completed",
-      logs
-    };
-    setActiveTour(completedTour);
-    setViewState("results");
-    playVictorySound(muted);
-
-    try {
-      const { error } = await supabase.from("tournaments").update({
-        status: "completed",
-        logs
-      }).eq("id", activeTour.id);
-      if (error) throw error;
-    } catch (e) {}
-  };
+  const handleCompleteTournament = () => showToast('The server completes the tournament after its authoritative games finish.', 'info');
 
   // Chat message sending
   const handleSendChatMessage = async () => {
@@ -1366,7 +1033,7 @@ function TournamentDashboardImpl({
 
                 <div className="flex-1 overflow-y-auto space-y-2 border border-slate-950 bg-slate-950/60 rounded-xl p-2 divide-y divide-slate-950">
                   {activeTour.players
-                    .sort((a, b) => b.points - a.points || b.rating - a.rating)
+                    .slice().sort((a, b) => b.points - a.points || b.rating - a.rating)
                     .map((p, index) => {
                       const isSelf = p.username === username;
                       return (
@@ -1503,9 +1170,10 @@ function TournamentDashboardImpl({
 
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-2">
                   <Eye className="w-6 h-6 text-slate-500" />
-                  <h5 className="font-bold text-slate-300 text-xs">Tournament broadcasts unavailable</h5>
+                  <h5 className="font-bold text-slate-300 text-xs">Live tournament games</h5>
                   <p className="text-slate-400 text-xs max-w-xs leading-relaxed">
-                    This tournament has no connected live board feed. Open Kentro TV from the main menu to watch available online matches.
+                    {activeTour.visibility === 'private' || !activeTour.spectatorPermission ? 'Spectating is disabled for this event.' : 'Open an authoritative live board below.'}
+                    {activeTour.visibility !== 'private' && activeTour.spectatorPermission && activeTour.matches.filter(match => match.roomId && match.status !== 'completed').map(match => <button key={match.id} className="block p-2 text-amber-300" onClick={() => onSpectateMatch?.(match.roomId!)}>Watch {match.white} vs {match.black}</button>)}
                   </p>
                 </div>
               </div>
@@ -1657,7 +1325,7 @@ function TournamentDashboardImpl({
                 { label: "Champion", index: 0, medal: "🥇" },
                 { label: "Third Place", index: 2, medal: "🥉" }
               ].map((pos) => {
-                const p = activeTour.players.sort((a, b) => b.points - a.points || b.rating - a.rating)[pos.index];
+                const p = activeTour.players.slice().sort((a, b) => b.points - a.points || b.rating - a.rating)[pos.index];
                 if (!p) return null;
                 return (
                   <div 
