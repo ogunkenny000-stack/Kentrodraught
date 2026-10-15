@@ -10,6 +10,8 @@ import { debitMultipleWallets, creditWallet, getOrCreateWallet, debitWallet, set
 import { requirePermission, writeAuditLog, ADMIN_PERMISSIONS, getAdminByUid, type AdminPermission } from "./adminService";
 import compression from "compression";
 import { getSupabaseAdmin, verifyAccessToken } from "./supabaseAdmin";
+import { canReadGameRecord, requestAccessToken } from "./src/server/httpAuth";
+import { createAccountAuthRouter } from "./src/server/accountAuth";
 import { Client as PgClient } from "pg";
 import {
   initGameRecordsManager,
@@ -26,14 +28,8 @@ import { isScanFen, isEngineDepth, MAX_ENGINE_DEPTH, parseEngineMoveRequest } fr
 import { accountForUsername, insertNotification, sendTournamentReminders } from "./src/server/notifications";
 import { deliverPendingPushes, safePushEndpoint, validateSubscription, vapidSettings } from "./src/server/webPush";
 
-// --- Kentro Coins + Admin Panel: temporarily disabled for launch ---
-// Both features route through the Supabase service-role client
-// (getSupabaseAdmin() in supabaseAdmin.ts), which requires SUPABASE_URL +
-// SUPABASE_SECRET_KEY to be set -- WITHOUT that secret, flipping either
-// flag to true just changes a 503 into a different crash (the underlying
-// getSupabaseAdmin() call throws). Independent flags rather than one
-// combined flag so either feature can be on/off separately: Kentro Coins
-// stay off (per explicit decision), Admin Panel is back on.
+// Privileged features require server-side Supabase credentials and verified
+// UID permission grants. Missing credentials fail closed in the auth layer.
 const KENTRO_ADMIN_ENABLED = true;
 const KENTRO_COINS_ENABLED = true;
 
@@ -115,6 +111,22 @@ interface EngineResult {
  * single conversation that cannot be shared between two concurrent requests.
  */
 class PersistentEngine {
+  private stopped = false;
+
+  stop(): Promise<void> {
+    this.stopped = true;
+    const child = this.proc;
+    this.proc = null;
+    this.readyPromise = null;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+    return new Promise((resolve) => {
+      // Reap the native child before exiting; an immediate process.exit after
+      // kill leaves a zombie under a container init that does not reap children.
+      const deadline = setTimeout(() => child.kill("SIGKILL"), 500);
+      child.once("exit", () => { clearTimeout(deadline); resolve(); });
+      child.kill("SIGTERM");
+    });
+  }
   private proc: ChildProcess | null = null;
   private readyPromise: Promise<void> | null = null;
   private mutex = new Mutex();
@@ -126,6 +138,7 @@ class PersistentEngine {
   /** Spawns the engine process and waits for the one-time init handshake. Safe to call
    * repeatedly -- returns the existing in-flight/ready promise if already starting/started. */
   private start(): Promise<void> {
+    if (this.stopped) return Promise.reject(new Error("Engine is shutting down"));
     if (this.proc && !this.proc.killed && this.readyPromise) return this.readyPromise;
 
     if (!fs.existsSync(this.binaryPath)) {
@@ -555,13 +568,15 @@ function resolveEntryFee(room: { gameTime: number; specialRule: string; wagerAmo
 //     "assume it's fine")
 async function checkWithdrawalEligibility(
   username: string,
+  verifiedUid: string,
   requestedCoins: number,
   settings: CoinSettings
 ): Promise<{ eligible: boolean; reason?: string; balance: number }> {
   const uname = username.toLowerCase().trim();
   const db = getSupabaseAdmin();
 
-  const { data: wallet } = await db.from("coin_wallets").select("balance").eq("username", uname).maybeSingle();
+  const { data: wallet, error: walletError } = await db.from("coin_wallets").select("balance").eq("username", uname).maybeSingle();
+  if (walletError) throw walletError;
   const balance = (wallet?.balance as number) ?? 0;
 
   if (requestedCoins < settings.withdrawalMinCoins) {
@@ -571,18 +586,21 @@ async function checkWithdrawalEligibility(
     return { eligible: false, reason: `You only have ${balance} coins.`, balance };
   }
 
-  const { data: profile } = await db.from("profiles").select("createdAt").eq("usernameLower", uname).maybeSingle();
+  const { data: profile, error: profileError } = await db.from("profiles").select("createdAt")
+    .eq("usernameLower", uname).eq("ownerId", verifiedUid).maybeSingle();
+  if (profileError) throw profileError;
   const accountCreatedAt = profile?.createdAt as number | undefined;
   const accountAgeDays = accountCreatedAt ? (Date.now() - accountCreatedAt) / (1000 * 60 * 60 * 24) : -1;
   if (accountAgeDays < settings.withdrawalMinAccountAgeDays) {
     return { eligible: false, reason: `Your account needs to be at least ${settings.withdrawalMinAccountAgeDays} days old to withdraw.`, balance };
   }
 
-  const { count } = await db
+  const { count, error: gamesError } = await db
     .from("completed_games")
     .select("gameId", { count: "exact", head: true })
     .in("playMode", ["Multiplayer", "Tournament"])
-    .or(`whitePlayer.eq.${uname},blackPlayer.eq.${uname}`);
+    .contains("participantUserIds", [verifiedUid]);
+  if (gamesError) throw gamesError;
   const realGamesPlayed = count ?? 0;
   if (realGamesPlayed < settings.withdrawalMinGamesPlayed) {
     return { eligible: false, reason: `Play at least ${settings.withdrawalMinGamesPlayed} real games first (AI games don't count) -- you're at ${realGamesPlayed}.`, balance };
@@ -683,8 +701,8 @@ async function applySignupFixMigration() {
   // Editor (supabase/all_migrations_combined.sql), so the server should not
   // even think about the database at boot. Baked into the Dockerfile as
   // ENV SKIP_DB_MIGRATION=1 -- boot is instant and the log stays clean.
-  if (process.env.SKIP_DB_MIGRATION === "1") {
-    console.log("[Migration] Skipped (SKIP_DB_MIGRATION=1) — schema is managed manually.");
+  if (process.env.SKIP_DB_MIGRATION !== "0") {
+    console.log("[Migration] Skipped — schema changes require explicit SKIP_DB_MIGRATION=0 opt-in.");
     return;
   }
   const connectionString = process.env.SUPABASE_DB_URL;
@@ -698,7 +716,7 @@ async function applySignupFixMigration() {
     );
     return;
   }
-  const client = new PgClient({ connectionString, ssl: { rejectUnauthorized: false } });
+  const client = new PgClient({ connectionString, ssl: { rejectUnauthorized: true } });
   try {
     await client.connect();
     await client.query(SIGNUP_FIX_MIGRATION_SQL);
@@ -729,10 +747,14 @@ async function startServer() {
   // correctly (e.g. the admin bootstrap right below) -- safe to call on
   // every boot, see the comment above SIGNUP_FIX_MIGRATION_SQL.
   await applySignupFixMigration();
-  await initGameRecordsManager();
+  await initGameRecordsManager({ handleSignals: false });
 
   const app = express();
   app.disable("x-powered-by");
+  // The local Go edge may forward the real peer address. Direct remote peers
+  // cannot choose their rate-limit bucket with an arbitrary forwarded header.
+  app.set("trust proxy", "loopback");
+  let shuttingDown = false;
 
   // --- Security Headers & Hardening Middleware ---
   app.use((_req, res, next) => {
@@ -746,6 +768,11 @@ async function startServer() {
   });
 
   // --- In-Memory Sliding Window Rate Limiter ---
+  // Lightweight process readiness: no database calls or engine queue work.
+  app.get("/api/health", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(shuttingDown ? 503 : 200).json({ ok: !shuttingDown, component: "kentro-node" });
+  });
   interface RateLimitRule {
     windowMs: number;
     max: number;
@@ -754,7 +781,7 @@ async function startServer() {
 
   function createRateLimiter(rule: RateLimitRule, prefix = "global") {
     return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-      const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
       const key = `${prefix}:${ip}`;
       const now = Date.now();
       const record = rateLimitStore.get(key);
@@ -796,36 +823,32 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use('/api/auth', createRateLimiter({ windowMs: 60_000, max: 12 }, 'account-auth'), createAccountAuthRouter());
 
-  // --- Bootstrap the first admin ---
-  // /api/admin/set-admin requires an existing admin with manage_admins to
-  // grant access -- which is impossible for the very first admin. If
-  // BOOTSTRAP_ADMIN_USERNAME is set and no admins exist yet, register that
-  // username (using their existing profiles."ownerId", i.e. they must have
-  // played at least one game already so there's a device identity to bind
-  // to) as a Super-Admin-equivalent with every permission. This only ever
-  // does anything once -- as soon as one admin exists, it's a no-op
-  // forever, so it's safe to leave the env var set permanently.
-  if (process.env.SUPABASE_SECRET_KEY && process.env.BOOTSTRAP_ADMIN_USERNAME) {
+  // Bootstrap only an explicitly configured Auth UID when no admin exists.
+  // Username claims and profile edits must never bootstrap authority.
+  if (process.env.SUPABASE_SECRET_KEY && process.env.BOOTSTRAP_ADMIN_UID) {
     try {
       const db = getSupabaseAdmin();
       const { data: existing, error: existingError } = await db.from("admins").select("username").limit(1);
       if (existingError) throw existingError;
       if (!existing || existing.length === 0) {
-        const uname = process.env.BOOTSTRAP_ADMIN_USERNAME.toLowerCase().trim();
-        const { data: profile } = await db.from("profiles").select("ownerId").eq("usernameLower", uname).maybeSingle();
-        if (profile?.ownerId) {
-          await db.from("admins").upsert({
-            username: uname,
-            uid: profile.ownerId,
+        const bootstrapUid = process.env.BOOTSTRAP_ADMIN_UID;
+        const { data: profile, error: profileError } = await db.from("profiles").select("ownerId, usernameLower").eq("ownerId", bootstrapUid).maybeSingle();
+        if (profileError) throw profileError;
+        if (profile?.ownerId && profile.usernameLower) {
+          const { error: bootstrapError } = await db.from("admins").upsert({
+            username: profile.usernameLower,
+            uid: bootstrapUid,
             permissions: [...ADMIN_PERMISSIONS],
             roleLabel: "Super Administrator",
             addedAt: Date.now(),
             addedBy: "bootstrap",
           });
-          console.log(`[Bootstrap] Registered "${uname}" as the first admin (full permissions).`);
+          if (bootstrapError) throw bootstrapError;
+          console.log("[Bootstrap] Registered the explicitly configured Auth user ID as the first admin.");
         } else {
-          console.warn(`[Bootstrap] BOOTSTRAP_ADMIN_USERNAME="${uname}" hasn't played a game yet -- can't bind admin access until a profile for ${uname} exists. Will retry on next restart.`);
+          console.warn("[Bootstrap] BOOTSTRAP_ADMIN_UID has no canonical profile; administrator access was not granted.");
         }
       }
     } catch (err) {
@@ -922,7 +945,8 @@ async function startServer() {
     try {
       const { gameCode } = req.params;
       const game = await getGameRecordByCode(gameCode);
-      if (!game) {
+      const uid = game?.private ? await verifyAccessToken(requestAccessToken(req.headers)) : null;
+      if (!game || !canReadGameRecord(game, uid)) {
         return res.status(404).json({ ok: false, error: "Game not found" });
       }
       res.json({ ok: true, game });
@@ -943,10 +967,16 @@ async function startServer() {
     }
   });
 
-  app.get("/api/games/series/:seriesId", (req, res) => {
+  app.get("/api/games/series/:seriesId", async (req, res) => {
     try {
       const { seriesId } = req.params;
       const series = getSeriesById(seriesId);
+      if (!series) return res.status(404).json({ ok: false, error: "Series not found" });
+      const games = await Promise.all(series.games.map(summary => getGameRecordByCode(summary.gameCode)));
+      const uid = games.some(game => game?.private) ? await verifyAccessToken(requestAccessToken(req.headers)) : null;
+      if (games.some(game => !game || !canReadGameRecord(game, uid))) {
+        return res.status(404).json({ ok: false, error: "Series not found" });
+      }
       res.json({ ok: true, series });
     } catch (err: any) {
       res.status(500).json({ ok: false, error: "Internal server error" });
@@ -964,9 +994,13 @@ async function startServer() {
 
   app.post("/api/games/record", async (req, res) => {
     try {
+      // Official records are produced by the authoritative game server.
+      // This maintenance import route requires an explicit administrator.
+      const admin = await requirePermission(requestAccessToken(req.headers), "view_games");
+      if (!admin) return res.status(403).json({ ok: false, error: "Not authorized" });
       const data = req.body;
-      if (!data || !data.gameCode) {
-        return res.status(400).json({ ok: false, error: "Missing gameCode" });
+      if (!data || !/^\d{7,10}$/.test(String(data.gameCode || ""))) {
+        return res.status(400).json({ ok: false, error: "Invalid gameCode" });
       }
       const saved = await recordGameEnd(data);
       res.json({ ok: true, game: saved });
@@ -1102,11 +1136,22 @@ async function startServer() {
         return res.status(404).json({ error: "Game not found" });
       }
 
-      if (game.moveEvaluations && Object.keys(game.moveEvaluations).length >= (game.moveHistory?.length || 0)) {
+      const uid = game.private ? await verifyAccessToken(requestAccessToken(req.headers)) : null;
+      if (!canReadGameRecord(game, uid)) {
+        return res.status(404).json({ error: "Game not found" });
+      }
+
+      const moveCount = Array.isArray(game.moveHistory) ? game.moveHistory.length : 0;
+      if (game.moveEvaluations && Array.from({ length: moveCount }, (_, index) => index)
+          .every(index => Object.prototype.hasOwnProperty.call(game.moveEvaluations, index))) {
         return res.json({ ok: true, alreadyAnalyzed: true, moveEvaluations: game.moveEvaluations });
       }
 
-      const moveEvaluations = await runServerSideGameAnalysis(game);
+      const analysis = await runServerSideGameAnalysis(game);
+      const moveEvaluations = analysis ? {
+        ...analysis,
+        ...(game.moveEvaluations?.__kentroGameRecord ? { __kentroGameRecord: game.moveEvaluations.__kentroGameRecord } : {}),
+      } : null;
       if (moveEvaluations) {
         await db.from("completed_games").update({ moveEvaluations }).eq("gameId", gameId);
       }
@@ -1140,7 +1185,10 @@ async function startServer() {
           console.log(`[Background Analysis] Idle worker analyzing game ${game.gameId} (${game.moveHistory.length} moves)...`);
           const evals = await runServerSideGameAnalysis(game);
           if (evals && !isLiveMultiplayerActive()) {
-            await db.from("completed_games").update({ moveEvaluations: evals }).eq("gameId", game.gameId);
+            await db.from("completed_games").update({ moveEvaluations: {
+              ...evals,
+              ...(game.moveEvaluations?.__kentroGameRecord ? { __kentroGameRecord: game.moveEvaluations.__kentroGameRecord } : {}),
+            } }).eq("gameId", game.gameId);
             console.log(`[Background Analysis] Successfully analyzed game ${game.gameId}`);
           }
         }
@@ -1164,7 +1212,7 @@ async function startServer() {
     try {
       const { username } = req.params;
       const cleanUname = username.toLowerCase().trim();
-      const accessToken = (req.headers["x-access-token"] as string) || undefined;
+      const accessToken = requestAccessToken(req.headers);
       const uid = await verifyAccessToken(accessToken);
       if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
@@ -1173,7 +1221,11 @@ async function startServer() {
       const balance = (wallet?.balance as number) ?? 0;
       const ownerId = wallet?.ownerId ?? null;
 
-      if (ownerId && ownerId !== uid) {
+      const { data: profileOwner, error: profileOwnerError } = await db.from("profiles")
+        .select("ownerId").eq("usernameLower", cleanUname).maybeSingle();
+      if (profileOwnerError) throw profileOwnerError;
+      // RPC-created wallets may have a null ownerId; absence never grants access.
+      if (profileOwner?.ownerId !== uid || (ownerId && ownerId !== uid)) {
         const admin = await getAdminByUid(uid);
         if (!admin || !admin.permissions.includes("view_users")) {
           return res.status(403).json({ error: "Not authorized to view this wallet" });
@@ -1211,12 +1263,12 @@ async function startServer() {
   app.post("/api/coins/unlock-ai-level", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
     try {
-      const accessToken = req.headers["x-access-token"] as string | undefined;
+      const accessToken = requestAccessToken(req.headers);
       const uid = await verifyAccessToken(accessToken);
       if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
       const { username, level } = req.body; // level: number (2-8) or "all"
-      if (!username || (level !== "all" && (typeof level !== "number" || level < 2 || level > 8))) {
+      if (!username || (level !== "all" && (!Number.isInteger(level) || level < 2 || level > 8))) {
         return res.status(400).json({ error: "Invalid request" });
       }
 
@@ -1230,20 +1282,12 @@ async function startServer() {
       const settings = await getCoinSettings();
       const cost = level === "all" ? settings.aiUnlockAllCost : settings.aiUnlockCostPerLevel;
 
-      // Use the LOWERCASED wallet key -- wallet rows are keyed by
-      // usernameLower, so passing the raw (possibly mixed-case) username
-      // here looked up the wrong/non-existent wallet and made the unlock
-      // silently fail even when the player had plenty of coins.
-      const result = await debitWallet(cleanUname, cost, "ai_unlock", level === "all" ? "all" : String(level));
-      if (!result.ok) {
-        return res.status(402).json({ error: "Not enough Kentro Coins", balance: result.balance, cost });
-      }
-
-      const currentMax = (profile.maxUnlockedKenLevel as number) || 1;
-      const newMax = level === "all" ? 8 : Math.max(currentMax, level);
-      await db.from("profiles").update({ maxUnlockedKenLevel: newMax }).eq("usernameLower", cleanUname);
-
-      res.json({ ok: true, balance: result.balance, maxUnlockedKenLevel: newMax });
+      const { data: result, error: unlockError } = await db.rpc("kentro_unlock_ai", {
+        p_owner: uid, p_username: cleanUname, p_level: level === "all" ? 8 : level, p_cost: cost,
+      });
+      if (unlockError) throw unlockError;
+      if (!result?.ok) return res.status(402).json({ error: "Not enough Kentro Coins", balance: result?.balance, cost });
+      res.json(result);
     } catch (err) {
       console.error("AI unlock purchase error:", err);
       res.status(500).json({ error: "Failed to process unlock" });
@@ -1267,7 +1311,7 @@ async function startServer() {
   app.post("/api/coins/tournament-entry", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
     try {
-      const accessToken = req.headers["x-access-token"] as string | undefined;
+      const accessToken = requestAccessToken(req.headers);
       const uid = await verifyAccessToken(accessToken);
       if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
@@ -1279,7 +1323,7 @@ async function startServer() {
       // caller was logged in as *somebody* -- letting any signed-in user
       // register, and charge the entry fee to, any other player's wallet.)
       const { data: profileRow } = await getSupabaseAdmin()
-        .from("profiles").select("username, usernameLower").eq("ownerId", uid).maybeSingle();
+        .from("profiles").select("username, usernameLower, elo").eq("ownerId", uid).maybeSingle();
       if (!profileRow?.usernameLower) return res.status(403).json({ error: "No profile for this account" });
       const username = profileRow.username;          // canonical case, for the roster
       const walletKey = profileRow.usernameLower;    // wallet rows are lowercase-keyed
@@ -1293,7 +1337,7 @@ async function startServer() {
 
       const newPlayer = {
         username,
-        rating: typeof playerData?.rating === "number" ? playerData.rating : 1500,
+        rating: Number.isFinite(Number(profileRow.elo)) ? Number(profileRow.elo) : 1500,
         wins: 0,
         losses: 0,
         draws: 0,
@@ -1343,7 +1387,7 @@ async function startServer() {
   app.post("/api/coins/withdraw-request", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
     try {
-      const accessToken = req.headers["x-access-token"] as string | undefined;
+      const accessToken = requestAccessToken(req.headers);
       const uid = await verifyAccessToken(accessToken);
       if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
@@ -1358,53 +1402,30 @@ async function startServer() {
         .from("profiles").select("usernameLower").eq("ownerId", uid).maybeSingle();
       const uname = wProfile?.usernameLower || "";
       const requestedCoins = Number(coins);
-      if (!uname || !Number.isFinite(requestedCoins) || requestedCoins <= 0 || !accountName || !accountNumber) {
+      if (!uname || !Number.isSafeInteger(requestedCoins) || requestedCoins <= 0 || !accountName || !accountNumber) {
         return res.status(400).json({ error: "Invalid request" });
       }
 
       const settings = await getCoinSettings();
-      const eligibility = await checkWithdrawalEligibility(uname, requestedCoins, settings);
+      const eligibility = await checkWithdrawalEligibility(uname, uid, requestedCoins, settings);
       if (!eligibility.eligible) {
         return res.status(400).json({ error: eligibility.reason || "Not eligible to withdraw", balance: eligibility.balance });
       }
 
-      // Escrow: debit now, before the admin has even seen this, so the
-      // same coins can't be wagered or spent elsewhere in the meantime.
-      // Re-checked atomically here even though checkWithdrawalEligibility
-      // just confirmed the balance -- that was a separate read, and the
-      // balance could have moved in between (e.g. a match finishing).
-      const debitResult = await debitWallet(uname, requestedCoins, "withdrawal", undefined);
-      if (!debitResult.ok) {
-        return res.status(400).json({ error: `You only have ${debitResult.balance} coins.`, balance: debitResult.balance });
-      }
-      const newBalance = debitResult.balance;
-
       const nairaAmount = Math.floor((requestedCoins / 100) * settings.withdrawalRatePerHundredCoins);
-      const { data: inserted, error: insertError } = await getSupabaseAdmin()
-        .from("withdrawal_requests")
-        .insert({
-          username: uname,
-          ownerId: uid,
-          coins: requestedCoins,
-          nairaAmount,
-          accountName: String(accountName).trim(),
-          accountNumber: String(accountNumber).trim(),
-          bankName: bankName ? String(bankName).trim() : null,
-          status: "pending",
-          submittedAt: Date.now(),
-        })
-        .select("id")
-        .single();
-
-      if (insertError) {
-        // The escrow debit already happened -- if the request row failed to
-        // save, refund immediately rather than leaving coins stuck in limbo
-        // with no record of why.
-        await creditWallet(uname, requestedCoins, "refund", "withdraw-request-failed");
-        throw insertError;
+      if (typeof accountName !== "string" || !accountName.trim() || accountName.trim().length > 120 ||
+          typeof accountNumber !== "string" || !/^[0-9]{10}$/.test(accountNumber.trim())) {
+        return res.status(400).json({ error: "A valid account name and 10-digit account number are required" });
       }
-
-      res.json({ ok: true, requestId: inserted.id, balance: newBalance, nairaAmount });
+      // Escrow and request creation commit together; failed inserts cannot strand funds.
+      const { data: result, error: requestError } = await getSupabaseAdmin().rpc("kentro_create_withdrawal", {
+        p_owner: uid, p_username: uname, p_coins: requestedCoins, p_naira: nairaAmount,
+        p_account_name: accountName.trim(), p_account_number: accountNumber.trim(),
+        p_bank: typeof bankName === "string" ? bankName.trim().slice(0,120) : null,
+      });
+      if (requestError) throw requestError;
+      if (!result?.ok) return res.status(400).json({ error: "Not enough Kentro Coins", balance: result?.balance });
+      res.json(result);
     } catch (err) {
       console.error("withdraw-request error:", err);
       res.status(500).json({ error: "Failed to submit withdrawal request" });
@@ -1416,45 +1437,21 @@ async function startServer() {
   // time); "rejected" refunds the escrowed coins back.
   app.post("/api/admin/resolve-withdrawal", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const { requestId, approve } = req.body;
     const admin = await requirePermission(accessToken, "manage_payments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
     try {
-      const db = getSupabaseAdmin();
-      const { data: reqData, error: fetchError } = await db.from("withdrawal_requests").select("*").eq("id", requestId).maybeSingle();
-      if (fetchError) throw fetchError;
-      if (!reqData) return res.status(404).json({ error: "Request not found" });
-      if (reqData.status !== "pending") return res.status(400).json({ error: "Already resolved" });
-
-      if (approve) {
-        const { data: claimed } = await db.from("withdrawal_requests")
-          .update({ status: "paid", resolvedBy: admin.username, resolvedAt: Date.now() })
-          .eq("id", requestId).eq("status", "pending").select("id");
-        if (!claimed || claimed.length === 0) return res.status(400).json({ error: "Already resolved" });
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "approve_withdrawal",
-          target: reqData.username, details: { requestId, coins: reqData.coins, nairaAmount: reqData.nairaAmount }, result: "success",
-        });
-      } else {
-        const { data: claimed } = await db.from("withdrawal_requests")
-          .update({ status: "rejected", resolvedBy: admin.username, resolvedAt: Date.now() })
-          .eq("id", requestId).eq("status", "pending").select("id");
-        if (!claimed || claimed.length === 0) return res.status(400).json({ error: "Already resolved" });
-        let newBalance: number;
-        try {
-          newBalance = await creditWallet(reqData.username, reqData.coins, "refund", requestId);
-        } catch (err) {
-          await db.from("withdrawal_requests").update({ status: "pending", resolvedBy: null, resolvedAt: null }).eq("id", requestId);
-          throw err;
-        }
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "reject_withdrawal",
-          target: reqData.username, details: { requestId, coinsRefunded: reqData.coins, newBalance }, result: "success",
-        });
-      }
-
+      if (typeof approve !== "boolean" || typeof requestId !== "string") return res.status(400).json({ error: "Invalid request" });
+      const { data: result, error } = await getSupabaseAdmin().rpc("kentro_resolve_withdrawal", {
+        p_id: requestId, p_approve: approve, p_admin: admin.username,
+      });
+      if (error) throw error;
+      if (!result?.ok) return res.status(result?.error === "not_found" ? 404 : 409).json({ error: result?.error || "Failed to resolve request" });
+      await writeAuditLog({ adminUsername: admin.username, adminUid: admin.uid,
+        action: approve ? "approve_withdrawal" : "reject_withdrawal", target: result.username,
+        details: { requestId, coins: result.coins }, result: "success" });
       res.json({ ok: true });
     } catch (err) {
       console.error("resolve-withdrawal error:", err);
@@ -1464,7 +1461,7 @@ async function startServer() {
 
   app.get("/api/admin/pending-withdrawals", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_payments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     const { data, error } = await getSupabaseAdmin().from("withdrawal_requests").select("*").eq("status", "pending").order("submittedAt", { ascending: false });
@@ -1495,7 +1492,7 @@ async function startServer() {
   app.post("/api/admin/whoami", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
     try {
-      const accessToken = req.headers["x-access-token"] as string | undefined;
+      const accessToken = requestAccessToken(req.headers);
       const uid = await verifyAccessToken(accessToken);
       if (!uid) return res.json({ isAdmin: false });
       const admin = await getAdminByUid(uid);
@@ -1518,7 +1515,7 @@ async function startServer() {
   // secure identity in this app.
   app.post("/api/admin/set-admin", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_admins");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -1558,7 +1555,7 @@ async function startServer() {
 
   app.post("/api/admin/remove-admin", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_admins");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -1583,7 +1580,7 @@ async function startServer() {
 
   app.get("/api/admin/list-admins", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_admins");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     const { data, error } = await getSupabaseAdmin().from("admins").select("*");
@@ -1600,7 +1597,7 @@ async function startServer() {
   // doesn't need its own separate permission tier.
   app.get("/api/admin/user-detail", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "view_users");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -1643,7 +1640,7 @@ async function startServer() {
   // User management actions (suspend/ban/unban/edit username/reset rating).
   app.post("/api/admin/user-action", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const { action, targetUsername, newValue } = req.body;
     const permissionNeeded: AdminPermission =
       action === "ban" || action === "delete" ? "ban_users" :
@@ -1659,42 +1656,40 @@ async function startServer() {
       const db = getSupabaseAdmin();
       const uname = targetUsername.toLowerCase().trim();
       let details: Record<string, unknown> = {};
+      const updateProfile = async (changes: Record<string, unknown>, revokeAccess = false) => {
+        const { data: changed, error } = await db.from("profiles").update(changes)
+          .eq("usernameLower", uname).select("ownerId").maybeSingle();
+        if (error) throw error;
+        if (!changed) throw new Error("Target profile not found");
+        if (revokeAccess && changed.ownerId) onlinePlay.revokeUser(changed.ownerId);
+      };
 
       switch (action) {
         case "ban":
-          await db.from("profiles").update({ banned: true, bannedAt: Date.now(), bannedBy: admin.username }).eq("usernameLower", uname);
+          await updateProfile({ banned: true, bannedAt: Date.now(), bannedBy: admin.username }, true);
           break;
         case "unban":
-          await db.from("profiles").update({ banned: false }).eq("usernameLower", uname);
+          await updateProfile({ banned: false });
           break;
         case "suspend": {
           const until = typeof newValue === "number" ? newValue : Date.now() + 24 * 60 * 60 * 1000;
-          await db.from("profiles").update({ suspendedUntil: until, suspendedBy: admin.username }).eq("usernameLower", uname);
+          if (!Number.isSafeInteger(until)) return res.status(400).json({ error: "Invalid suspension time" });
+          await updateProfile({ suspendedUntil: until, suspendedBy: admin.username }, until > Date.now());
           details = { until };
           break;
         }
         case "unsuspend":
-          await db.from("profiles").update({ suspendedUntil: null }).eq("usernameLower", uname);
+          await updateProfile({ suspendedUntil: null });
           break;
         case "edit_username":
           return res.status(400).json({ error: "Username changes require a row migration, not supported yet." });
         case "reset_rating":
-          await db.from("profiles").update({ elo: 1500 }).eq("usernameLower", uname);
+          await updateProfile({ elo: 1500 });
           break;
-        case "delete": {
-          const { data: prof } = await db.from("profiles").select("ownerId, username").eq("usernameLower", uname).maybeSingle();
-          const ownerId = prof?.ownerId;
-          if (ownerId) {
-            try {
-              await db.auth.admin.deleteUser(ownerId);
-            } catch (authErr) {
-              console.error("Failed to delete auth user from Supabase:", authErr);
-            }
-          }
-          await db.from("profiles").delete().eq("usernameLower", uname);
-          await db.from("coin_wallets").delete().eq("username", prof?.username || targetUsername);
-          break;
-        }
+        case "delete":
+          // Wallet deletion cascades through the immutable financial ledger.
+          // Account erasure needs a reviewed retention/settlement workflow.
+          return res.status(409).json({ error: "Account deletion requires a reviewed retention and settlement workflow. Use suspension or ban for immediate access removal." });
         default:
           return res.status(400).json({ error: "Unknown action" });
       }
@@ -1711,13 +1706,13 @@ async function startServer() {
       res.json({ ok: true });
     } catch (err) {
       console.error("user-action error:", err);
-      await writeAuditLog({
+      try { await writeAuditLog({
         adminUsername: admin.username,
         adminUid: admin.uid,
         action: `user_${action}`,
         target: targetUsername,
         result: "failure",
-      });
+      }); } catch (auditError) { console.error("user-action failure audit error:", auditError); }
       res.status(500).json({ error: "Action failed" });
     }
   });
@@ -1727,56 +1722,31 @@ async function startServer() {
   // buyer's wallet.
   app.post("/api/admin/resolve-purchase", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const { requestId, approve } = req.body;
     const admin = await requirePermission(accessToken, "manage_payments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
     try {
+      if (typeof approve !== "boolean" || typeof requestId !== "string") return res.status(400).json({ error: "Invalid request" });
       const db = getSupabaseAdmin();
-      const { data: reqData, error: fetchError } = await db.from("purchase_requests").select("*").eq("id", requestId).maybeSingle();
+      const { data: reqData, error: fetchError } = await db.from("purchase_requests").select("packageId").eq("id", requestId).maybeSingle();
       if (fetchError) throw fetchError;
       if (!reqData) return res.status(404).json({ error: "Request not found" });
-      if (reqData.status !== "pending") return res.status(400).json({ error: "Already resolved" });
-
-      if (approve) {
-        const settings = await getCoinSettings();
-        const pkg = settings.coinPackages.find(p => p.id === reqData.packageId) || settings.coinPackages[0];
-        // Atomically CLAIM the row first (status pending -> approved). Two
-        // admins double-clicking used to both pass the read-then-act check
-        // above and credit the coins twice; now the second click finds no
-        // pending row to claim and stops.
-        const { data: claimed } = await db.from("purchase_requests")
-          .update({ status: "approved", resolvedBy: admin.username, resolvedAt: Date.now(), coinsCredited: pkg.coins })
-          .eq("id", requestId).eq("status", "pending").select("id");
-        if (!claimed || claimed.length === 0) return res.status(400).json({ error: "Already resolved" });
-        // Credit the account that actually OWNS the request (rows are
-        // client-inserted; the username string in them is display data).
-        let creditName = reqData.username;
-        if (reqData.ownerId) {
-          const { data: p } = await db.from("profiles").select("usernameLower").eq("ownerId", reqData.ownerId).maybeSingle();
-          if (p?.usernameLower) creditName = p.usernameLower;
-        }
-        let newBalance: number;
-        try {
-          newBalance = await creditWallet(creditName, pkg.coins, "purchase_credit", requestId);
-        } catch (err) {
-          // Credit failed after the claim -- release the claim so it can be retried.
-          await db.from("purchase_requests").update({ status: "pending", resolvedBy: null, resolvedAt: null, coinsCredited: null }).eq("id", requestId);
-          throw err;
-        }
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "approve_purchase",
-          target: reqData.username, details: { requestId, coinsCredited: pkg.coins, newBalance }, result: "success",
-        });
-      } else {
-        await db.from("purchase_requests").update({ status: "rejected", resolvedBy: admin.username, resolvedAt: Date.now() }).eq("id", requestId);
-        await writeAuditLog({
-          adminUsername: admin.username, adminUid: admin.uid, action: "reject_purchase",
-          target: reqData.username, details: { requestId }, result: "success",
-        });
+      const settings = await getCoinSettings();
+      const pkg = settings.coinPackages.find(p => p.id === reqData.packageId);
+      if (approve && (!pkg || !Number.isSafeInteger(pkg.coins) || pkg.coins<=0)) {
+        return res.status(400).json({ error: "Purchase package is unavailable; review this request before approval" });
       }
-
+      // Claim, canonical-owner lookup and credit are one database transaction.
+      const { data: result, error } = await db.rpc("kentro_resolve_purchase", {
+        p_id: requestId, p_approve: approve, p_admin: admin.username, p_coins: pkg?.coins ?? 0,
+      });
+      if (error) throw error;
+      if (!result?.ok) return res.status(result?.error === "not_found" ? 404 : 409).json({ error: result?.error || "Failed to resolve request" });
+      await writeAuditLog({ adminUsername: admin.username, adminUid: admin.uid,
+        action: approve ? "approve_purchase" : "reject_purchase", target: result.username,
+        details: { requestId, coinsCredited: approve ? result.coins : 0 }, result: "success" });
       res.json({ ok: true });
     } catch (err) {
       console.error("resolve-purchase error:", err);
@@ -1795,7 +1765,7 @@ async function startServer() {
   // tournament -- see pay_tournament_prize() in supabase/schema.sql.
   app.post("/api/admin/pay-tournament-prize", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const { tournamentId, winnerUsername } = req.body;
     const admin = await requirePermission(accessToken, "manage_tournaments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
@@ -1839,7 +1809,7 @@ async function startServer() {
   // ------------------------------------------------------------------
 
   app.get("/api/admin/tournaments", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_tournaments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
@@ -1872,7 +1842,7 @@ async function startServer() {
   });
 
   app.post("/api/admin/tournaments", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_tournaments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -1951,7 +1921,7 @@ async function startServer() {
   });
 
   app.post("/api/admin/tournaments/delete", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_tournaments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
@@ -1986,7 +1956,7 @@ async function startServer() {
   // closes the pool (idempotent; a paid-out tournament can't be refunded).
   app.post("/api/admin/refund-tournament", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const { tournamentId } = req.body;
     const admin = await requirePermission(accessToken, "manage_tournaments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
@@ -2013,7 +1983,7 @@ async function startServer() {
 
   app.post("/api/admin/adjust-coins", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const { targetUsername, amount, direction, reason } = req.body;
     const admin = await requirePermission(accessToken, "credit_coins");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
@@ -2046,7 +2016,7 @@ async function startServer() {
   // Update coin pricing (entry fees, AI unlock costs, purchasable packages).
   app.post("/api/admin/coin-settings", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const { settings } = req.body;
     const admin = await requirePermission(accessToken, "manage_coin_settings");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
@@ -2080,7 +2050,7 @@ async function startServer() {
   // Dashboard summary counts.
   app.get("/api/admin/dashboard", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "view_analytics");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -2107,7 +2077,7 @@ async function startServer() {
 
   app.get("/api/admin/audit-log", async (req, res) => {
     if (!KENTRO_ADMIN_ENABLED) { res.status(503).json({ error: "Admin features are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "view_audit_log");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     const { data, error } = await getSupabaseAdmin().from("audit_logs").select("*").order("timestamp", { ascending: false }).limit(100);
@@ -2117,7 +2087,7 @@ async function startServer() {
 
   app.get("/api/admin/pending-purchases", async (req, res) => {
     if (!KENTRO_COINS_ENABLED) { res.status(503).json({ error: "Kentro Coins are temporarily disabled." }); return; }
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_payments");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     const { data, error } = await getSupabaseAdmin().from("purchase_requests").select("*").eq("status", "pending").order("submittedAt", { ascending: false });
@@ -2256,7 +2226,7 @@ async function startServer() {
   // *creating new* hand-built ones is off. To restore: delete this block and
   // put the real handler (preserved in git history) back.
   app.post("/api/admin/puzzles", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_puzzles");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -2315,7 +2285,7 @@ async function startServer() {
 
   // Admin: bulk delete puzzles (e.g. remove all bulk import / sql file puzzles or all puzzles)
   app.post("/api/admin/puzzles/bulk-delete", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_puzzles");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -2358,7 +2328,7 @@ async function startServer() {
 
   // Admin: bulk import puzzles (e.g. massive 2,604 puzzle datasets)
   app.post("/api/admin/puzzles/bulk", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_puzzles");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -2413,7 +2383,7 @@ async function startServer() {
 
   // Admin: bulk import puzzles from uploaded SQL file text
   app.post("/api/admin/puzzles/sql-file", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_puzzles");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -2605,25 +2575,10 @@ async function startServer() {
       }
 
       if (puzzles.length === 0) {
-        const dbUrl = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
-        if (dbUrl) {
-          const client = new PgClient({ connectionString: dbUrl });
-          await client.connect();
-          try {
-            await client.query(sqlText);
-            await writeAuditLog({
-              adminUsername: admin.username, adminUid: admin.uid,
-              action: "sql_file_direct_exec", details: { success: true }, result: "success"
-            });
-            return res.json({ ok: true, importedCount: 2604, message: "SQL file executed directly successfully!" });
-          } finally {
-            await client.end();
-          }
-        } else {
-          return res.status(400).json({ 
-            error: "Could not parse SQL INSERT rows automatically. Please ensure your SQL file contains INSERT INTO puzzles statements or JSON array." 
-          });
-        }
+        // A puzzle moderator may import puzzle data, never execute arbitrary SQL.
+        return res.status(400).json({
+          error: "Could not parse puzzle INSERT rows. Supply supported puzzle INSERT statements or a JSON array.",
+        });
       }
 
       const db = getSupabaseAdmin();
@@ -2662,7 +2617,7 @@ async function startServer() {
   // right after it becomes a puzzle whose solution is the engine's
   // winning line (1-2 forcing steps).
   app.post("/api/admin/puzzles/generate-from-games", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_coin_settings");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
 
@@ -2801,7 +2756,7 @@ async function startServer() {
   // Admin: games database management (view / delete / wipe)
   // ------------------------------------------------------------------
   app.get("/api/admin/games", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "view_games");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
@@ -2834,7 +2789,7 @@ async function startServer() {
   });
 
   app.post("/api/admin/games/delete", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_admins");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     const gameId = typeof req.body?.gameId === "string" ? req.body.gameId : "";
@@ -2854,7 +2809,7 @@ async function startServer() {
   // client must echo the exact confirmation phrase, and the action is
   // audit-logged with the pre-wipe count.
   app.post("/api/admin/games/delete-all", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_admins");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     if (req.body?.confirm !== "DELETE ALL GAMES") {
@@ -2881,6 +2836,8 @@ async function startServer() {
   // Admin: Ken 8 Self-Play Fast Batch Simulator Endpoint
   // ------------------------------------------------------------------
   app.post("/api/admin/simulate-ken8-batch", async (req, res) => {
+    const admin = await requirePermission(requestAccessToken(req.headers), "view_games");
+    if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
       const count = Math.min(25, Math.max(1, Number(req.body?.count) || 10));
       const logs: any[] = [];
@@ -2966,7 +2923,7 @@ async function startServer() {
   // Admin: platform revenue -- the house wallet where every rake lands
   // ------------------------------------------------------------------
   app.get("/api/admin/house-revenue", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_coin_settings");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
@@ -3040,7 +2997,7 @@ async function startServer() {
 
   // Set or clear the site-wide announcement banner.
   app.post("/api/admin/announcement", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_announcements");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
@@ -3064,7 +3021,7 @@ async function startServer() {
 
   // Maintenance mode: shows a full-screen notice to players.
   app.post("/api/admin/maintenance", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_admins");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
@@ -3087,7 +3044,7 @@ async function startServer() {
   // Chat moderation
   // ------------------------------------------------------------------
   app.get("/api/admin/chat", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_reports");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     try {
@@ -3107,7 +3064,7 @@ async function startServer() {
   });
 
   app.post("/api/admin/chat/delete", async (req, res) => {
-    const accessToken = req.headers["x-access-token"] as string | undefined;
+    const accessToken = requestAccessToken(req.headers);
     const admin = await requirePermission(accessToken, "manage_reports");
     if (!admin) return res.status(403).json({ error: "Not authorized" });
     const id = String(req.body?.id ?? "");
@@ -3126,6 +3083,11 @@ async function startServer() {
     }
   });
 
+  app.use("/api", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(404).json({ error: "API route not found" });
+  });
+  let closeDevelopmentServer: (() => Promise<void>) | undefined;
   if (process.env.NODE_ENV !== "production") {
     // Keep the large Vite dev server out of production's dependency graph.
     const { createServer: createViteServer } = await import("vite");
@@ -3133,6 +3095,7 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: "spa",
     });
+    closeDevelopmentServer = () => vite.close();
     app.use(vite.middlewares);
     app.use('*', async (req, res, next) => {
       try {
@@ -3151,32 +3114,40 @@ async function startServer() {
     const versioned = /-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|jpg|jpeg|webp|woff2?|ico)$/;
     // Precompressed files cost no live CPU. This matters even without Go:
     // a typical tiny MVP host should keep using the simpler Node-only mode.
-    const encodingAllowed = (header: string, name: string): boolean => {
-      for (const part of header.toLowerCase().split(',')) {
-        const [value, ...params] = part.trim().split(';');
-        if (value !== name) continue;
-        return !params.some((p) => /^q\s*=\s*0(?:\.0*)?\s*$/.test(p.trim()));
+    app.use((req, res, next) => {
+      let requested: string;
+      try { requested = decodeURIComponent(req.path); } catch { return res.sendStatus(400); }
+      // dist also holds the backend bundle and source map. Never publish them
+      // or hidden paths as website assets.
+      if (requested.split('/').some((part) => part.startsWith('.')) || /\.(?:cjs|map)(?:\.(?:br|gz))?$/i.test(requested)) {
+        res.setHeader('Cache-Control', 'no-store');
+        return res.sendStatus(404);
       }
-      return false;
-    };
+      res.vary('Accept-Encoding');
+      next();
+    });
     app.get(/^\/assets\/[A-Za-z0-9_./-]+\.(?:js|css)$/, (req, res, next) => {
       const original = path.resolve(distPath, '.' + req.path);
       if (!original.startsWith(assetsPath) || !fs.existsSync(original)) return next();
-      const accepted = String(req.headers['accept-encoding'] || '');
       let extension = '';
       let encoding = '';
-      if (encodingAllowed(accepted, 'br') && fs.existsSync(original + '.br')) {
+      const offered = ['br', 'gzip'].filter((name) => fs.existsSync(original + (name === 'br' ? '.br' : '.gz')));
+      const preferred = req.acceptsEncodings(...offered, 'identity');
+      if (preferred === 'br') {
         extension = '.br'; encoding = 'br';
-      } else if (encodingAllowed(accepted, 'gzip') && fs.existsSync(original + '.gz')) {
+      } else if (preferred === 'gzip') {
         extension = '.gz'; encoding = 'gzip';
       }
+      if (!preferred) return res.sendStatus(406);
       if (!extension) return next();
       res.setHeader('Vary', 'Accept-Encoding');
       res.setHeader('Content-Encoding', encoding);
       res.setHeader('Cache-Control', versioned.test(path.basename(original))
         ? 'public, max-age=31536000, immutable' : 'no-cache, must-revalidate');
       res.type(path.extname(original));
-      res.sendFile(original + extension, { dotfiles: 'deny' }, next);
+      res.sendFile(original + extension, { dotfiles: 'deny' }, (error) => {
+        if (error) next(error);
+      });
     });
     app.use(express.static(distPath, {
       etag: true,
@@ -3186,6 +3157,10 @@ async function startServer() {
       },
     }));
     app.get('*', (req, res) => {
+      if (req.path.startsWith('/assets/') || path.extname(req.path)) {
+        res.setHeader('Cache-Control', 'no-store');
+        return res.sendStatus(404);
+      }
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
       res.sendFile(path.join(distPath, 'index.html'));
     });
@@ -3212,6 +3187,33 @@ async function startServer() {
     sanitizeCustomBoard,
     findLegalMatch,
   });
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[Server] ${signal}: draining connections (up to 5 seconds)`);
+    onlinePlay.shutdown();
+    let httpClosed = false;
+    let websocketClosed = false;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      void engine.stop().finally(() => process.exit(0));
+    };
+    const drained = () => { if (httpClosed && websocketClosed) finish(); };
+    const deadline = setTimeout(() => {
+      onlinePlay.wss.clients.forEach((client) => client.terminate());
+      server.closeAllConnections();
+      finish();
+    }, 5000);
+    deadline.unref();
+    server.close(() => { httpClosed = true; drained(); });
+    server.closeIdleConnections();
+    onlinePlay.wss.close(() => { websocketClosed = true; drained(); });
+    void closeDevelopmentServer?.().catch((err) => console.error('[Server] Vite close failed', err));
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
   canChallengeFromRoom = (id, name) => {
     const room = onlinePlay.rooms.get(id) as any;
     return !!room && room.phase === "lobby" && String(room.creator).toLowerCase() === name.toLowerCase();

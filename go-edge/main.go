@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -13,9 +14,13 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -23,7 +28,7 @@ var hashedAsset = regexp.MustCompile(`-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|jpg|
 
 func newHandler(dir, backend string) (http.Handler, error) {
 	target, err := url.Parse(backend)
-	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.Path != "" && target.Path != "/" {
+	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.Path != "" && target.Path != "/" || target.User != nil || target.RawQuery != "" || target.Fragment != "" {
 		return nil, fmt.Errorf("BACKEND_URL must be a plain http(s) origin: %q", backend)
 	}
 	absoluteDir, err := filepath.Abs(dir)
@@ -35,6 +40,13 @@ func newHandler(dir, backend string) (http.Handler, error) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Director = nil
+	proxy.Rewrite = func(r *httputil.ProxyRequest) {
+		r.SetURL(target)
+		// SetXForwarded replaces untrusted inbound forwarded headers and adds
+		// exactly one socket peer, avoiding duplicate addresses.
+		r.SetXForwarded()
+	}
 	proxy.Transport = &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          64,
@@ -53,6 +65,11 @@ func newHandler(dir, backend string) (http.Handler, error) {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self)")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
 		if r.URL.Path == "/edge/health" {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-store")
@@ -60,16 +77,6 @@ func newHandler(dir, backend string) (http.Handler, error) {
 			return
 		}
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || isWebSocket(r) {
-			// Prevent spoofed forwarded addresses when running this edge as the
-			// public entry point. Only the incoming socket peer is trusted.
-			remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				remoteHost = r.RemoteAddr
-			}
-			r.Header.Del("X-Forwarded-For")
-			r.Header.Del("X-Forwarded-Host")
-			r.Header.Del("X-Forwarded-Proto")
-			r.Header.Set("X-Forwarded-For", remoteHost)
 			proxy.ServeHTTP(w, r)
 			return
 		}
@@ -78,11 +85,15 @@ func newHandler(dir, backend string) (http.Handler, error) {
 			return
 		}
 		cleaned := filepath.Clean("/" + r.URL.Path)
-		if strings.HasPrefix(cleaned, "/.") || strings.Contains(cleaned, "/.") {
+		if strings.Contains(r.URL.Path, "/.") || strings.HasSuffix(strings.ToLower(cleaned), ".cjs") || strings.HasSuffix(strings.ToLower(cleaned), ".map") {
 			http.NotFound(w, r)
 			return
 		}
 		requested := filepath.Join(absoluteDir, filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
+		if !withinRoot(absoluteDir, requested) {
+			http.NotFound(w, r)
+			return
+		}
 		info, err := os.Stat(requested)
 		if err == nil && info.IsDir() {
 			requested = filepath.Join(requested, "index.html")
@@ -102,13 +113,20 @@ func newHandler(dir, backend string) (http.Handler, error) {
 		} else {
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		}
+		w.Header().Set("Vary", "Accept-Encoding")
 		// Pre-compressed at build time; serve Brotli to capable browsers and
 		// gzip to older clients. Never compress on a small live game CPU.
-		for _, coding := range []struct{ name, suffix string }{{"br", ".br"}, {"gzip", ".gz"}} {
-			if !acceptsEncoding(r.Header.Get("Accept-Encoding"), coding.name) {
+		codings := []struct{ name, suffix string }{{"br", ".br"}, {"gzip", ".gz"}}
+		if encodingQuality(r.Header.Get("Accept-Encoding"), "gzip") > encodingQuality(r.Header.Get("Accept-Encoding"), "br") {
+			codings[0], codings[1] = codings[1], codings[0]
+		}
+		identityQuality := encodingQuality(r.Header.Get("Accept-Encoding"), "identity")
+		for _, coding := range codings {
+			quality := encodingQuality(r.Header.Get("Accept-Encoding"), coding.name)
+			if quality <= 0 || identityQuality > quality {
 				continue
 			}
-			if packed, err := os.Stat(requested + coding.suffix); err == nil && packed.Mode().IsRegular() {
+			if packed, err := os.Stat(requested + coding.suffix); err == nil && packed.Mode().IsRegular() && withinRoot(absoluteDir, requested+coding.suffix) {
 				w.Header().Set("Content-Encoding", coding.name)
 				w.Header().Set("Vary", "Accept-Encoding")
 				if typ := mime.TypeByExtension(filepath.Ext(requested)); typ != "" {
@@ -118,29 +136,59 @@ func newHandler(dir, backend string) (http.Handler, error) {
 				return
 			}
 		}
+		if identityQuality == 0 {
+			http.Error(w, "No acceptable content encoding", http.StatusNotAcceptable)
+			return
+		}
 		http.ServeFile(w, r, requested)
 	}), nil
 }
 
-// Parses negotiated compression instead of accidentally serving gzip when
-// a client explicitly sends "gzip;q=0".
-func acceptsEncoding(header, encoding string) bool {
+// Parses negotiated compression instead of serving an explicitly excluded coding.
+func encodingQuality(header, encoding string) float64 {
+	wildcard := 0.0
+	if encoding == "identity" {
+		// Unmentioned identity is always an acceptable fallback, unless *;q=0
+		// excludes it. A negative priority lets an offered compressed variant
+		// win while still respecting an explicit preference for identity.
+		wildcard = -1
+	}
 	for _, entry := range strings.Split(strings.ToLower(header), ",") {
 		parts := strings.Split(strings.TrimSpace(entry), ";")
-		if strings.TrimSpace(parts[0]) != encoding {
+		name := strings.TrimSpace(parts[0])
+		if name != encoding && name != "*" {
 			continue
 		}
+		quality := 1.0
 		for _, part := range parts[1:] {
-			q := strings.TrimSpace(part)
-			if strings.HasPrefix(q, "q=") {
-				if q == "q=0" || q == "q=0.0" || q == "q=0.00" || q == "q=0.000" {
-					return false
+			key, value, found := strings.Cut(part, "=")
+			if found && strings.TrimSpace(key) == "q" {
+				q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil || !(q >= 0 && q <= 1) {
+					quality = 0
+				} else {
+					quality = q
 				}
 			}
 		}
+		if name == encoding {
+			return quality
+		}
+		wildcard = quality
+	}
+	return wildcard
+}
+
+func withinRoot(root, requested string) bool {
+	resolved, err := filepath.EvalSymlinks(requested)
+	if os.IsNotExist(err) {
 		return true
 	}
-	return false
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(root, resolved)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func isWebSocket(r *http.Request) bool {
@@ -155,6 +203,31 @@ func isWebSocket(r *http.Request) bool {
 	return false
 }
 
+type trackedConn struct {
+	net.Conn
+	connections *sync.Map
+}
+
+func (c *trackedConn) Close() error {
+	c.connections.Delete(c)
+	return c.Conn.Close()
+}
+
+type trackedListener struct {
+	net.Listener
+	connections *sync.Map
+}
+
+func (l trackedListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tracked := &trackedConn{Conn: c, connections: l.connections}
+	l.connections.Store(tracked, true)
+	return tracked, nil
+}
+
 func main() {
 	addr := flag.String("listen", envOr("EDGE_LISTEN", ":3000"), "public address")
 	backend := flag.String("backend", envOr("BACKEND_URL", "http://127.0.0.1:3001"), "Node API and WebSocket upstream")
@@ -164,9 +237,32 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var connections sync.Map
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 70 * time.Second, MaxHeaderBytes: 1 << 20}
+	listener, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		<-ctx.Done()
+		deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(deadline); err != nil {
+			log.Printf("edge shutdown: %v", err)
+		}
+		// net/http Shutdown excludes hijacked WebSockets. Close their tunnels
+		// too so neither process leaves sockets behind on restart.
+		connections.Range(func(key, value any) bool { _ = key.(net.Conn).Close(); return true })
+	}()
 	log.Printf("Kentro Go edge listening on %s (node: %s)", *addr, *backend)
-	log.Fatal(server.ListenAndServe())
+	if err := server.Serve(trackedListener{Listener: listener, connections: &connections}); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+	<-shutdownDone
 }
 
 func envOr(key, fallback string) string {

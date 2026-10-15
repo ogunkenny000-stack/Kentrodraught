@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Kentro Draughts, optimized for a small persistent host.
 # Two stages: native engine + frontend are built off-line from the runtime;
 # the final container has no compiler, Vite dev server, or build cache.
@@ -6,7 +7,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends g++ make \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
+    npm ci --ignore-scripts --strict-ssl=true --no-audit --no-fund
 COPY . .
 # These two keys are designed to be public and are compiled into the web app.
 # NEVER pass the Supabase secret key as a build arg.
@@ -32,4 +35,6 @@ COPY --from=builder /app/supabase ./supabase
 RUN chown -R node:node /app/data /app/nd_upgraded
 USER node
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 CMD ["node", "dist/server.cjs"]

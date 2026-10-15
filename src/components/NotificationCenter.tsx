@@ -19,14 +19,20 @@ export function useKentroNotifications(userId: string | null, enabled: boolean) 
   const [error, setError] = useState("");
   const knownIds = useRef(new Set<string>());
   const seeded = useRef(false);
+  const activeAccount = useRef({ userId, enabled });
+  activeAccount.current = { userId, enabled };
+  const loadVersion = useRef(0);
 
   useEffect(() => {
-    setItems([]); knownIds.current = new Set(); seeded.current = false;
+    setItems([]); setError(""); knownIds.current = new Set(); seeded.current = false;
     setPrefs(userId ? loadNotificationPreferences(userId) : { ...DEFAULT_NOTIFICATION_PREFERENCES });
   }, [userId]);
   const reload = useCallback(async () => {
     if (!userId || !enabled) return;
-    const { data, error: queryError } = await supabase.from("kentro_notifications").select("id,recipient_id,category,title,body,target_path,created_at,read_at").order("created_at", { ascending: false }).limit(80);
+    const version = ++loadVersion.current;
+    const { data, error: queryError } = await supabase.from("kentro_notifications").select("id,recipient_id,category,title,body,target_path,created_at,read_at").eq("recipient_id", userId).order("created_at", { ascending: false }).limit(80);
+    // Signing out/switching accounts must invalidate every outstanding query.
+    if (version !== loadVersion.current || activeAccount.current.userId !== userId || !activeAccount.current.enabled) return;
     if (queryError) { setError("Notifications unavailable. Run the Kentro notifications SQL migration if this is a new deployment."); return; }
     const next = (data || []) as KentroNotification[];
     setItems(next); setError("");
@@ -62,6 +68,7 @@ export function useKentroNotifications(userId: string | null, enabled: boolean) 
     if (!userId || !ids.length) return;
     const at = new Date().toISOString();
     const { error: updateError } = await supabase.from("kentro_notifications").update({ read_at: at }).in("id", ids).eq("recipient_id", userId);
+    if (activeAccount.current.userId !== userId) return;
     if (updateError) { setError("Could not mark notifications read."); return; }
     setItems(prev => prev.map(n => ids.includes(n.id) ? { ...n, read_at: at } : n));
   }, [userId]);
@@ -89,10 +96,11 @@ export function NotificationCenter({ userId, open, onClose, onNavigate, manager 
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = requestAnimationFrame(() => panelRef.current?.focus());
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!panelRef.current) return;
+      const panel = panelRef.current as HTMLElement | null;
+      if (!panel) return;
       if (event.key === "Escape") { event.preventDefault(); closeRef.current(); return; }
       if (event.key !== "Tab") return;
-      const controls = Array.from(panelRef.current.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled)'))
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled)'))
         .filter(el => el.getClientRects().length > 0);
       if (!controls.length) { event.preventDefault(); panelRef.current.focus(); return; }
       if (event.shiftKey && (document.activeElement === controls[0] || document.activeElement === panelRef.current)) {

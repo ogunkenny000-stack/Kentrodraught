@@ -1,7 +1,7 @@
 /** RFC 8291 aes128gcm Web Push and RFC 8292 VAPID using Node's built-in crypto.
  * No service account keys or private credentials are ever sent to browsers.
  */
-import { createECDH, createPrivateKey, createCipheriv, createHmac, randomBytes, sign } from "node:crypto";
+import { ECDH, createECDH, createPrivateKey, createCipheriv, createHmac, randomBytes, sign } from "node:crypto";
 import { getSupabaseAdmin } from "../../supabaseAdmin";
 
 export interface BrowserPushSubscription { endpoint: string; keys: { p256dh: string; auth: string } }
@@ -27,8 +27,12 @@ export function vapidSettings() {
 
 /** Strict host allowlist: subscriptions are user input; never POST to internal/private infrastructure. */
 export function safePushEndpoint(input: unknown): input is string {
-  if (typeof input !== "string" || input.length > 2048) return false;
+  if (typeof input !== "string" || input.length > 2048 || /[\u0000-\u0020\u007f\\]/.test(input)) return false;
   try {
+    // URL normalizes an explicit :443 to an empty port. Check the original
+    // authority as well to preserve the no-explicit-port endpoint contract.
+    const authority = /^https:\/\/([^/?#]+)/i.exec(input)?.[1];
+    if (!authority || authority.includes(":")) return false;
     const url = new URL(input);
     const host = url.hostname.toLowerCase();
     return url.protocol === "https:" && !url.username && !url.password && !url.port && (
@@ -42,8 +46,12 @@ export function safePushEndpoint(input: unknown): input is string {
 export function validateSubscription(value: any): BrowserPushSubscription | null {
   if (!value || !safePushEndpoint(value.endpoint) || typeof value.keys?.p256dh !== "string" || typeof value.keys?.auth !== "string") return null;
   try {
+    if (!/^[A-Za-z0-9_-]{87}$/.test(value.keys.p256dh) || !/^[A-Za-z0-9_-]{22}$/.test(value.keys.auth)) return null;
     const pub = unb64(value.keys.p256dh), auth = unb64(value.keys.auth);
     if (pub.length !== 65 || pub[0] !== 4 || auth.length !== 16) return null;
+    // A correctly sized uncompressed point can still be off the curve. Reject
+    // it here instead of letting every queued delivery fail encryption/retry.
+    ECDH.convertKey(pub, "prime256v1", undefined, undefined, "uncompressed");
     return { endpoint: value.endpoint, keys: { p256dh: value.keys.p256dh, auth: value.keys.auth } };
   } catch { return null; }
 }

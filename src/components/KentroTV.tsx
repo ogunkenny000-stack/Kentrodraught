@@ -4,7 +4,7 @@ import { ngRcToSq } from "../gameLogic";
 import type { KentroGameRecord } from "../types/gameRecords";
 import { MatchResultPair } from "./MatchResultPair";
 import { uniqueCompletedMatches } from "../lib/completedMatches";
-import { buildReplayFrames, parseReplayLink, replayLink, selectHighlights } from "../lib/kentroTv";
+import { buildReplayFrames, replayBounds, replayLink, selectHighlights } from "../lib/kentroTv";
 import { renderHighlightVideo } from "../lib/highlightVideo";
 
 interface LiveRoom { roomId: string; white: string; black: string; gameTime: number; spectatorCount: number }
@@ -50,7 +50,7 @@ export function KentroTV({ liveRooms, onRefresh, onWatch, onBack, initialReplay 
   const [exportingVideo, setExportingVideo] = useState(false);
   const frames = useMemo(() => { if (!selected) return []; try { return buildReplayFrames(selected); } catch { return []; } }, [selected]);
   const highlights = useMemo(() => selectHighlights(frames), [frames]);
-  const boundedPly = Math.min(ply, Math.max(0, frames.length - 1));
+  const boundedPly = replayBounds(frames.length, ply).ply;
   const current = frames[boundedPly];
 
   const loadRecent = async () => {
@@ -71,14 +71,21 @@ export function KentroTV({ liveRooms, onRefresh, onWatch, onBack, initialReplay 
     let cancelled = false;
     fetch(`/api/games/code/${encodeURIComponent(initialReplay.gameCode)}`, { cache: "no-store" })
       .then(async r => { if (!r.ok) throw new Error("This replay is unavailable."); return r.json(); })
-      .then(data => { if (!cancelled) { setSelected(data.game); setPly(initialReplay.ply); if (initialReplay.clipEnd) {setRange({from: initialReplay.ply,to:initialReplay.clipEnd});setPlaying(true);} setTab("replays"); } })
+      .then(data => {
+        if (!cancelled) {
+          const verified = buildReplayFrames(data.game);
+          const bounds = replayBounds(verified.length, initialReplay.ply, initialReplay.clipEnd);
+          setSelected(data.game); setPly(bounds.ply); setRange(bounds.range);
+          setPlaying(!!bounds.range); setError(""); setTab("replays");
+        }
+      })
       .catch(e => { if (!cancelled) setError(e.message); });
     return () => { cancelled = true; };
-  }, [initialReplay?.gameCode]);
+  }, [initialReplay?.gameCode, initialReplay?.ply, initialReplay?.clipEnd]);
   useEffect(() => {
     if (!playing || !frames.length) return;
     const timer = window.setInterval(() => setPly(p => {
-      const last = range ? range.to : frames.length - 1;
+      const last = Math.min(range?.to ?? frames.length - 1, frames.length - 1);
       if (p >= last) { setPlaying(false); return p; }
       return p + 1;
     }), 850);
@@ -150,7 +157,7 @@ export function KentroTV({ liveRooms, onRefresh, onWatch, onBack, initialReplay 
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-3 sm:p-4 space-y-3">
               <div className="flex items-center justify-between gap-2 text-xs"><span className="text-slate-400">Move {Math.ceil(boundedPly / 2)} · {boundedPly} / {frames.length - 1} plies</span><span className="text-amber-400 font-semibold">{current.move ? `${current.move.from}${current.move.caps.length ? "×" : "–"}${current.move.to}` : "Starting position"}</span></div>
               <input className="w-full accent-amber-400" aria-label="Replay position" type="range" min={0} max={frames.length - 1} value={boundedPly} onChange={e => { setPlaying(false);setPly(Number(e.target.value));setRange(null); }}/>
-              <div className="flex items-center justify-center gap-2"><button className={secondary} onClick={() => {setPlaying(false);setPly(0);}} aria-label="First move"><SkipBack className="w-4 h-4"/></button><button className={secondary} onClick={() => {setPlaying(false);setPly(p=>Math.max(0,p-1));}} aria-label="Previous move"><ChevronLeft className="w-4 h-4"/></button><button className={primary} onClick={() => { if (boundedPly >= (range?.to ?? frames.length-1)) setPly(range?.from ?? 0); setPlaying(v=>!v); }}>{playing ? <Pause className="w-4 h-4"/> : <Play className="w-4 h-4"/>}</button><button className={secondary} onClick={() => {setPlaying(false);setPly(p=>Math.min(frames.length-1,p+1));}} aria-label="Next move"><ChevronRight className="w-4 h-4"/></button><button className={secondary} onClick={() => {setPlaying(false);setPly(frames.length-1);}} aria-label="Last move"><SkipForward className="w-4 h-4"/></button></div>
+              <div className="flex items-center justify-center gap-2"><button className={secondary} onClick={() => {setPlaying(false);setPly(0);}} aria-label="First move"><SkipBack className="w-4 h-4"/></button><button className={secondary} onClick={() => {setPlaying(false);setPly(p=>Math.max(0,p-1));}} aria-label="Previous move"><ChevronLeft className="w-4 h-4"/></button><button className={primary} aria-label={playing ? "Pause replay" : "Play replay"} onClick={() => { if (boundedPly >= (range?.to ?? frames.length-1)) setPly(range?.from ?? 0); setPlaying(v=>!v); }}>{playing ? <Pause className="w-4 h-4"/> : <Play className="w-4 h-4"/>}</button><button className={secondary} onClick={() => {setPlaying(false);setPly(p=>Math.min(frames.length-1,p+1));}} aria-label="Next move"><ChevronRight className="w-4 h-4"/></button><button className={secondary} onClick={() => {setPlaying(false);setPly(frames.length-1);}} aria-label="Last move"><SkipForward className="w-4 h-4"/></button></div>
               <div className="flex flex-wrap gap-2"><button className={secondary} onClick={copyLink}>{copied ? <Check className="inline w-3 h-3"/> : <Copy className="inline w-3 h-3"/>} {copied ? "Copied" : "Copy Replay Link"}</button><button className={secondary} onClick={() => shareWhatsApp()}><Share2 className="inline w-3 h-3"/> WhatsApp</button><button className={secondary} onClick={() => void share()}><Share2 className="inline w-3 h-3"/> More Share Options</button></div>
             </div>
             <div className="rounded-xl bg-slate-900/70 p-4 space-y-2"><h3 className="font-black text-sm text-amber-400 flex gap-2 items-center"><Zap className="w-4 h-4"/> Game Highlights</h3><p className="text-[11px] text-slate-400">Auto-detected captures, promotions, and final moves. Tap to replay a short animated sequence in Kentro TV.</p>

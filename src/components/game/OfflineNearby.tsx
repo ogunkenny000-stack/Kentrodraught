@@ -3,10 +3,10 @@ import { ArrowLeft, Check, Copy, Crown, Flag, Handshake, RotateCcw, Share2, Wifi
 import { captureClickTargets, generateLegalMoves, getCol, ngRcToSq, resolveCaptureClick, moveToNotationString } from '../../gameLogic';
 import type { Move } from '../../gameLogic';
 import {
-  initialOfflineMatch, makeOfflineMoveMessage, makePairingCode, parsePairingCode,
-  playOfflineMove, receiveOfflineMove,
+  initialOfflineMatch, makeOfflineMoveMessage, makePairingCode, parsePairingCode, ensureNearbyCandidates,
+  playOfflineMove, receiveOfflineMove, receiveOfflineReply,
 } from '../../lib/offlineMatch';
-import type { OfflineMatch, Side, WireMove } from '../../lib/offlineMatch';
+import type { OfflineMatch, OfflineRequests, Side, WireMove } from '../../lib/offlineMatch';
 
 const ICE_WAIT_MS = 12000;
 
@@ -86,10 +86,17 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
   const matchRef = useRef(match);
   const [selected, setSelected] = useState<number | null>(null);
   const [walked, setWalked] = useState<number[]>([]);
-  const [drawIncoming, setDrawIncoming] = useState(false);
-  const [drawOutgoing, setDrawOutgoing] = useState(false);
-  const [rematchIncoming, setRematchIncoming] = useState(false);
-  const [rematchOutgoing, setRematchOutgoing] = useState(false);
+  const [requests, setRequests] = useState<OfflineRequests>({ drawIncoming: false, drawOutgoing: false, rematchIncoming: false, rematchOutgoing: false });
+  const requestsRef = useRef(requests);
+  const { drawIncoming, drawOutgoing, rematchIncoming, rematchOutgoing } = requests;
+  const updateRequests = (changes: Partial<OfflineRequests>) => {
+    requestsRef.current = { ...requestsRef.current, ...changes };
+    setRequests(requestsRef.current);
+  };
+  const setDrawIncoming = (value: boolean) => updateRequests({ drawIncoming: value });
+  const setDrawOutgoing = (value: boolean) => updateRequests({ drawOutgoing: value });
+  const setRematchIncoming = (value: boolean) => updateRequests({ rematchIncoming: value });
+  const setRematchOutgoing = (value: boolean) => updateRequests({ rematchOutgoing: value });
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const mySide: Side = role === 'guest' ? 'B' : 'W';
@@ -189,17 +196,22 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
         if (!matchRef.current.result) { setDrawIncoming(true); setNotice('Opponent offers a draw.'); }
         break;
       case 'draw-reply':
-        setDrawOutgoing(false);
-        if (msg.accept === true && !matchRef.current.result) {
-          updateMatch({ ...matchRef.current, result: { winner: null, reason: 'Draw agreed' } });
-          setNotice('Draw agreed.');
-        } else { setNotice('Draw offer declined.'); }
+        try {
+          const next = receiveOfflineReply(matchRef.current, msg, requestsRef.current);
+          setDrawOutgoing(false);
+          if (next.result) setDrawIncoming(false);
+          updateMatch(next);
+          setNotice(msg.accept ? 'Draw agreed.' : 'Draw offer declined.');
+        } catch (err) { setError(err instanceof Error ? err.message : 'Invalid draw response.'); }
         break;
       case 'rematch-request':
         if (matchRef.current.result) { setRematchIncoming(true); setNotice('Opponent requests a rematch.'); }
         break;
       case 'rematch-accept':
-        if (matchRef.current.result) restartGame();
+        try {
+          receiveOfflineReply(matchRef.current, msg, requestsRef.current);
+          restartGame();
+        } catch (err) { setError(err instanceof Error ? err.message : 'Invalid rematch response.'); }
         break;
       case 'rematch-decline':
         setRematchOutgoing(false);
@@ -258,6 +270,7 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
       await peer.setLocalDescription(await peer.createOffer());
       await waitForGathering(peer);
       if (!peer.localDescription) throw new Error('No nearby offer available.');
+      ensureNearbyCandidates(peer.localDescription.sdp);
       setOfferCode(makePairingCode(peer.localDescription));
       setNotice('Share the invitation with your opponent using Nearby Share, Quick Share or AirDrop.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to create a nearby match.'); closePeer(); }
@@ -273,6 +286,7 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
       await peer.setLocalDescription(await peer.createAnswer());
       await waitForGathering(peer);
       if (!peer.localDescription) throw new Error('No reply generated.');
+      ensureNearbyCandidates(peer.localDescription.sdp);
       setAnswerCode(makePairingCode(peer.localDescription));
       setNotice('Send this reply back to the host. The host finishes the connection.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not join.'); closePeer(); }
@@ -378,7 +392,7 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5">
           <h1 className="text-xl font-black flex items-center gap-2"><Wifi className="text-emerald-400" /> Nearby Offline Game</h1>
           <p className="text-sm text-slate-400 mt-2">Play Nigerian Draughts face-to-face on two phones connected to the <strong className="text-slate-200">same Wi-Fi or hotspot</strong>. No game server, account, mobile data, coins or ratings involved.</p>
-          <p className="text-xs text-amber-300 mt-2">Both players must have opened or installed Kentro Draught while online at least once. Browser pairing requires exchanging an invitation and a reply using Nearby Share / Quick Share / AirDrop, or copy and paste. Bluetooth-only gameplay is not supported.</p>
+          <p className="text-xs text-amber-300 mt-2">Both players must have opened Kentro Draught while online and let offline preparation finish. Open Nearby Offline Game once and check it still opens after disconnecting mobile data. Browser pairing requires exchanging an invitation and a reply using Nearby Share / Quick Share / AirDrop, or copy and paste. Bluetooth-only gameplay is not supported.</p>
         </div>
 
         {!showBoard ? (
@@ -408,7 +422,7 @@ export function OfflineNearby({ onBack, username }: OfflineNearbyProps) {
                   <button disabled={busy || !incomingCode.trim()} onClick={role === 'guest' ? join : finishHost} className="w-full rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 disabled:opacity-40 text-sm">{busy ? 'Preparing connection…' : role === 'guest' ? '2. Create Reply' : '3. Connect & Start Game'}</button>
                 </>}
                 {role === 'guest' && !!answerCode && <p className="text-sm text-amber-300">2. Send the reply above to your host. Once they paste it, the game will start automatically.</p>}
-                {role === 'host' && !offerCode && <p className="text-sm text-slate-400">Preparing the offline invitation…</p>}
+                {role === 'host' && !offerCode && <p className="text-sm text-slate-400">{busy ? 'Preparing the offline invitation…' : 'No invitation was generated. Start pairing again to retry.'}</p>}
                 <button onClick={reset} className="text-xs text-slate-400 hover:text-white underline">Start pairing again</button>
               </div>
             )}

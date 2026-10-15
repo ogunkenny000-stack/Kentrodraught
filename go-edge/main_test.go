@@ -96,6 +96,24 @@ func TestFrontendAndCache(t *testing.T) {
 	if body != "normal-js" || res.Header.Get("Content-Encoding") != "" {
 		t.Fatal("disabled compression", body, res.Header)
 	}
+	res, body = fetch(t, edge.URL+"/assets/app-deadbeef12.js", map[string]string{"Accept-Encoding": "br;q=0.1, gzip;q=1"})
+	if body != "fake-gzip" || res.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatal("encoding quality preference", body, res.Header)
+	}
+	res, body = fetch(t, edge.URL+"/assets/app-deadbeef12.js", map[string]string{"Accept-Encoding": "br; q = 0, gzip; q = 0"})
+	if body != "normal-js" || res.Header.Get("Content-Encoding") != "" || res.Header.Get("Vary") != "Accept-Encoding" {
+		t.Fatal("identity must vary too", body, res.Header)
+	}
+	res, body = fetch(t, edge.URL+"/assets/app-deadbeef12.js", map[string]string{"Accept-Encoding": "identity;q=1, br;q=0.1, gzip;q=0.1"})
+	if body != "normal-js" || res.Header.Get("Content-Encoding") != "" {
+		t.Fatal("explicit identity preference", body, res.Header)
+	}
+	for _, header := range []string{"identity;q=0, br;q=0, gzip;q=0", "*;q=0"} {
+		res, _ = fetch(t, edge.URL+"/assets/app-deadbeef12.js", map[string]string{"Accept-Encoding": header})
+		if res.StatusCode != http.StatusNotAcceptable {
+			t.Fatal("all encodings excluded", header, res.StatusCode)
+		}
+	}
 	res, _ = fetch(t, edge.URL+"/assets/missing.js", nil)
 	if res.StatusCode != 404 {
 		t.Fatal("missing asset", res.StatusCode)
@@ -103,6 +121,41 @@ func TestFrontendAndCache(t *testing.T) {
 	res, _ = fetch(t, edge.URL+"/.env", nil)
 	if res.StatusCode != 404 {
 		t.Fatal("dotfile", res.StatusCode)
+	}
+}
+
+func TestPrivateBuildFilesAndSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	for name, value := range map[string]string{"index.html": "app", "server.cjs": "backend", "server.cjs.map": "source"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("private"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "leak.txt")); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(dir, "http://127.0.0.1:3001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, requested := range []string{"/server.cjs", "/server.cjs.map", "/leak.txt", "/.hidden/../room"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requested, nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("%s leaked with status %d: %s", requested, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestBackendMustBeOrigin(t *testing.T) {
+	for _, backend := range []string{"file:///tmp/private", "http://user:secret@localhost", "http://localhost/api", "http://localhost?secret=1", "http://localhost#fragment"} {
+		if _, err := newHandler(t.TempDir(), backend); err == nil {
+			t.Fatalf("accepted non-origin backend %q", backend)
+		}
 	}
 }
 func TestAPIIsUncachedAndForwarded(t *testing.T) {
@@ -113,7 +166,7 @@ func TestAPIIsUncachedAndForwarded(t *testing.T) {
 	if body != "backend" || res.Header.Get("X-Upstream-Path") != "/api/games/recent" || res.Header.Get("Cache-Control") != "no-store" {
 		t.Fatal(res.StatusCode, body, res.Header)
 	}
-	if res.Header.Get("X-Forwarded-From") == "9.8.7.6" {
+	if res.Header.Get("X-Forwarded-From") != "127.0.0.1" {
 		t.Fatal("spoofable client address")
 	}
 }

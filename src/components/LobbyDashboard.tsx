@@ -39,7 +39,7 @@ interface LobbyDashboardProps {
   clockLimitType: "Blitz" | "Rapid" | "Classical" | "Untimed";
   
   // Custom matchmaking callbacks
-  onHostMatch: (gameTime?: number, specialRule?: string, hostTime?: number, guestTime?: number, wagerAmount?: number, bestOf?: number) => void;
+  onHostMatch: (gameTime?: number, specialRule?: string, hostTime?: number, guestTime?: number, wagerAmount?: number, bestOf?: number, privateRoom?: boolean) => void;
   onJoinRoom: (roomId: string) => void;
   onReconnect: () => void;
   pendingHostMatch?: boolean;
@@ -163,6 +163,7 @@ function LobbyDashboardImpl({
   const [setupGuestTime, setSetupGuestTime] = useState(5);
   const [setupWager, setSetupWager] = useState(0);
   const [setupBestOf, setSetupBestOf] = useState(1);
+  const [setupPrivate, setSetupPrivate] = useState(false);
 
   React.useEffect(() => {
     if (roomId !== null) {
@@ -215,7 +216,7 @@ function LobbyDashboardImpl({
     setIsHostingSetup(false);
     const finalHostTime = setupUnevenTime ? setupHostTime : setupGameTime;
     const finalGuestTime = setupUnevenTime ? setupGuestTime : setupGameTime;
-    onHostMatch(setupGameTime, setupSpecialRule, finalHostTime, finalGuestTime, isGuest ? 0 : setupWager, isGuest ? 1 : setupBestOf);
+    onHostMatch(setupGameTime, setupSpecialRule, finalHostTime, finalGuestTime, isGuest ? 0 : setupWager, isGuest ? 1 : setupBestOf, setupPrivate);
   };
 
   const handleGameTimeChange = (time: number) => {
@@ -654,6 +655,10 @@ function LobbyDashboardImpl({
               </div>
 
               </>)}
+              <label className="flex items-start gap-3 bg-slate-950 p-4 border border-slate-800 rounded-xl text-xs text-slate-300">
+                <input type="checkbox" checked={setupPrivate} onChange={event => setSetupPrivate(event.target.checked)} className="mt-0.5 accent-amber-500" />
+                <span><strong className="block text-white mb-1">Private match</strong>Only players with the room code can join. Hidden from public challenges and Kentro TV; spectators cannot watch.</span>
+              </label>
               {/* Submit */}
               <button
                 onClick={handleConfirmHost}

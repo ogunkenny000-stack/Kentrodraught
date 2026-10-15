@@ -63,16 +63,8 @@ export function ComputerConfigModal({
               const maxKen = profileStats.maxUnlockedKenLevel || 1;
               const isLocked = lvl.id > maxKen;
               return (
-                <button
+                <div
                   key={lvl.id}
-                  onClick={() => {
-                    if (isLocked) {
-                      setStatusMessage(`Level ${lvl.id} locked! Defeat Level ${lvl.id - 1} without hints/undo, or spend ${coinSettings?.aiUnlockCostPerLevel ?? 50} coins to unlock it.`);
-                      return;
-                    }
-                    setKenLevelId(lvl.id);
-                    playClickSound(muted);
-                  }}
                   className={`p-2.5 rounded-xl text-[10px] font-bold text-left transition flex items-center justify-between cursor-pointer ${
                     kenLevelId === lvl.id
                       ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
@@ -81,14 +73,29 @@ export function ComputerConfigModal({
                         : "bg-slate-900/60 border border-slate-800 text-slate-300 hover:bg-slate-800/80"
                   }`}
                 >
-                  <div>
+                  <button
+                    type="button"
+                    aria-pressed={kenLevelId === lvl.id}
+                    aria-disabled={isLocked}
+                    className="flex-1 min-w-0 text-left"
+                    onClick={() => {
+                      if (isLocked) {
+                        setStatusMessage(`Level ${lvl.id} locked! Defeat Level ${lvl.id - 1} without hints/undo, or spend ${coinSettings?.aiUnlockCostPerLevel ?? 50} coins to unlock it.`);
+                        return;
+                      }
+                      setKenLevelId(lvl.id);
+                      playClickSound(muted);
+                    }}
+                  >
                     <div className="truncate">{lvl.name}</div>
                     <div className={`text-[8px] font-medium font-sans ${kenLevelId === lvl.id ? "text-slate-800" : (isLocked ? "text-slate-700" : "text-slate-500")}`}>
                       Level {lvl.id}
                     </div>
-                  </div>
+                  </button>
                   {isLocked && (
                     <button
+                      type="button"
+                      aria-label={`Unlock ${lvl.name} for ${coinSettings?.aiUnlockCostPerLevel ?? 50} coins`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onUnlockKenLevel(lvl.id);
@@ -100,7 +107,7 @@ export function ComputerConfigModal({
                       {coinSettings?.aiUnlockCostPerLevel ?? 50}
                     </button>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>

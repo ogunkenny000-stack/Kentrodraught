@@ -5,6 +5,7 @@ import type { ReplayFrame } from "./kentroTv";
  * can still share the animated Kentro TV link; no server-side video rendering needed.
  */
 export async function renderHighlightVideo(frames: ReplayFrame[], start: number, end: number, names: string): Promise<{blob: Blob; extension: string}> {
+  if (!frames.length || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)) throw new Error("Choose a valid replay highlight before exporting.");
   if (!HTMLCanvasElement.prototype.captureStream || typeof MediaRecorder === "undefined") throw new Error("Video export is not supported by this browser. Share the animated link instead.");
   const mime = ["video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(MediaRecorder.isTypeSupported);
   if (!mime) throw new Error("This browser cannot record board videos. Share the highlight link instead.");
@@ -20,6 +21,9 @@ export async function renderHighlightVideo(frames: ReplayFrame[], start: number,
     recorder.onerror = () => reject(new Error("Unable to record this highlight."));
     recorder.onstop = () => resolve({ blob: new Blob(chunks, { type: mime }), extension: mime.includes("mp4") ? "mp4" : "webm" });
   });
+  // A recorder can fail before the animation finishes. Observe its rejection
+  // immediately; awaiting completion below still reports the actual error.
+  void completion.catch(() => {});
   const sq = 58;
   function draw(frame: ReplayFrame) {
     ctx!.fillStyle = "#070913";ctx!.fillRect(0,0,620,700);

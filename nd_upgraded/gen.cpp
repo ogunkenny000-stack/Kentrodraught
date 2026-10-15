@@ -176,11 +176,11 @@ static void add_king_captures_rec(List & list, const Pos & pos, Bit bd, Bit be, 
    Bit ray = bit::beyond(square_make(jump - inc), jump); // ray(jump, inc)
    Bit froms = bit::attack(jump, ray, be);
 
-   // found_any is set if ANY landing square along the ray can continue capturing.
-   // When true, the king MUST keep jumping — no "stop early" moves are generated.
-   bool found_any = false;
-
    for (Square from : froms & be) {
+      // Continuation is compulsory from the chosen landing, not from a
+      // different landing behind the same victim. Nigerian free choice
+      // permits a terminal short line alongside a longer alternative.
+      bool found = false;
 
       for (Square sq : bit::king_captures(from) & bd) {
 
@@ -189,18 +189,14 @@ static void add_king_captures_rec(List & list, const Pos & pos, Bit bd, Bit be, 
             Inc new_inc = bit::line_inc(from, sq);
 
             assert(new_inc != -inc);
-            if (new_inc == +inc && from != next) continue; // duplicate capture
-
-            found_any = true;
-            add_king_captures_rec(list, pos, bd, be, start, sq, new_inc, caps);
+            found = true;
+            if (new_inc != +inc || from == next) { // avoid duplicate continuation
+               add_king_captures_rec(list, pos, bd, be, start, sq, new_inc, caps);
+            }
          }
       }
-   }
 
-   // Only add terminal moves if no landing square allowed a further capture.
-   // This prevents the king from stopping early to dodge being recaptured.
-   if (!found_any) {
-      for (Square from : froms & be) {
+      if (!found) {
          bool cond = var::Variant == var::Killer && pos.is_piece(jump, King) && from != next;
          if (!cond) list.add_capture(start, from, caps, pos, 1);
       }

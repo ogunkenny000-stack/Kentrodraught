@@ -67,6 +67,12 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
   }, [username]);
 
   const friends = contactsList.filter((c) => c.status === "accepted");
+  const requests = contactsList.filter(c => c.status === "pending");
+  const acceptFriend = async (id: string) => {
+    const { data, error } = await supabase.from("friends").update({ status: "accepted" }).eq("id", id).select("id");
+    if (error || !data?.length) setFriendError("Could not accept this request. Please refresh and try again.");
+    else setContactsList(rows => rows.map(row => row.id === id ? { ...row, status: "accepted" } : row));
+  };
 
   // "Person you play frequently with" -- derived straight from real match
   // history, not a separate tracked stat. Counts opponents across every
@@ -99,7 +105,7 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
         user2: clean,
         user1Elo: userElo || 1500,
         user2Elo: targetElo,
-        status: "accepted",
+        status: "pending",
         sender: username,
       });
       if (error) throw error;
@@ -158,6 +164,19 @@ export function FriendsPage({ username, userElo, myGamesList, onOpenLounge, onCl
         </div>
 
         {friendError && <p role="alert" className="mb-4 text-xs text-rose-300">{friendError}</p>}
+
+        {requests.length > 0 && <div className="mb-5 space-y-2">
+          <h3 className="text-xs text-slate-400">Friend requests</h3>
+          {requests.map(request => {
+            const incoming = request.sender?.toLowerCase() !== username.toLowerCase();
+            const other = request.user1.toLowerCase() === username.toLowerCase() ? request.user2 : request.user1;
+            return <div key={request.id} className="flex items-center justify-between gap-2 text-xs text-white">
+              <span>{other} {incoming ? "sent you a request" : "· request pending"}</span>
+              {incoming && <button onClick={() => acceptFriend(request.id)} className="text-amber-400">Accept</button>}
+              <button onClick={() => removeFriend(request.id)} className="text-slate-400">{incoming ? "Decline" : "Cancel"}</button>
+            </div>;
+          })}
+        </div>}
 
         {/* Frequent opponents -- real, derived from match history */}
         {frequentOpponents.length > 0 && (

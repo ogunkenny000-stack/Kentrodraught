@@ -11,7 +11,7 @@ describe("Web Push security and cryptography", () => {
   it("rejects internal, redirect and non-push subscription endpoints", () => {
     expect(safePushEndpoint("https://fcm.googleapis.com/fcm/send/123")).toBe(true);
     expect(safePushEndpoint("https://web.push.apple.com/QABC")).toBe(true);
-    for (const invalid of ["http://localhost:8000", "https://127.0.0.1", "https://evil.test", "https://fcm.googleapis.com.evil.test/", "https://u:p@fcm.googleapis.com/", "https://fcm.googleapis.com:443/"]) {
+    for (const invalid of ["http://localhost:8000", "https://127.0.0.1", "https://evil.test", "https://fcm.googleapis.com.evil.test/", "https://u:p@fcm.googleapis.com/", "https://fcm.googleapis.com:443/", "https://fcm.googleapis.com:8443/", "https://fcm.googleapis.com\n/"]) {
       expect(safePushEndpoint(invalid)).toBe(false);
     }
   });
@@ -22,6 +22,9 @@ describe("Web Push security and cryptography", () => {
     const subscription = {endpoint, keys:{p256dh:b64(receiver.getPublicKey()),auth:b64(Buffer.alloc(16,7))}};
     expect(validateSubscription(subscription)).toEqual(subscription);
     expect(validateSubscription({...subscription,keys:{...subscription.keys,auth:"invalid"}})).toBeNull();
+    const offCurve = Buffer.alloc(65); offCurve[0] = 4;
+    expect(validateSubscription({ ...subscription, keys: { ...subscription.keys, p256dh: b64(offCurve) } })).toBeNull();
+    expect(validateSubscription({ ...subscription, keys: { ...subscription.keys, auth: subscription.keys.auth + "!" } })).toBeNull();
   });
 
   it("produces an RFC 8291 payload that the receiving device decrypts", () => {

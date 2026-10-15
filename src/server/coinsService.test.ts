@@ -29,10 +29,23 @@ describe("coin service input boundaries", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
   it("settles a 100% configured rake without an invalid zero credit", async () => {
-    rpc.mockResolvedValue({ data: 20, error: null });
+    rpc.mockResolvedValue({ data: { ok: true, payout: 0, rake: 20 }, error: null });
     await settleMatchPot([{ username: "alice", color: "W" }, { username: "bob", color: "B" }], 10, { isDraw: false, winnerColor: "W" }, "game-1", 1);
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(rpc).toHaveBeenCalledWith("credit_wallet", expect.objectContaining({ p_username: "kentro_house", p_amount: 20, p_reason: "rake" }));
+    expect(rpc).toHaveBeenCalledWith("kentro_settle_match_pot", expect.objectContaining({ p_match_id: "game-1", p_fee: 10, p_rake: 1 }));
+  });
+  it("settles a draw through one atomic RPC rather than independent credits", async () => {
+    rpc.mockResolvedValue({ data: { ok: true }, error: null });
+    await settleMatchPot([{ username: "alice", color: "W" }, { username: "bob", color: "B" }], 10, { isDraw: true, winnerColor: null }, "game-2");
+    expect(rpc).toHaveBeenCalledExactlyOnceWith("kentro_settle_match_pot", expect.objectContaining({ p_draw: true, p_winner: null }));
+  });
+  it("propagates a settlement error so the caller can retry safely", async () => {
+    rpc.mockResolvedValue({ data: null, error: new Error("transaction aborted") });
+    await expect(settleMatchPot([{ username: "alice", color: "W" }, { username: "bob", color: "B" }], 10, { isDraw: false, winnerColor: "W" }, "game-3")).rejects.toThrow("transaction aborted");
+  });
+  it("rejects duplicated multi-wallet identities before the database", async () => {
+    await expect(debitMultipleWallets(["alice", " ALICE "], 5, "match_entry")).rejects.toThrow("distinct");
+    expect(rpc).not.toHaveBeenCalled();
   });
   it.each([NaN, Infinity, -0.1, 1.1])("rejects invalid rake %s before paying anyone", async (rake) => {
     await expect(settleMatchPot([{ username: "alice", color: "W" }, { username: "bob", color: "B" }], 10, { isDraw: false, winnerColor: "W" }, "game-1", rake)).rejects.toThrow("rake");

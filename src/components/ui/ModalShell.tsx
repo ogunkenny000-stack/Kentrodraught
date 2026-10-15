@@ -23,6 +23,7 @@ export function ModalShell({
   footer,
   dismissable = true,
   headerAccent,
+  zIndex = 70,
 }: {
   open: boolean;
   onClose: () => void;
@@ -37,6 +38,8 @@ export function ModalShell({
   dismissable?: boolean;
   /** optional class applied to the title row (e.g. celebratory colors) */
   headerAccent?: string;
+  /** Foreground alerts may need to sit above an existing setup dialog. */
+  zIndex?: number;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
@@ -47,7 +50,7 @@ export function ModalShell({
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = requestAnimationFrame(() => dialogRef.current?.focus());
     const handleDialogKeys = (event: KeyboardEvent) => {
-      const panel = dialogRef.current;
+      const panel = dialogRef.current as HTMLDivElement | null;
       if (!panel) return;
       const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'));
       if (openDialogs[openDialogs.length - 1] !== panel) return;
@@ -79,6 +82,7 @@ export function ModalShell({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           className="fixed inset-0 z-[70] bg-slate-950/90 flex items-end sm:items-center justify-center sm:p-4"
+          style={{ zIndex }}
           onClick={dismissable ? onClose : undefined}
         >
           <motion.div

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyMove, createInitialBoard, generateLegalMoves } from "../gameLogic";
-import { buildReplayFrames, parseReplayLink, replayLink, selectHighlights } from "./kentroTv";
+import { buildReplayFrames, parseReplayLink, replayBounds, replayLink, selectHighlights } from "./kentroTv";
 import { validNotificationPath, unreadCount, DEFAULT_NOTIFICATION_PREFERENCES } from "./smartNotifications";
 
 describe("Kentro TV", () => {
@@ -41,6 +41,12 @@ describe("Kentro TV", () => {
     expect(parseReplayLink("?replay=%3Cscript%3E")).toBeNull();
     expect(parseReplayLink("?replay=2690001&ply=-8")).toMatchObject({ ply: 0 });
   });
+  it("bounds shared clips to the verified game rather than running past its final board", () => {
+    expect(replayBounds(9, 3, 2000)).toEqual({ ply: 3, range: { from: 3, to: 8 } });
+    expect(replayBounds(9, 1900, 2000)).toEqual({ ply: 8, range: null });
+    expect(replayBounds(9, -1, 4)).toEqual({ ply: 0, range: { from: 0, to: 4 } });
+    expect(replayBounds(0, 10, 20)).toEqual({ ply: 0, range: null });
+  });
 });
 
 describe("Notification safety", () => {
@@ -49,6 +55,9 @@ describe("Notification safety", () => {
     expect(validNotificationPath("https://evil.test")).toBe("/");
     expect(validNotificationPath("//evil.test")).toBe("/");
     expect(validNotificationPath("/\\evil.test")).toBe("/");
+    for (const path of ["/\t/evil.test", "/\n/evil.test", "/\r/evil.test", "/ /evil.test", "/?replay=123\u0000"]) {
+      expect(validNotificationPath(path)).toBe("/");
+    }
   });
   it("counts only enabled unread alerts", () => {
     const example: any[] = [

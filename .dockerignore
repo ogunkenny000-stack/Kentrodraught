@@ -8,6 +8,13 @@ nd_upgraded/*.o
 .env
 .env.*
 *.log
+# Match records, counters and local audit artifacts never enter an image.
+data/*
+!data/eval_nigerian
+scripts/e2e/out
+docs/audit
+*.tar
+*.tar.gz
 
 # VCS / editor noise
 .git

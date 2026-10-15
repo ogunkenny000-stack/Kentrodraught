@@ -1,11 +1,3 @@
-## Latest performance and hosting enhancements (October 2026)
-
-Start with **[MAX_PERFORMANCE_README.md](MAX_PERFORMANCE_README.md)** for the new performance fixes, tests, small-server container setup, and important limitations. This release preserves the existing app design and engine.
-
-## MVP performance enhancement (Go + lightweight frontend)
-
-See **[PERFORMANCE_UPGRADE.md](PERFORMANCE_UPGRADE.md)** for the optional Go edge, code-splitting changes, deployment options, tests, and CPU/RAM benchmarking guidance. The default Node server remains supported and retains authority over matches.
-
 ---
 title: Kentro Draught
 emoji: 👑
@@ -15,6 +7,14 @@ sdk: docker
 app_port: 3000
 pinned: false
 ---
+
+## Latest performance and hosting enhancements (October 2026)
+
+Start with **[MAX_PERFORMANCE_README.md](MAX_PERFORMANCE_README.md)** for the new performance fixes, tests, small-server container setup, and important limitations. This release preserves the existing app design and engine.
+
+## MVP performance enhancement (Go + lightweight frontend)
+
+See **[PERFORMANCE_UPGRADE.md](PERFORMANCE_UPGRADE.md)** for the optional Go edge, code-splitting changes, deployment options, tests, and CPU/RAM benchmarking guidance. The default Node server remains supported and retains authority over matches.
 
 # Kentro Draught
 
@@ -43,10 +43,14 @@ correctly:
    project URL and Secret key. Without these, Kentro Coins and every admin
    action fail loudly (not silently) — see `supabaseAdmin.ts` for exact
    setup steps.
-4. **`BOOTSTRAP_ADMIN_USERNAME`** (required to ever access the admin panel)
-   — set to your own in-app username. You must have played at least one
-   game with that username first (creates the `profiles` row the bootstrap
-   binds to). See `server.ts`'s startup bootstrap logic.
+4. **`BOOTSTRAP_ADMIN_UID`** (optional one-time admin bootstrap)
+   — set to your authenticated Supabase user's UUID, with a matching
+   canonical `profiles` row. The server no longer grants admin rights by
+   a client-chosen username. Remove this variable after bootstrap.
+
+Review [the audit deployment and rollback procedure](docs/audit/15_DEPLOYMENT_AND_ROLLBACK.md)
+before upgrading an existing instance. Boot-time migrations are disabled by
+default; apply reviewed migrations separately to staging before production.
 
 The included two-stage `Dockerfile` now builds from this source directory
 rather than needing another `draught_com.zip` archive. It compiles the native
@@ -217,7 +221,7 @@ analysis for wagered games as the next layer.
 A production multi-stage `Dockerfile` is included (plus `docker-compose.yml`
 and `.dockerignore`). It compiles the C++ Scan engine inside the image,
 builds the frontend, bundles the server, and ships a slim non-root runtime
-with tini and a healthcheck. Quickest path:
+with a healthcheck. Compose enables an init process. Quickest path:
 
     # .env next to docker-compose.yml (see the comment inside it for keys)
     docker compose up -d --build
@@ -228,15 +232,19 @@ Or plain Docker:
       --build-arg VITE_SUPABASE_URL=https://YOURPROJECT.supabase.co \
       --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_... \
       -t kentro-draught .
-    docker run -d -p 3000:3000 --env-file .env kentro-draught
+    docker run -d --init -p 3000:3000 --env-file .env \
+      --mount type=volume,source=kentro_game_data,target=/app/data kentro-draught
 
 Frontend keys (`VITE_*`) are build-time (Vite bakes them into the bundle;
 they're the publishable, RLS-protected values). Server secrets
 (`SUPABASE_URL`, `SUPABASE_SECRET_KEY`, optional `SUPABASE_DB_URL` for
-boot-time auto-migration, optional `BOOTSTRAP_ADMIN_USERNAME`) are runtime
+explicitly opted-in migration, optional `BOOTSTRAP_ADMIN_UID`) are runtime
 env vars. On Hugging Face Docker Spaces, add all of them under Settings →
-Variables and secrets — the `VITE_*` pair arrives via BuildKit secrets,
-which this Dockerfile also accepts.
+Variables and secrets. Define the public `VITE_*` pair as build variables;
+the Dockerfile reads them as build args. Private server values belong in
+runtime secrets, never frontend build args. Persistent storage must be
+configured separately on the host; the plain Docker volume above is local
+to that Docker daemon.
 
 ## Nearby Offline Multiplayer (Wi-Fi / hotspot)
 

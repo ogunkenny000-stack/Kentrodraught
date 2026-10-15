@@ -26,13 +26,9 @@
 -- workaround, just the right column type for "opaque structured blob the
 -- app owns."
 --
--- DESIGN NOTE -- security posture: RLS policies below intentionally mirror
--- the exact trade-offs the original firestore.rules documented (e.g.
--- usernames are a self-service display layer, not a verified identity;
--- resolve_username_to_email() is deliberately public because sign-in is the
--- one moment there's no session yet to gate on). This migration changes the
--- backend, not the app's security model -- see the comments inline for the
--- reasoning carried over from the old rules file.
+-- This base schema must be followed by the incremental migrations. The
+-- October 2026 security migrations bind identities to Auth UIDs, protect
+-- statistics/economy writes and replace permissive legacy browser policies.
 
 create extension if not exists "pgcrypto"; -- gen_random_uuid()
 
@@ -123,6 +119,22 @@ create policy "completed_games_write_authenticated" on completed_games
 
 create policy "completed_games_update_authenticated" on completed_games
   for update to authenticated using (true) with check (true);
+
+
+-- Define administrators before SQL-language authorization functions resolve it.
+create table if not exists admins (
+  "username"    text primary key,
+  "uid"         uuid,
+  "permissions" text[] not null default '{}',
+  "roleLabel"   text,
+  "addedAt"     bigint,
+  "addedBy"     text
+);
+
+alter table admins enable row level security;
+-- Deliberately no policies at all: RLS defaults to deny for anon and
+-- authenticated. Only the service-role client (server.ts) can read/write.
+
 
 
 -- Used by the tournaments INSERT/DELETE policies below to check admin status
@@ -351,20 +363,6 @@ create policy "coin_transactions_select_owner" on coin_transactions
 -- =========================================================================
 -- admins  (was: admins/{username}) -- no client access at all, same as before
 -- =========================================================================
-create table if not exists admins (
-  "username"    text primary key,
-  "uid"         uuid,
-  "permissions" text[] not null default '{}',
-  "roleLabel"   text,
-  "addedAt"     bigint,
-  "addedBy"     text
-);
-
-alter table admins enable row level security;
--- Deliberately no policies at all: RLS defaults to deny for anon and
--- authenticated. Only the service-role client (server.ts) can read/write.
-
-
 -- =========================================================================
 -- audit_logs  (was: auditLogs/{logId}) -- append-only via Admin SDK, no
 -- client access at all, same as before
@@ -492,12 +490,8 @@ create policy "app_config_select_all" on app_config
 -- just so the client could look up an email before it had a session to
 -- sign in with. With a real relational DB we don't need a duplicate
 -- mapping table -- this function joins profiles -> auth.users directly.
--- SECURITY DEFINER lets it read auth.users (never exposed to anon/
--- authenticated directly) despite being called pre-login. It intentionally
--- stays callable by anon: sign-in is exactly the moment there's no session
--- yet to gate on, and this preserves the same "email enumerable by
--- username" trade-off the old public usernameToEmail read had -- not a
--- new weakness introduced by this migration.
+-- SECURITY DEFINER reads auth.users for the Node authentication facade.
+-- Browser roles cannot execute this function or enumerate account emails.
 create or replace function resolve_username_to_email(p_username text)
 returns text
 language plpgsql
@@ -516,8 +510,8 @@ begin
 end;
 $$;
 
-revoke all on function resolve_username_to_email(text) from public;
-grant execute on function resolve_username_to_email(text) to anon, authenticated;
+revoke all on function resolve_username_to_email(text) from public, anon, authenticated;
+grant execute on function resolve_username_to_email(text) to service_role;
 
 -- =========================================================================
 -- handle_new_user() -- creates the profiles row the instant an account

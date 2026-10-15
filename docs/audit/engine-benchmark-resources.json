@@ -1,0 +1,8 @@
+{
+  "measurement": "one Node benchmark process and reaped native child; Linux resource.RUSAGE_CHILDREN",
+  "wallSeconds": 0.627,
+  "userCpuSeconds": 0.536,
+  "systemCpuSeconds": 0.145,
+  "maximumResidentSetKiB": 306576,
+  "exitCode": 0
+}

@@ -87,6 +87,11 @@ export class SessionStore {
     if (this.byKey.get(s.key) === s) this.byKey.delete(s.key);
   }
 
+  /** Release expiry timers when the owning WebSocket server shuts down. */
+  dispose(): void {
+    for (const session of this.byKey.values()) this.remove(session);
+  }
+
   private armExpiry(s: Session): void {
     if (s.expireTimer) clearTimeout(s.expireTimer);
     s.expireTimer = setTimeout(() => {

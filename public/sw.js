@@ -70,7 +70,7 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     Promise.all([
       caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS)).catch(() => {}),
-      // Only the entry script and startup styles are pre-downloaded.
+      // Entry/startup styles and nearby offline dependencies are prepared.
       // Optional routes (TV, academy, tournaments, etc.) load on demand.
       caches.open(ASSET_CACHE).then((cache) => cache.addAll(PRECACHE_ASSETS)).catch(() => {}),
     ])
@@ -197,13 +197,18 @@ self.addEventListener("fetch", (event) => {
 
 // Web Push: display only a same-origin route. Clicking takes the player to
 // the correct game invite / replay / tournament; no game state is cached.
+function notificationPath(raw) {
+  // Browsers strip control characters when parsing URLs; reject those before
+  // checking // so a disguised protocol-relative link cannot leave this app.
+  return typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") &&
+    !/[\\\u0000-\u0020\u007f]/.test(raw) ? raw : "/";
+}
 self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
     let payload;
     try { payload = event.data ? event.data.json() : null; } catch { return; }
     if (!payload || typeof payload.title !== "string") return;
-    const raw = typeof payload.url === "string" ? payload.url : "/";
-    const url = raw.startsWith("/") && !raw.startsWith("//") && !raw.includes("\\") ? raw : "/";
+    const url = notificationPath(payload.url);
     await self.registration.showNotification(payload.title.slice(0,150), {
       body: String(payload.body || "").slice(0,500),
       icon: "/icon-192.png", badge: "/icon-192.png",
@@ -214,14 +219,14 @@ self.addEventListener("push", (event) => {
 });
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const raw = event.notification?.data?.url;
-  const path = typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//") && !raw.includes("\\") ? raw : "/";
+  const path = notificationPath(event.notification?.data?.url);
   const url = new URL(path, self.location.origin).href;
   event.waitUntil((async () => {
     const clientsList = await self.clients.matchAll({type:"window",includeUncontrolled:true});
     for (const client of clientsList) {
-      if (client.url.startsWith(self.location.origin)) {
-        await client.navigate(url);
+      // The app may have an unfinished match in memory. Reuse only a tab
+      // already at this destination; never reload or redirect another tab.
+      if (new URL(client.url).href === url) {
         await client.focus();
         return;
       }

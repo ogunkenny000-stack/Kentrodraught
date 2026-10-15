@@ -26,7 +26,7 @@ function watchConsole(page: Page, tag: string) {
 async function hasPiece(page: Page, sq: number): Promise<boolean> {
   return page.evaluate((n: number) => {
     const el = document.getElementById(`square-${n}`);
-    return !!el && el.querySelector(".rounded-full") !== null;
+    return !!el && el.querySelector(".kentro-royal-piece") !== null;
   }, sq);
 }
 
@@ -90,7 +90,7 @@ let failed = false;
 try {
   section("1. A hosts a room");
   await gotoArena(A);
-  await clickByText(A, "Create Room");
+  await clickByText(A, "Custom game");
   await waitForText(A, "Launch & Create Match Arena");
   await clickByText(A, "Launch & Create Match Arena");
   await A.waitForFunction(() => /Share code\s*#\s*\d{5,}/.test(document.body.innerText), { timeout: 20000 });
@@ -166,6 +166,9 @@ try {
   await snapshot(black, "05-after-reconnect");
 
   section("6. Voice call between the players (fake devices)");
+  if (process.env.E2E_SKIP_MEDIA === "1") {
+    console.log("  SKIP voice transport: E2E_SKIP_MEDIA=1. Managed Chromium may disallow non-proxied UDP; this run makes no voice-call claim.");
+  } else {
   await clickByText(A, "Voice Call");
   await waitForText(B, "Incoming Voice Call", 15000);
   await snapshot(B, "06-incoming-call");
@@ -178,6 +181,7 @@ try {
   await B.waitForFunction(() => !/Voice Connected|Voice Call — Live|Incoming Voice Call/.test(document.body.innerText), { timeout: 15000 });
   await A.waitForFunction(() => !/Voice Connected|Voice Call — Live/.test(document.body.innerText), { timeout: 15000 });
   assert(true, "call ended on both sides after A hung up");
+  }
 
   section("7. Resign -> opponent accepts -> game over");
   await clickByText(black, "Resign");
@@ -209,15 +213,15 @@ try {
   });
   await A.waitForFunction(() => {
     const s = document.getElementById("square-32");
-    return !!s && s.querySelector(".rounded-full") !== null;
+    return !!s && s.querySelector(".kentro-royal-piece") !== null;
   }, { timeout: 20000 });
   await B.waitForFunction(() => {
     const s = document.getElementById("square-32");
-    return !!s && s.querySelector(".rounded-full") !== null;
+    return !!s && s.querySelector(".kentro-royal-piece") !== null;
   }, { timeout: 20000 });
   assert((await hasPiece(A, 31)) && (await hasPiece(A, 20)) && !(await hasPiece(A, 25)), "board reset to the starting position for the rematch");
   await snapshot(A, "08-rematch-started");
-  console.log("\n✅ ALL E2E CHECKS PASSED");
+  console.log(`\nPASS browser PvP gameplay journey${process.env.E2E_SKIP_MEDIA === "1" ? " (voice transport explicitly skipped)" : " including voice transport"}`);
 } catch (err) {
   failed = true;
   console.log("\n❌ E2E FAILED:", (err as Error).message);

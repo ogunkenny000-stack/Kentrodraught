@@ -44,7 +44,6 @@ import { ComingSoonPane } from "./components/ComingSoonPane";
 import { LobbyDashboard } from "./components/LobbyDashboard";
 const TournamentDashboard = lazy(() => import("./components/TournamentDashboard").then(m => ({ default: m.TournamentDashboard })));
 const GlobalChatLounge = lazy(() => import("./components/GlobalChatLounge").then(m => ({ default: m.GlobalChatLounge })));
-import { calculateRating, defaultPlayerRating } from "./rating";
 import {
   playClickSound, playCaptureSound, playPromoSound, playGameStartSound,
   playVictorySound, playDefeatSound, playDrawSound, playWarningAlertSound,
@@ -161,6 +160,9 @@ export default function App() {
     } catch {}
     return "W";
   });
+  // Local custom matches must replay and undo from their own initial
+  // position, including when Black was selected as the first mover.
+  const initialPositionRef = useRef<{ board: Board; turn: "W" | "B" }>({ board: createInitialBoard(), turn: "W" });
   const [moveHistory, setMoveHistory] = useState<Move[]>(() => {
     try {
       const active = loadActiveRoom();
@@ -522,6 +524,7 @@ export default function App() {
     try {
       safeStorage.setItem(AI_GAME_STORAGE_KEY, JSON.stringify({
         board, moveHistory, turn, kenLevelId, playMode, savedAt: Date.now(),
+        initialBoard: initialPositionRef.current.board, initialTurn: initialPositionRef.current.turn,
       }));
     } catch {
       // localStorage can throw (quota, private browsing) -- losing the
@@ -587,6 +590,7 @@ export default function App() {
 
   // --- Modals and Alerts ---
   const [isThinking, setIsThinking] = useState<boolean>(false);
+  const aiRequestGenerationRef = useRef(0);
   const [statusMessage, setStatusMessage] = useState<string>("White to play");
   const [promotedToast, setPromotedToast] = useState<string | null>(null);
   const [showRules, setShowRules] = useState<boolean>(false);
@@ -858,7 +862,10 @@ export default function App() {
     guestTime: number;
     wagerAmount: number;
     bestOf: number;
-  }>({ gameTime: 5, specialRule: "none", hostTime: 5, guestTime: 5, wagerAmount: MIN_MATCH_WAGER, bestOf: 1 });
+    private: boolean;
+    customBoard?: Board;
+    customTurn?: "W" | "B";
+  }>({ gameTime: 5, specialRule: "none", hostTime: 5, guestTime: 5, wagerAmount: MIN_MATCH_WAGER, bestOf: 1, private: false });
 
   const [showHostSetupModal, setShowHostSetupModal] = useState<boolean>(false);
   const [setupGameTime, setSetupGameTime] = useState<number>(5);
@@ -870,6 +877,7 @@ export default function App() {
   const [setupGuestTime, setSetupGuestTime] = useState<number>(5);
   const [setupWagerAmount, setSetupWagerAmount] = useState<number>(MIN_MATCH_WAGER);
   const [setupBestOf, setSetupBestOf] = useState<number>(1);
+  const [setupPrivate, setSetupPrivate] = useState(false);
 
   const setPendingHostMatch = (val: boolean) => {
     pendingHostMatchRef.current = val;
@@ -1200,111 +1208,35 @@ export default function App() {
       setGameOverInfo({
         outcome,
         isAIGame,
-        canLevelUp: outcome === "win" && isAIGame && kenLevelId < 8 && !usedHintsOrUndo,
+        canLevelUp: outcome === "win" && isAIGame && kenLevelId < 8 && kenLevelId + 1 <= Math.max(3, profileStats.maxUnlockedKenLevel || 1) && !usedHintsOrUndo,
         durationSeconds,
         movesCount: moveHistory.length,
       });
       if (isAIGame) safeStorage.removeItem(AI_GAME_STORAGE_KEY);
 
-      if (!guestMode) (async () => {
-        const current = { ...profileStats };
-        let updatedStats: PlayerStats;
-
-        if (isAIGame) {
-          // AI games do not affect ELO or general ranked stats
-          updatedStats = { ...current };
-          if (outcome === "win" && !usedHintsOrUndo) {
-            const maxKen = Math.max(3, current.maxUnlockedKenLevel || 1);
-            if (kenLevelId === maxKen && maxKen < 8) {
-              updatedStats.maxUnlockedKenLevel = maxKen + 1;
-            }
-          }
-        } else {
-          // Calculate new ELO (Glicko-2)
-          const actual = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
-
-          const p1 = {
-            rating: current.elo || defaultPlayerRating.rating,
-            rd: current.rd || defaultPlayerRating.rd,
-            vol: current.vol || defaultPlayerRating.vol
-          };
-
-          // For real Multiplayer (human) opponents, use their ACTUAL current
-          // Glicko rating/RD/volatility, not a guessed "your rating +/- 25"
-          // (that guess made the rating system barely better than a coin
-          // flip -- Glicko needs the real opponent strength to mean
-          // anything). AI/Tournament opponents keep the fixed aiElos table
-          // since Ken levels aren't real Glicko-tracked players.
-          let p2 = { rating: opponentElo, rd: defaultPlayerRating.rd, vol: defaultPlayerRating.vol };
-          if (isMultiplayer) {
-            const opponentUsername = roomPlayers.find((p) => p.username !== username)?.username;
-            if (opponentUsername) {
-              try {
-                const { data: oppData } = await supabase.from("profiles").select("*").eq("usernameLower", opponentUsername.toLowerCase().trim()).maybeSingle();
-                if (oppData) {
-                  const opp = oppData as PlayerStats;
-                  p2 = {
-                    rating: opp.elo ?? defaultPlayerRating.rating,
-                    rd: opp.rd ?? defaultPlayerRating.rd,
-                    vol: opp.vol ?? defaultPlayerRating.vol,
-                  };
-                }
-              } catch (err) {
-                console.error("Failed to fetch opponent rating, falling back to estimate:", err);
-              }
-            }
-          }
-
-          const { newPlayer1 } = calculateRating(p1, p2, actual);
-          const newElo = Math.max(100, Math.round(newPlayer1.rating));
-
-          const newWins = current.wins + (outcome === "win" ? 1 : 0);
-          const newLosses = current.losses + (outcome === "loss" ? 1 : 0);
-          const newDraws = current.draws + (outcome === "draw" ? 1 : 0);
-          const newGamesCount = current.gamesCount + 1;
-          const newTotalPlayTime = current.totalPlayTime + durationSeconds;
-          const newAverageDuration = Math.round(newTotalPlayTime / newGamesCount);
-
-          updatedStats = {
-            ...current,
-            username: username || "player",
-            elo: newElo,
-            rd: newPlayer1.rd,
-            vol: newPlayer1.vol,
-            wins: newWins,
-            losses: newLosses,
-            draws: newDraws,
-            gamesCount: newGamesCount,
-            totalPlayTime: newTotalPlayTime,
-            averageDuration: newAverageDuration
-          };
-        }
-
-        if (authUser) {
-          try {
-            await authReady;
-            const { error } = await supabase.from("profiles").upsert(
-              { ...updatedStats, usernameLower: (username || "player").toLowerCase().trim(), ownerId: authUser?.id || null },
-              { onConflict: "usernameLower" }
-            );
-            if (error) console.warn("Profile upsert warning:", error);
-          } catch (err) {
-            console.warn("Profile upsert error:", err);
-          }
-        }
-        setProfileStats(updatedStats);
-      })();
-
+      // Verified online results update canonical statistics on the server.
+      // Practice, local and AI results cannot grant ranked stats or paid unlocks.
       // Guests do not save matches. For online multiplayer, the authoritative
       // server already writes ONE record using the shared room game code.
       // Both clients inserting their own random game IDs was creating 2–4
       // archive entries per match. Refresh the archive after server sync.
       if (!guestMode && playMode === "Multiplayer") {
-        window.setTimeout(() => { void fetchMyGames(); void fetchSavedGames(); }, 1800);
-        window.setTimeout(() => { void fetchMyGames(); void fetchSavedGames(); }, 5000);
+        const refreshSettlement = async () => {
+          void fetchMyGames(); void fetchSavedGames();
+          if (!authUser) return;
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user.id !== authUser.id) return;
+            const { data, error } = await supabase.from("profiles").select("*").eq("ownerId", authUser.id).maybeSingle();
+            const { data: currentSession } = await supabase.auth.getSession();
+            if (!error && data && currentSession.session?.user.id === authUser.id) setProfileStats(data as PlayerStats);
+          } catch { /* The next archive refresh can retry; keep the last verified profile. */ }
+        };
+        window.setTimeout(() => { void refreshSettlement(); }, 1800);
+        window.setTimeout(() => { void refreshSettlement(); }, 5000);
       }
-      if (!guestMode && playMode !== "Multiplayer") {
-      // Local AI / tournament matches are saved by this device only.
+      if (!guestMode && playMode !== "Multiplayer" && playMode !== "Tournament") {
+      // Local practice records are unranked. Official tournament records belong to the server.
       if (isUnsavedPracticeGame) {
         console.log("Practice game resumed from analysis finished -- skipping auto-save to completed_games as requested.");
         setStatusMessage("Practice game complete! (Position practice was not saved to match history).");
@@ -2296,7 +2228,7 @@ export default function App() {
   // Get active rendering board (current play vs historical review state)
   const renderBoard = (() => {
     if (historyViewIndex !== null) {
-      let tempBoard = createInitialBoard();
+      let tempBoard = { ...initialPositionRef.current.board };
       for (let i = 0; i <= historyViewIndex; i++) {
         tempBoard = applyMove(tempBoard, moveHistory[i]).board;
       }
@@ -2305,7 +2237,8 @@ export default function App() {
     return board;
   })();
 
-  const activeTurn = historyViewIndex !== null ? ((historyViewIndex + 1) % 2 === 0 ? "W" : "B") : turn;
+  const turnAfterMoves = (count: number): "W" | "B" => count % 2 === 0 ? initialPositionRef.current.turn : (initialPositionRef.current.turn === "W" ? "B" : "W");
+  const activeTurn = historyViewIndex !== null ? turnAfterMoves(historyViewIndex + 1) : turn;
 
   // --- Real-time debounced calculation of position analysis ---
   useEffect(() => {
@@ -2346,7 +2279,7 @@ export default function App() {
     // (no legal moves, threefold repetition, 25-move king rule, 16/5-move
     // material-insufficiency rules), shared with the server's authoritative
     // PvP check (see server.ts's make-move handler).
-    const endResult = checkGameEnd(moveHistory);
+    const endResult = checkGameEnd(moveHistory, initialPositionRef.current.board, initialPositionRef.current.turn);
     if (endResult.isOver) {
       if (endResult.isDraw) {
         setStatusMessage(`Game Draw! ${endResult.reason}. 🤝`);
@@ -2412,6 +2345,7 @@ export default function App() {
 
   const triggerAiMove = async () => {
     if (isThinking) return;
+    const generation = aiRequestGenerationRef.current;
     setIsThinking(true);
     setStatusMessage("Ken is thinking...");
     let currentKenLevelId = kenLevelId;
@@ -2426,6 +2360,8 @@ export default function App() {
         currentKenLevelId = analysisAILevel;
       }
       const data = await getKenMove(board, turn, currentKenLevelId);
+      // Navigation or a fresh game invalidates the position this request used.
+      if (generation !== aiRequestGenerationRef.current) return;
       if (data && data.move) {
         const currentLegals = generateLegalMoves(board, turn);
         let matchedMove = currentLegals.find((m) => movesAreEquivalent(m, data.move));
@@ -2451,10 +2387,11 @@ export default function App() {
         setStatusMessage("C++ Engine: no move returned.");
       }
     } catch (e: any) {
+      if (generation !== aiRequestGenerationRef.current) return;
       console.error("C++ engine move execution error:", e);
       setStatusMessage(`C++ Engine error: ${e?.message || "Engine unavailable"}`);
     } finally {
-      setIsThinking(false);
+      if (generation === aiRequestGenerationRef.current) setIsThinking(false);
     }
   };
 
@@ -2888,6 +2825,8 @@ export default function App() {
   const handleNewGame = (customStartBoard?: Board, customStartTurn?: "W" | "B", countGuestAi = true) => {
     if (guestAiStartReservedRef.current) guestAiStartReservedRef.current = false;
     else if (countGuestAi && guestMode && AI_MODES.includes(playMode) && !takeGuestAiTrial()) return;
+    aiRequestGenerationRef.current += 1;
+    setIsThinking(false);
     setGameOverInfo(null);
     if (playMode === "Multiplayer" && roomId !== null) {
       // Contract §3: game-reset is only allowed once the game has ENDED.
@@ -2907,7 +2846,9 @@ export default function App() {
       setStatusMessage("Returned to Tournament Hub.");
       return;
     }
+    if (countGuestAi && AI_MODES.includes(playMode)) safeStorage.removeItem(AI_GAME_STORAGE_KEY);
     setBoard(customStartBoard || createInitialBoard());
+    initialPositionRef.current = { board: { ...(customStartBoard || createInitialBoard()) }, turn: customStartTurn || "W" };
     setTurn(customStartTurn || "W");
     setMoveHistory([]);
     setSelectedSq(null);
@@ -2938,7 +2879,7 @@ export default function App() {
 
     const newHistory = moveHistory.slice(0, Math.max(0, moveHistory.length - undoCount));
     
-    let tempBoard = createInitialBoard();
+    let tempBoard = { ...initialPositionRef.current.board };
     newHistory.forEach((mv) => {
       tempBoard = applyMove(tempBoard, mv).board;
     });
@@ -2949,7 +2890,7 @@ export default function App() {
     setHistoryViewIndex(null);
     setLastAnalysisEval(null);
     
-    const finalTurn = newHistory.length % 2 === 0 ? "W" : "B";
+    const finalTurn = turnAfterMoves(newHistory.length);
     setTurn(finalTurn);
     setStatusMessage(`${finalTurn === "W" ? "White" : "Black"} to play`);
     playClickSound(muted);
@@ -3228,8 +3169,8 @@ export default function App() {
   // unless the host explicitly chose an amount in the setup screen.
   // The intent is remembered in a ref so a reconnect can replay it with
   // the SAME settings if the socket drops before the server answers.
-  const handleHostMatch = (gameTime = 5, specialRule = "none", hostTime = 5, guestTime = 5, wagerAmount = 0, bestOf = 1, customBoard?: Board, customTurn?: "W" | "B") => {
-    pendingHostSettingsRef.current = { gameTime, specialRule: specialRule as any, hostTime, guestTime, wagerAmount, bestOf };
+  const handleHostMatch = (gameTime = 5, specialRule = "none", hostTime = 5, guestTime = 5, wagerAmount = 0, bestOf = 1, customBoard?: Board, customTurn?: "W" | "B", privateRoom = false) => {
+    pendingHostSettingsRef.current = { gameTime, specialRule: specialRule as any, hostTime, guestTime, wagerAmount, bestOf, customBoard, customTurn, private: privateRoom };
     setPendingJoinRoom(null);
     setPendingHostMatch(true);
     if (gameSocket.getStatus() === "connected") {
@@ -3243,6 +3184,7 @@ export default function App() {
         bestOf,
         customBoard,
         customTurn,
+        private: privateRoom,
       });
     } else if (connectionStatus === "disconnected") {
       handleReconnect();
@@ -3408,7 +3350,7 @@ export default function App() {
   const handleConfirmHostSetup = () => {
     const hostTime = setupUnevenTime ? setupHostTime : setupGameTime;
     const guestTime = setupUnevenTime ? setupGuestTime : setupGameTime;
-    handleHostMatch(setupGameTime, setupSpecialRule, hostTime, guestTime, setupWagerAmount, setupBestOf, pendingSandboxBoard || undefined, pendingSandboxBoard ? editorTurn : undefined);
+    handleHostMatch(setupGameTime, setupSpecialRule, hostTime, guestTime, setupWagerAmount, setupBestOf, pendingSandboxBoard || undefined, pendingSandboxBoard ? editorTurn : undefined, setupPrivate);
     setPendingSandboxBoard(null);
     setShowHostSetupModal(false);
   };
@@ -3574,7 +3516,8 @@ export default function App() {
   };
 
   const handleLoadSavedGame = (savedGame: any) => {
-    let tempBoard = createInitialBoard();
+    initialPositionRef.current = { board: savedGame.initialBoard || createInitialBoard(), turn: savedGame.initialTurn === "B" ? "B" : "W" };
+    let tempBoard = { ...initialPositionRef.current.board };
     const loadedMoves: Move[] = savedGame.moveHistory || [];
     const loadedEvals: Record<number, MoveEvalResult> = savedGame.moveEvaluations || {};
 
@@ -3582,7 +3525,7 @@ export default function App() {
     setMoveHistory(loadedMoves);
     setHistoryViewIndex(loadedMoves.length - 1);
     setMoveEvaluations(loadedEvals);
-    setTurn(loadedMoves.length % 2 === 0 ? "W" : "B");
+    setTurn(turnAfterMoves(loadedMoves.length));
     setLastAnalysisEval(null);
     setAnalysisPlayVsAI(false);
     setStatusMessage(`Loaded saved game: ${savedGame.whitePlayer} vs ${savedGame.blackPlayer}`);
@@ -3655,6 +3598,8 @@ export default function App() {
       setStatusMessage("Leave your online match before starting a nearby offline game.");
       return;
     }
+    aiRequestGenerationRef.current += 1;
+    setIsThinking(false);
     setActivePuzzleId(null);
     setHistoryViewIndex(null);
     setPendingHostMatch(false);
@@ -3673,6 +3618,7 @@ export default function App() {
       setMoveHistory([]);
     }
     setPlayMode(mode);
+    initialPositionRef.current = { board: createInitialBoard(), turn: "W" };
     if (mode === "AI_vs_Human") {
       setIsFlipped(true);
     } else if (mode === "Human_vs_AI") {
@@ -3701,7 +3647,7 @@ export default function App() {
             // button for the other half of this fix).
             let replayOk = true;
             try {
-              let replayBoard = createInitialBoard();
+              let replayBoard = saved.initialBoard || createInitialBoard();
               for (const mv of saved.moveHistory) replayBoard = applyMove(replayBoard, mv).board;
               for (let sq = 1; sq <= 50 && replayOk; sq++) {
                 if ((replayBoard[sq] ?? null) !== (saved.board?.[sq] ?? null)) replayOk = false;
@@ -3713,6 +3659,7 @@ export default function App() {
             if (replayOk) {
               if (guestMode && getGuestAiUsed() === 0 && !takeGuestAiTrial()) return;
               setBoard(saved.board);
+              initialPositionRef.current = { board: saved.initialBoard || createInitialBoard(), turn: saved.initialTurn === "B" ? "B" : "W" };
               setMoveHistory(saved.moveHistory);
               setTurn(saved.turn);
               setKenLevelId(saved.kenLevelId);
@@ -3798,7 +3745,7 @@ export default function App() {
 
     setBoard(renderBoard);
     setMoveHistory(newHistory);
-    const finalTurn = newHistory.length % 2 === 0 ? "W" : "B";
+    const finalTurn = turnAfterMoves(newHistory.length);
     setTurn(finalTurn);
     setHistoryViewIndex(null);
     setPlayMode("Training");
@@ -3813,7 +3760,7 @@ export default function App() {
       setMoveHistory(resumedAnalysisSnapshot.moveHistory);
       setMoveEvaluations(resumedAnalysisSnapshot.moveEvaluations);
       setHistoryViewIndex(resumedAnalysisSnapshot.historyViewIndex);
-      setTurn(resumedAnalysisSnapshot.moveHistory.length % 2 === 0 ? "W" : "B");
+      setTurn(turnAfterMoves(resumedAnalysisSnapshot.moveHistory.length));
       setPlayMode("Analysis");
       setResumedAnalysisSnapshot(null);
       setIsUnsavedPracticeGame(false);
@@ -3944,6 +3891,7 @@ export default function App() {
 
     setPlayMode("Analysis");
     setBoard(createInitialBoard());
+    initialPositionRef.current = { board: createInitialBoard(), turn: "W" };
     setTurn(parsedMoves.length % 2 === 0 ? "W" : "B");
     setMoveHistory(parsedMoves);
     setHistoryViewIndex(null);
@@ -4114,6 +4062,8 @@ export default function App() {
       setSetupWagerAmount={setSetupWagerAmount}
       setupBestOf={setupBestOf}
       setSetupBestOf={setSetupBestOf}
+      setupPrivate={setupPrivate}
+      setSetupPrivate={setSetupPrivate}
       coinBalance={coinBalance}
       onConfirmHostSetup={handleConfirmHostSetup}
       roomPlayers={roomPlayers}
@@ -4190,6 +4140,12 @@ export default function App() {
       analysisAILevel={analysisAILevel}
       setAnalysisAILevel={setAnalysisAILevel}
       setBoard={setBoard}
+      onLoadPosition={(position, firstTurn) => {
+        initialPositionRef.current = { board: { ...position }, turn: firstTurn };
+        setBoard(position);
+        setTurn(firstTurn);
+        setGameOverInfo(null);
+      }}
       setMoveHistory={setMoveHistory}
       setMoveEvaluations={setMoveEvaluations}
       setTurn={setTurn}
@@ -4524,7 +4480,7 @@ export default function App() {
         setGuestEnabled(true);
         setGuestAiUsed(getGuestAiUsed());
         setUsername(getGuestName());
-        if (!inviteRoomCode) setPlayMode("Home");
+        if (!inviteRoomCode && !initialReplay) setPlayMode("Home");
       }} />;
   }
 
@@ -4586,16 +4542,6 @@ export default function App() {
             <strong>Guest Mode</strong> · AI {Math.max(0, GUEST_AI_LIMIT - guestAiUsed)}/{GUEST_AI_LIMIT} left · Online {Math.max(0, GUEST_ONLINE_LIMIT - guestOnlineUsed)}/{GUEST_ONLINE_LIMIT} left
           </div>
           <button type="button" className="shrink-0 rounded-lg bg-amber-500 text-slate-950 px-3 py-1 text-[11px] font-extrabold" onClick={() => { setGuestActive(false); setGuestEnabled(false); setUsername(null); gameSocket.disconnect(); }}>Sign In / Register</button>
-        </div>
-      )}
-      {guestLimitNotice && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[130] bg-slate-950/90 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-slate-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl">
-            <h2 className="text-lg font-black text-amber-300">Unlock more Kentro Draught</h2>
-            <p className="text-sm text-slate-300 mt-3 leading-relaxed">{guestLimitNotice}</p>
-            <button type="button" className="w-full bg-amber-500 text-slate-950 font-extrabold rounded-xl py-3 mt-5" onClick={() => { setGuestLimitNotice(null); setGuestActive(false); setGuestEnabled(false); setUsername(null); gameSocket.disconnect(); }}>Sign In or Create Account</button>
-            <button type="button" className="w-full text-slate-400 py-3 text-sm mt-1" onClick={() => { setGuestLimitNotice(null); if (playMode === "Multiplayer" && !multiplayerStarted) setPlayMode("Home"); }}>Keep Exploring</button>
-          </div>
         </div>
       )}
 
@@ -4919,7 +4865,7 @@ export default function App() {
               multiplayerMessages={multiplayerMessages}
               profileStats={profileStats}
               clockLimitType={clockLimitType}
-              onHostMatch={handleHostMatch}
+              onHostMatch={(gameTime, specialRule, hostTime, guestTime, wagerAmount, bestOf, privateRoom) => handleHostMatch(gameTime, specialRule, hostTime, guestTime, wagerAmount, bestOf, undefined, undefined, privateRoom)}
               onJoinRoom={handleJoinRoom}
               onCancelRoom={handleCancelRoom}
               onOpenPastGamesModal={(f) => {
@@ -5104,7 +5050,7 @@ export default function App() {
               resignOfferSent={resignOfferSent}
               handleResignResponse={handleResignResponse}
               handleCancelResign={handleCancelResign}
-              handleNewGame={handleNewGame}
+              handleNewGame={() => handleNewGame()}
               handleUndo={handleUndo}
               handleSuggestMove={handleSuggestMove}
               editorSelectedPiece={editorSelectedPiece}
@@ -5233,9 +5179,9 @@ export default function App() {
         setIsRightDrawerOpen={setIsRightDrawerOpen}
         playMode={playMode}
         handleModeChange={handleModeChange}
-        setShowFriendsPage={setShowFriendsPage}
-        setShowProfilePage={setShowProfilePage}
-        setShowPurchaseModal={setShowPurchaseModal}
+        onOpenFriends={() => { if (requireAccount()) setShowFriendsPage(true); }}
+        onOpenProfile={() => { if (requireAccount()) setShowProfilePage(true); }}
+        onOpenStore={() => { if (requireAccount()) setShowPurchaseModal(true); }}
         setShowPlayerDirectory={setShowPlayerDirectory}
         fetchPlayersDirectory={fetchPlayersDirectory}
         unreadLoungeCount={unreadLoungeCount}
@@ -5503,6 +5449,7 @@ export default function App() {
           setSavedGamesFilter("Mine");
           setPlayMode("Analysis");
           setBoard(createInitialBoard());
+          initialPositionRef.current = { board: createInitialBoard(), turn: "W" };
           setMoveHistory([]);
           setHistoryViewIndex(null);
           setShowAnalysisModal(false);
@@ -5511,6 +5458,7 @@ export default function App() {
         onBlankBoard={() => {
           setPlayMode("Analysis");
           setBoard(createInitialBoard());
+          initialPositionRef.current = { board: createInitialBoard(), turn: "W" };
           setMoveHistory([]);
           setTurn("W");
           setHistoryViewIndex(null);
@@ -5806,6 +5754,12 @@ export default function App() {
           blackName={blackPlayerName}
         />
       )}
+
+      <ModalShell open={!!guestLimitNotice} onClose={() => setGuestLimitNotice(null)} size="sm" zIndex={130} title="Unlock more Kentro Draught">
+        <p className="text-sm text-slate-300 mt-3 leading-relaxed">{guestLimitNotice}</p>
+        <button type="button" className="w-full bg-amber-500 text-slate-950 font-extrabold rounded-xl py-3 mt-5" onClick={() => { setGuestLimitNotice(null); setGuestActive(false); setGuestEnabled(false); setUsername(null); gameSocket.disconnect(); }}>Sign In or Create Account</button>
+        <button type="button" className="w-full text-slate-400 py-3 text-sm mt-1" onClick={() => { setGuestLimitNotice(null); if (playMode === "Multiplayer" && !multiplayerStarted) setPlayMode("Home"); }}>Keep Exploring</button>
+      </ModalShell>
 
       {/* Splash Screen */}
       {showSplash && (

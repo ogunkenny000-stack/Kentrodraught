@@ -35,6 +35,7 @@ export interface AnalysisSidebarProps {
   analysisAILevel: number;
   setAnalysisAILevel: React.Dispatch<React.SetStateAction<number>>;
   setBoard: React.Dispatch<React.SetStateAction<Board>>;
+  onLoadPosition?: (board: Board, turn: "W" | "B") => void;
   setMoveHistory: React.Dispatch<React.SetStateAction<Move[]>>;
   setMoveEvaluations: React.Dispatch<React.SetStateAction<Record<number, MoveEvalResult>>>;
   setTurn: React.Dispatch<React.SetStateAction<"W" | "B">>;
@@ -209,27 +210,27 @@ const NIGERIAN_PRESETS = [
   {
     name: "Starting Setup (20v20)",
     desc: "Standard 10x10 Nigerian tournament opening",
-    fen: "W:W31-50:B1-20",
+    fen: boardToScanFen(createInitialBoard(), "W"),
   },
   {
     name: "Long Diagonal Duel",
     desc: "1 White King vs 1 Black King on the main diagonal",
-    fen: "W:WK46:BK5",
+    fen: boardToScanFen({ 46: "W", 5: "B" }, "W"),
   },
   {
     name: "3 Kings vs 1 Flying King Trap",
     desc: "Classic endgame triangular trap technique",
-    fen: "W:WK22,K28,K40:BK6",
+    fen: boardToScanFen({ 22: "W", 28: "W", 40: "W", 6: "B" }, "W"),
   },
   {
     name: "Center Bridge Lockdown",
     desc: "Tactical blockade on squares 22, 23, 28, 29",
-    fen: "W:W28,32,33,37:B18,19,23,24",
+    fen: boardToScanFen({ 28: "w", 32: "w", 33: "w", 37: "w", 18: "b", 19: "b", 23: "b", 24: "b" }, "W"),
   },
   {
     name: "Double Sacrifice Breakthrough",
     desc: "Sacrifice tactic leading to unstoppable King promotion",
-    fen: "W:W27,31,36:B16,21,26",
+    fen: boardToScanFen({ 27: "w", 31: "w", 36: "w", 16: "b", 21: "b", 26: "b" }, "W"),
   },
 ];
 
@@ -327,8 +328,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
   const handleLoadFen = (fenStr: string) => {
     try {
       const res = scanFenToBoard(fenStr.trim());
-      setBoard(res.board);
-      setTurn(res.turn);
+      if (props.onLoadPosition) props.onLoadPosition(res.board, res.turn);
+      else { setBoard(res.board); setTurn(res.turn); }
       setMoveHistory([]);
       setMoveEvaluations({});
       if (props.setHistoryViewIndex) props.setHistoryViewIndex(null);
@@ -337,7 +338,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
       playClickSound(muted);
       setFenInput("");
     } catch {
-      alert("Invalid FEN format. Example: W:W31-50:B1-20");
+      alert("Invalid position. Paste the 51-character FEN copied from the board (W or B followed by 50 piece/empty markers).");
     }
   };
 
@@ -859,13 +860,14 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
 
           {/* FEN Paste Box */}
           <div className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-bold text-slate-400 uppercase">Load Custom FEN Position:</span>
+            <label htmlFor="analysis-fen" className="text-[10px] font-bold text-slate-400 uppercase">Load Custom FEN Position:</label>
             <div className="flex items-center gap-1.5">
               <input
+                id="analysis-fen"
                 type="text"
                 value={fenInput}
                 onChange={(e) => setFenInput(e.target.value)}
-                placeholder="W:W31-50:B1-20 or FEN string..."
+                placeholder="Paste the 51-character FEN copied from the board"
                 className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-amber-500"
               />
               <button

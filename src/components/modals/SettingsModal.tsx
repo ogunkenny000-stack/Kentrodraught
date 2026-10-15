@@ -59,16 +59,25 @@ export function SettingsModal({
   const colors = boardOptions.find(theme => theme.id === boardTheme) || boardOptions[0];
   const dark = boardTheme === "custom" ? customDarkSquare : colors.dark;
   const light = boardTheme === "custom" ? customLightSquare : colors.light;
+  const sections: Section[] = ["board", "game", "comfort"];
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!offset && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? sections.length - 1 : (sections.indexOf(section) + offset + sections.length) % sections.length;
+    setSection(sections[next]);
+    document.getElementById(`k-settings-${sections[next]}-tab`)?.focus();
+  };
 
   return <ModalShell open={open} onClose={onClose} size="lg" title="Settings" icon={<Settings2 className="w-5 h-5 text-amber-400" />}>
     <div className="k-preferences">
       <p className="k-pref-intro">Make Kentro comfortable for the way you play. Changes save automatically on this device.</p>
       <div className="k-pref-tabs" role="tablist" aria-label="Settings categories">
-        <button type="button" role="tab" aria-selected={section === "board"} className={section === "board" ? "active" : ""} onClick={() => setSection("board")}><Grid2X2 size={17}/> Board</button>
-        <button type="button" role="tab" aria-selected={section === "game"} className={section === "game" ? "active" : ""} onClick={() => setSection("game")}><Hand size={17}/> Gameplay</button>
-        <button type="button" role="tab" aria-selected={section === "comfort"} className={section === "comfort" ? "active" : ""} onClick={() => setSection("comfort")}><Eye size={17}/> Comfort</button>
+        <button id="k-settings-board-tab" type="button" role="tab" aria-controls="k-settings-board-panel" aria-selected={section === "board"} tabIndex={section === "board" ? 0 : -1} onKeyDown={onTabKeyDown} className={section === "board" ? "active" : ""} onClick={() => setSection("board")}><Grid2X2 size={17}/> Board</button>
+        <button id="k-settings-game-tab" type="button" role="tab" aria-controls="k-settings-game-panel" aria-selected={section === "game"} tabIndex={section === "game" ? 0 : -1} onKeyDown={onTabKeyDown} className={section === "game" ? "active" : ""} onClick={() => setSection("game")}><Hand size={17}/> Gameplay</button>
+        <button id="k-settings-comfort-tab" type="button" role="tab" aria-controls="k-settings-comfort-panel" aria-selected={section === "comfort"} tabIndex={section === "comfort" ? 0 : -1} onKeyDown={onTabKeyDown} className={section === "comfort" ? "active" : ""} onClick={() => setSection("comfort")}><Eye size={17}/> Comfort</button>
       </div>
-      {section === "board" && <div role="tabpanel" className="k-pref-content">
+      {section === "board" && <div id="k-settings-board-panel" role="tabpanel" aria-labelledby="k-settings-board-tab" className="k-pref-content">
         <div className="k-pref-heading"><h4>Board appearance</h4><p>Large, clear pieces and a readable playing surface.</p></div>
         <div className="k-pref-board-preview" aria-label={`Preview of ${colors.name} board`}>
           <div className="k-pref-preview-grid" aria-hidden="true">{Array.from({ length: 100 }, (_, i) => {
@@ -91,13 +100,13 @@ export function SettingsModal({
         <input id="k-pref-board-size" type="range" min="80" max="130" step="5" value={boardScale} onChange={e => setBoardScale(Number(e.target.value))} />
         <button type="button" className="k-pref-restore" onClick={() => { setBoardTheme("wood"); setBoardScale(112); setCustomLightSquare("#eac494"); setCustomDarkSquare("#7c4c24"); setCustomBorder("#4a2e16"); }}><RotateCcw size={16}/> Restore default board</button>
       </div>}
-      {section === "game" && <div role="tabpanel" className="k-pref-content">
+      {section === "game" && <div id="k-settings-game-panel" role="tabpanel" aria-labelledby="k-settings-game-tab" className="k-pref-content">
         <div className="k-pref-heading"><h4>During a match</h4><p>Keep your attention on the board.</p></div>
         <ToggleRow title="Focus mode" description="Hide the navigation and side panels while playing. The board, clocks, and game controls stay visible." checked={focusMode} onChange={setFocusMode} icon={<Focus size={20} />}/>
         <ToggleRow title="Square numbers" description="Show square numbers on the Nigerian draughts board." checked={showSquareNumbers} onChange={setShowSquareNumbers} icon={<Grid2X2 size={20} />}/>
         <div className="k-pref-help"><strong>Quick tip</strong><p>While on the game board, press <kbd>Z</kbd> to toggle Focus mode. You can also switch it from the board’s Options menu.</p></div>
       </div>}
-      {section === "comfort" && <div role="tabpanel" className="k-pref-content">
+      {section === "comfort" && <div id="k-settings-comfort-panel" role="tabpanel" aria-labelledby="k-settings-comfort-tab" className="k-pref-content">
         <div className="k-pref-heading"><h4>Sound and accessibility</h4><p>Simple controls that help you stay comfortable during long matches.</p></div>
         <ToggleRow title="Move and capture sounds" description="Play feedback sounds when you make a move, capture, or promote." checked={!muted} onChange={v => setMuted(!v)} icon={muted ? <VolumeX size={20}/> : <Volume2 size={20}/>}/>
         <ToggleRow title="Reduce motion" description="Turn off decorative transitions and pulsing effects in the app." checked={reducedMotion} onChange={setReducedMotion} icon={<Monitor size={20} />}/>

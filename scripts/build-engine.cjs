@@ -3,9 +3,37 @@ const { execFileSync, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const root = path.resolve(__dirname, "..");
 const engineDir = path.join(root, "nd_upgraded");
 const binaryPath = path.join(engineDir, process.platform === "win32" ? "scan_nigerian.exe" : "scan_nigerian");
+const stampPath = path.join(root, "data", "engine-build.json");
+
+function fileHash(file) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function sourceFingerprint(directory = engineDir, buildScript = __filename, compiler = process.env.CXX || (process.platform === "darwin" ? "clang++" : "g++")) {
+  const hash = crypto.createHash("sha256");
+  hash.update(JSON.stringify({ platform: process.platform, arch: process.arch, compiler }));
+  const inputs = fs.readdirSync(directory).filter((name) => /\.(cpp|hpp)$/.test(name) || /^Makefile_/.test(name) || name === "scan.ini");
+  inputs.push("data/eval_nigerian");
+  for (const name of inputs.sort()) {
+    hash.update(name + "\0");
+    hash.update(fs.readFileSync(path.join(directory, name)));
+  }
+  hash.update(fs.readFileSync(buildScript));
+  return hash.digest("hex");
+}
+
+function binaryIsFresh(fingerprint, binary = binaryPath, stamp = stampPath) {
+  try {
+    const saved = JSON.parse(fs.readFileSync(stamp, "utf8"));
+    return saved.sources === fingerprint && saved.binary === fileHash(binary);
+  } catch {
+    return false;
+  }
+}
 
 function ensureSources() {
   const required = ["main.cpp", "data/eval_nigerian", process.platform === "darwin" ? "Makefile_macos" : "Makefile_linux"];
@@ -93,9 +121,10 @@ async function main() {
   fs.chmodSync(weights, 0o644);
   fs.mkdirSync(path.join(root, "data"), { recursive: true });
   const rootWeights = path.join(root, "data", "eval_nigerian");
-  if (!fs.existsSync(rootWeights)) fs.copyFileSync(weights, rootWeights);
+  if (!fs.existsSync(rootWeights) || fileHash(weights) !== fileHash(rootWeights)) fs.copyFileSync(weights, rootWeights);
+  const fingerprint = sourceFingerprint();
 
-  if (fs.existsSync(binaryPath)) {
+  if (binaryIsFresh(fingerprint)) {
     try {
       fs.chmodSync(binaryPath, 0o755);
       await probeBinary();
@@ -119,6 +148,7 @@ async function main() {
   }
   fs.chmodSync(binaryPath, 0o755);
   await probeBinary();
+  fs.writeFileSync(stampPath, JSON.stringify({ sources: fingerprint, binary: fileHash(binaryPath) }) + "\n");
   console.log("[build:engine] Native engine rebuilt and search-verified.");
 }
 
@@ -126,4 +156,4 @@ if (require.main === module) main().catch((error) => {
   console.error(`[build:engine] ${error.message}`);
   process.exitCode = 1;
 });
-module.exports = { ensureSources, probeBinary, main };
+module.exports = { ensureSources, probeBinary, main, sourceFingerprint, binaryIsFresh };

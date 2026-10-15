@@ -464,7 +464,7 @@ describe("Ken engine position formatting", () => {
     expect(parsed.turn).toBe("W");
   });
 
-  it("every move proposed by scan_nigerian matches a legal move in generateLegalMoves", async () => {
+  it("keeps native choices legal and searches afresh when changing evaluators", async () => {
     const { spawn } = await import("child_process");
     const path = await import("path");
     const { hubMoveStringToNigerian, movesAreEquivalent } = await import("./gameLogic");
@@ -538,6 +538,27 @@ describe("Ken engine position formatting", () => {
         t = t === "W" ? "B" : "W";
       }
     }
+
+    // The same persistent process serves easy PST levels and full pattern
+    // levels. A changed evaluator must search again rather than return the
+    // other evaluator's transposition-table score. The ordinary opening at
+    // depth 8 is large enough to distinguish a full search from a root hit.
+    const fen = boardToScanFen(createInitialBoard(), "W");
+    const evaluateOpening = async (mode: "pst" | "pattern", clear = false) => {
+      const out = await query(`set-param name=eval value=${mode}\n${clear ? "new-game\n" : ""}pos pos=${fen}\nlevel depth=8 move-time=2\ngo think`);
+      const info = out.filter((line) => line.startsWith("info ")).at(-1);
+      expect(info).toBeDefined();
+      return Number(info!.match(/(?:^|\s)nodes=(\d+)/)?.[1] ?? 0);
+    };
+    const freshPst = await evaluateOpening("pst", true);
+    const cachedPst = await evaluateOpening("pst");
+    const freshPatternAfterSwitch = await evaluateOpening("pattern");
+    const cachedPattern = await evaluateOpening("pattern");
+    const freshPstAfterSwitch = await evaluateOpening("pst");
+    expect(freshPst).toBeGreaterThan(cachedPst * 4);
+    expect(freshPatternAfterSwitch).toBeGreaterThan(cachedPst * 4);
+    expect(freshPatternAfterSwitch).toBeGreaterThan(cachedPattern * 4);
+    expect(freshPstAfterSwitch).toBeGreaterThan(cachedPattern * 4);
     } finally {
       proc.kill();
     }

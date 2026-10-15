@@ -13,6 +13,17 @@ export type OfflineMatch = {
   result: OfflineResult;
 };
 export type WireMove = { type: 'move'; seq: number; before: string; move: Move };
+export type OfflineRequests = { drawIncoming: boolean; drawOutgoing: boolean; rematchIncoming: boolean; rematchOutgoing: boolean };
+
+/** A reply can finalize only a request the local player actually sent. */
+export function receiveOfflineReply(state: OfflineMatch, packet: { type: 'draw-reply'; accept: boolean } | { type: 'rematch-accept' }, pending: OfflineRequests): OfflineMatch {
+  if (packet.type === 'draw-reply') {
+    if (!pending.drawOutgoing || state.result || typeof packet.accept !== 'boolean') throw new Error('Unexpected nearby draw response.');
+    return packet.accept ? { ...state, result: { winner: null, reason: 'Draw agreed' } } : state;
+  }
+  if (!pending.rematchOutgoing || !state.result) throw new Error('Unexpected nearby rematch response.');
+  return initialOfflineMatch();
+}
 
 export function initialOfflineMatch(): OfflineMatch {
   return { board: createInitialBoard(), turn: 'W', history: [], result: null };
@@ -73,4 +84,11 @@ export function makePairingCode(description: RTCSessionDescriptionInit): string 
   let binary = '';
   for (const b of bytes) binary += String.fromCharCode(b);
   return `KENTRO-LAN-1:${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}`;
+}
+
+/** With no STUN/TURN fallback, a gathered offer without host candidates cannot connect. */
+export function ensureNearbyCandidates(sdp: string): void {
+  if (!/(?:^|\r?\n)a=candidate:[^\r\n]+/.test(sdp)) {
+    throw new Error('This browser did not provide a local Wi-Fi address. Connect to Wi-Fi or a hotspot and try a different supported browser.');
+  }
 }

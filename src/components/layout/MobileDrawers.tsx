@@ -1,8 +1,30 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
 import { MenuSidebar } from "../MenuSidebar";
 import { PlayMode, BoardTheme } from "../../types";
+
+function useDrawerFocus(open: boolean, ref: { current: HTMLDivElement | null }) {
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => ref.current?.focus());
+    const onTab = (event: KeyboardEvent) => {
+      const panel = ref.current;
+      if (!panel || event.key !== "Tab") return;
+      const dialogs = Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]'));
+      if (dialogs[dialogs.length - 1] !== panel) return;
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),[tabindex]:not([tabindex="-1"])'))
+        .filter(element => element.getClientRects().length > 0 && element.tabIndex >= 0);
+      if (!controls.length) { event.preventDefault(); panel.focus(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onTab);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("keydown", onTab); previous?.focus(); };
+  }, [open, ref]);
+}
 
 export interface MobileDrawersProps {
   isLeftDrawerOpen: boolean;
@@ -11,9 +33,9 @@ export interface MobileDrawersProps {
   setIsRightDrawerOpen: React.Dispatch<React.SetStateAction<boolean>>;
   playMode: PlayMode;
   handleModeChange: (mode: PlayMode) => void;
-  setShowFriendsPage: React.Dispatch<React.SetStateAction<boolean>>;
-  setShowProfilePage: React.Dispatch<React.SetStateAction<boolean>>;
-  setShowPurchaseModal: React.Dispatch<React.SetStateAction<boolean>>;
+  onOpenFriends: () => void;
+  onOpenProfile: () => void;
+  onOpenStore: () => void;
   setShowPlayerDirectory: React.Dispatch<React.SetStateAction<boolean>>;
   fetchPlayersDirectory: () => void;
   unreadLoungeCount: number;
@@ -39,10 +61,14 @@ export interface MobileDrawersProps {
  * device safe areas so nothing hides behind Android gesture bars.
  */
 export function MobileDrawers(props: MobileDrawersProps) {
+  const leftRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  useDrawerFocus(props.isLeftDrawerOpen, leftRef);
+  useDrawerFocus(props.isRightDrawerOpen, rightRef);
   const {
     isLeftDrawerOpen, setIsLeftDrawerOpen, isRightDrawerOpen, setIsRightDrawerOpen,
-    playMode, handleModeChange, setShowFriendsPage, setShowProfilePage,
-    setShowPurchaseModal, setShowPlayerDirectory, fetchPlayersDirectory,
+    playMode, handleModeChange, onOpenFriends, onOpenProfile,
+    onOpenStore, setShowPlayerDirectory, fetchPlayersDirectory,
     unreadLoungeCount, muted, setMuted, setShowRules,
     boardTheme, setBoardTheme, clockLimitType, setClockLimitType,
     kenLevelId, setKenLevelId, onSelectKenLevel, boardScale, setBoardScale, sidebarContent,
@@ -67,6 +93,8 @@ export function MobileDrawers(props: MobileDrawersProps) {
             onClick={() => setIsLeftDrawerOpen(false)}
           >
             <motion.div
+              ref={leftRef}
+              tabIndex={-1}
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
@@ -96,9 +124,9 @@ export function MobileDrawers(props: MobileDrawersProps) {
                     handleModeChange(mode);
                     setIsLeftDrawerOpen(false); // Auto-close on selection
                   }}
-                  onOpenFriends={() => { setShowFriendsPage(true); setIsLeftDrawerOpen(false); }}
-                  onOpenProfile={() => { setShowProfilePage(true); setIsLeftDrawerOpen(false); }}
-                  onOpenStore={() => { setShowPurchaseModal(true); setIsLeftDrawerOpen(false); }}
+                  onOpenFriends={() => { onOpenFriends(); setIsLeftDrawerOpen(false); }}
+                  onOpenProfile={() => { onOpenProfile(); setIsLeftDrawerOpen(false); }}
+                  onOpenStore={() => { onOpenStore(); setIsLeftDrawerOpen(false); }}
                   onOpenPlayers={() => { setShowPlayerDirectory(true); fetchPlayersDirectory(); setIsLeftDrawerOpen(false); }}
                   unreadLoungeCount={unreadLoungeCount}
                   muted={muted}
@@ -130,6 +158,8 @@ export function MobileDrawers(props: MobileDrawersProps) {
             onClick={() => setIsRightDrawerOpen(false)}
           >
             <motion.div
+              ref={rightRef}
+              tabIndex={-1}
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}

@@ -26,7 +26,9 @@ export function loadNotificationPreferences(userId: string): NotificationPrefere
 }
 export function validNotificationPath(path: string): string {
   // Only same-site relative navigation, never arbitrary URLs or JS schemes.
-  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || path.includes("\\")) return "/";
+  // The URL parser strips tabs/newlines before resolving a URL. Reject them
+  // before testing the prefix so /\t/attacker cannot become //attacker.
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || /[\\\u0000-\u0020\u007f]/.test(path)) return "/";
   return path;
 }
 export function unreadCount(items: KentroNotification[], prefs: NotificationPreferences): number {

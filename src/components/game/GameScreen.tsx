@@ -1437,7 +1437,7 @@ export function GameScreen(props: GameScreenProps) {
                 </button>
 
                 <button
-                  onClick={handleNewGame}
+                  onClick={() => handleNewGame()}
                   className="p-1.5 sm:px-2 sm:py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 transition flex items-center gap-1 cursor-pointer shadow-md font-black"
                   title="New Match"
                 >

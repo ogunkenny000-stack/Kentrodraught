@@ -13,29 +13,38 @@ function storage(): Storage | null {
   try { return typeof window !== 'undefined' ? window.localStorage : null; }
   catch { return null; }
 }
-export function isGuestActive(): boolean { return storage()?.getItem(GUEST_ACTIVE) === 'true'; }
+function readStored(key: string): string | null {
+  try { return storage()?.getItem(key) ?? null; } catch { return null; }
+}
+let transientName: string | null = null;
+export function isGuestActive(): boolean { return readStored(GUEST_ACTIVE) === 'true'; }
 export function setGuestActive(active: boolean): void {
   try { active ? storage()?.setItem(GUEST_ACTIVE, 'true') : storage()?.removeItem(GUEST_ACTIVE); } catch { /* private mode */ }
 }
 export function isGuestName(name: string): boolean { return NAME_RE.test(name); }
 export function getGuestName(): string {
-  const previous = storage()?.getItem(GUEST_NAME) || '';
+  const previous = readStored(GUEST_NAME) || transientName || '';
   if (isGuestName(previous)) return previous;
   // Use an unguessable, stable per-browser ID so server reconnects use the same identity.
   const bytes = new Uint8Array(10);
   crypto.getRandomValues(bytes);
   const name = `KGuest_${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+  transientName = name;
   try { storage()?.setItem(GUEST_NAME, name); } catch { /* no persistent storage */ }
   return name;
 }
 export function getGuestAiUsed(): number {
-  const value = Number(storage()?.getItem(AI_COUNT) ?? '0');
+  const value = Number(readStored(AI_COUNT) ?? '0');
   return Number.isInteger(value) ? Math.max(0, Math.min(GUEST_AI_LIMIT, value)) : 0;
 }
 export function claimGuestAiGame(): boolean {
   const used = getGuestAiUsed();
   if (used >= GUEST_AI_LIMIT) return false;
-  try { storage()?.setItem(AI_COUNT, String(used + 1)); }
+  try {
+    const local = storage();
+    if (!local) return false;
+    local.setItem(AI_COUNT, String(used + 1));
+  }
   catch { return false; } // Do not advertise a durable quota if persistence is unavailable.
   return true;
 }

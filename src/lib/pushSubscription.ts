@@ -25,8 +25,10 @@ export async function enableBackgroundPush(prefs: NotificationPreferences): Prom
   const key = Uint8Array.from(atob(publicKey.replace(/-/g,"+").replace(/_/g,"/")),c=>c.charCodeAt(0));
   // Development deliberately unregisters its service worker. Do not hang on
   // serviceWorker.ready when a registration has not been installed yet.
-  if (!await navigator.serviceWorker.getRegistration()) return "foreground";
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await navigator.serviceWorker.getRegistration();
+  // A registration that is still installing may never activate (offline or
+  // failed install). Do not leave the user waiting indefinitely on .ready.
+  if (!registration?.active) return "foreground";
   const existing = await registration.pushManager.getSubscription();
   const subscription = existing || await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
   await saveSubscription(subscription, prefs);
@@ -44,7 +46,12 @@ export async function disableBackgroundPush() {
   const subscription = await registration?.pushManager.getSubscription();
   if (!subscription) return;
   const endpoint = subscription.endpoint;
-  const response = await fetch("/api/notifications/push-unsubscribe",{method:"POST",headers:await authHeaders(),body:JSON.stringify({endpoint})});
-  if (!response.ok) throw new Error("Could not turn off push alerts on the server.");
-  await subscription.unsubscribe();
+  try {
+    const response = await fetch("/api/notifications/push-unsubscribe",{method:"POST",headers:await authHeaders(),body:JSON.stringify({endpoint})});
+    if (!response.ok) throw new Error("Could not turn off push alerts on the server.");
+  } finally {
+    // Sign-out can continue while the server is offline. Revoke this browser's
+    // endpoint anyway so the next person using it cannot receive our alerts.
+    await subscription.unsubscribe();
+  }
 }

@@ -5,6 +5,14 @@ import type { KentroGameRecord } from "../types/gameRecords";
 export interface ReplayFrame { board: Board; move: Move | null; ply: number; turn: "W" | "B" }
 export interface Highlight { from: number; to: number; title: string; kind: "capture" | "promotion" | "finale" }
 
+/** Deep links are bounded by the loaded record, not merely the URL's limit. */
+export function replayBounds(frameCount: number, requestedPly: number, clipEnd?: number): { ply: number; range: { from: number; to: number } | null } {
+  const last = Math.max(0, frameCount - 1);
+  const ply = Math.min(last, Number.isSafeInteger(requestedPly) && requestedPly >= 0 ? requestedPly : 0);
+  const to = Number.isSafeInteger(clipEnd) ? Math.min(last, clipEnd!) : ply;
+  return { ply, range: to > ply ? { from: ply, to } : null };
+}
+
 /** Replay only legal, recorded moves. Never accept a client-supplied board snapshot as proof of a move. */
 export function buildReplayFrames(game: Pick<KentroGameRecord, "startingPosition" | "completeMoveHistory">): ReplayFrame[] {
   let board = game.startingPosition && Object.keys(game.startingPosition).length ? { ...game.startingPosition } : createInitialBoard();

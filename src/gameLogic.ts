@@ -681,6 +681,9 @@ export function boardToScanFen(board: Board, turn: "W" | "B"): string {
  * Parse a SCAN FEN string back into a Board state.
  */
 export function scanFenToBoard(fen: string): { board: Board; turn: "W" | "B" } {
+  if (typeof fen !== "string" || !/^[WB][wWbBe]{50}$/.test(fen)) {
+    throw new Error("Invalid SCAN FEN: expected W or B followed by exactly 50 piece or empty-square characters.");
+  }
   const turn = fen[0] as "W" | "B";
   const board: Board = {};
   for (let scanSq = 1; scanSq <= 50; scanSq++) {
@@ -775,15 +778,21 @@ const NO_END: GameEndResult = { isOver: false, winner: null, isDraw: false, reas
  * do. This is called from BOTH the client (for instant local feedback in
  * AI/analysis games) and the server (as the authoritative check for PvP,
  * which previously had no such check at all).
+ * Custom-position games must supply their initial board and first mover;
+ * standard games can continue passing only their move history.
  */
-export function checkGameEnd(history: Move[]): GameEndResult {
+export function checkGameEnd(
+  history: Move[],
+  initialBoard: Board = createInitialBoard(),
+  firstMover: "W" | "B" = "W"
+): GameEndResult {
   // Reconstruct every board position in the game, 0..history.length.
-  const boards: Board[] = [createInitialBoard()];
+  const boards: Board[] = [{ ...initialBoard }];
   for (let i = 0; i < history.length; i++) {
     boards.push(applyMove(boards[i], history[i]).board);
   }
   const finalBoard = boards[boards.length - 1];
-  const sideToMove: "W" | "B" = history.length % 2 === 0 ? "W" : "B";
+  const sideToMove: "W" | "B" = history.length % 2 === 0 ? firstMover : firstMover === "W" ? "B" : "W";
 
   // 1. No legal moves -> opponent wins.
   if (generateLegalMoves(finalBoard, sideToMove).length === 0) {

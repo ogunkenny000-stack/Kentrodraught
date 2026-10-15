@@ -53,8 +53,10 @@ export async function signUpWithEmail(email: string, password: string, username:
   // then the Supabase Auth ACCOUNT already exists, just with no matching
   // profile, leaving them unable to ever sign in by username. Catching it
   // here means signup fails cleanly, before anything is created.
-  const existingEmail = await resolveUsernameToEmail(cleanUsername);
-  if (existingEmail) {
+  const { data: existingProfile, error: availabilityError } = await supabase.from('profiles')
+    .select('usernameLower').eq('usernameLower', cleanUsername).maybeSingle();
+  if (availabilityError) throw new Error('Username availability is temporarily unavailable.');
+  if (existingProfile) {
     throw new Error('That username is already taken. Try another one.');
   }
 
@@ -97,31 +99,26 @@ export async function signUpWithEmail(email: string, password: string, username:
   return user;
 }
 
-/** Resolves a username to its account email via the resolve_username_to_email
- * RPC (see supabase/schema.sql) -- returns null if no account uses this
- * username. */
-export async function resolveUsernameToEmail(username: string): Promise<string | null> {
-  const { data, error } = await supabase.rpc('resolve_username_to_email', { p_username: username });
-  if (error) {
-    console.error('resolveUsernameToEmail failed:', error);
-    return null;
-  }
-  return (data as string | null) ?? null;
+/** Username authentication stays behind the server so account email addresses
+ * are not anonymously exposed through a public database RPC. */
+async function accountAuthRequest(route: string, body: Record<string, string>) {
+  const response = await fetch(`/api/auth/${route}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.error || 'Account service is temporarily unavailable.');
+  return result;
 }
 
-/** Sign in with username instead of email -- resolves to the account's
- * real email first, then authenticates normally. Throws a clear
- * "account not found" error (distinct from "wrong password") if the
- * username doesn't match any account. */
 export async function signInWithUsername(username: string, password: string): Promise<User> {
-  const email = await resolveUsernameToEmail(username);
-  if (!email) {
-    const err = new Error('No account found with that username.');
-    (err as any).code = 'user_not_found';
-    throw err;
+  const result = await accountAuthRequest('login', { username, password });
+  const session = result?.session;
+  if (typeof session?.access_token !== 'string' || typeof session?.refresh_token !== 'string') {
+    throw new Error('Sign-in did not return a valid session.');
   }
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
   if (error) throw error;
+  if (!data.user) throw new Error('Sign-in did not return an account.');
   return data.user;
 }
 
@@ -131,23 +128,9 @@ export async function signInWithEmail(email: string, password: string): Promise<
   return data.user;
 }
 
-/** Password reset by username, not email -- consistent with the rest of
- * this app's UX (email is only ever collected once, at signup). Resolves
- * the username to its account email via the same resolve_username_to_email
- * RPC used for sign-in, then asks Supabase to send the reset link. Throws
- * "user_not_found" if the username doesn't match any account, same
- * distinguishable error shape signInWithUsername already uses. */
+/** The response is intentionally identical for existing and absent accounts. */
 export async function requestPasswordReset(username: string): Promise<void> {
-  const email = await resolveUsernameToEmail(username);
-  if (!email) {
-    const err = new Error('No account found with that username.');
-    (err as any).code = 'user_not_found';
-    throw err;
-  }
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: window.location.origin,
-  });
-  if (error) throw error;
+  await accountAuthRequest('password-reset', { username });
 }
 
 /** Re-sends the verification email to whoever is currently signed in.

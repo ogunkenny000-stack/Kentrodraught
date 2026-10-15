@@ -1,0 +1,12 @@
+=== RUN   TestFrontendAndCache
+--- PASS: TestFrontendAndCache (0.02s)
+=== RUN   TestPrivateBuildFilesAndSymlinks
+--- PASS: TestPrivateBuildFilesAndSymlinks (0.00s)
+=== RUN   TestBackendMustBeOrigin
+--- PASS: TestBackendMustBeOrigin (0.00s)
+=== RUN   TestAPIIsUncachedAndForwarded
+--- PASS: TestAPIIsUncachedAndForwarded (0.00s)
+=== RUN   TestWebsocketUpgrade
+--- PASS: TestWebsocketUpgrade (0.00s)
+PASS
+ok  	kentro/edge	1.039s

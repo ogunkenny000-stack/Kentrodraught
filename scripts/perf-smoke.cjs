@@ -12,10 +12,10 @@ function percentile(data, p) { const x = [...data].sort((a,b)=>a-b); return x[Ma
     const times = [];
     for (let i=0;i<30;i++) {
       const start = performance.now();
-      const response = await fetch(target+route, { headers: {'Cache-Control':'no-cache'} });
+      const response = await fetch(target+route, { headers: {'Cache-Control':'no-cache'}, signal: AbortSignal.timeout(5000) });
       await response.arrayBuffer();
       times.push(performance.now()-start);
-      if (!response.ok) { console.warn(`${route}: HTTP ${response.status}`); break; }
+      if (!response.ok) throw new Error(`${route}: HTTP ${response.status}`);
     }
     console.log(`${route}: ${times.length} requests; p50=${percentile(times,0.5)}ms p95=${percentile(times,0.95)}ms`);
   }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Search, Loader2, Play, Compass, Eye, Share2, Copy, Check, Clock, AlertCircle } from "lucide-react";
+import { supabase } from "../../supabase";
 import { ModalShell } from "../ui/ModalShell";
 import { KentroGameRecord } from "../../types/gameRecords";
 import { GameResultDetailModal } from "./GameResultDetailModal";
@@ -57,7 +58,10 @@ export function GameSearchModal({
     setFoundGame(null);
 
     try {
-      const res = await fetch(`/api/games/code/${encodeURIComponent(code)}`);
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`/api/games/code/${encodeURIComponent(code)}`, {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      });
       const data = await res.json();
 
       if (res.ok && data.ok && data.game) {

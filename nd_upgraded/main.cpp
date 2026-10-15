@@ -367,8 +367,12 @@ static void hub_loop() {
             continue;
          }
 
+         // Search scores are valid only for the evaluator that produced
+         // them. The web server switches PST/pattern on the same process.
+         bool changed_eval = name == "eval" && value != var::get(name);
          var::set(name, value);
          var::update();
+         if (changed_eval) G_TT.clear();
 
       } else if (command == "stop") {
 

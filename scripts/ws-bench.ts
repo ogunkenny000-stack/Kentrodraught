@@ -1,125 +1,109 @@
-/**
- * Live end-to-end benchmark of the multiplayer room flow, against the REAL
- * built server over REAL WebSockets: login -> create-room -> join ->
- * accept -> game-started, then a full game's worth of move relays, timing
- * every hop and measuring wire sizes (delta vs full-state resync).
+/** Loopback-only guest multiplayer benchmark against an already running local server.
+ * BENCH_URL=ws://127.0.0.1:8126 BENCH_CLIENTS=2,10,25,50,100 npx tsx scripts/ws-bench.ts
+ * Optional BENCH_SERVER_PID reports Linux process RSS and CPU (CLK_TCK=100).
  */
-import { spawn } from "node:child_process";
-import WebSocket from "ws";
-import { createInitialBoard, generateLegalMoves, applyMove, Board, Move } from "../src/gameLogic";
-
-const PORT = 3999;
-const MOVES = 240;
-
-function pct(arr: number[], p: number) {
-  const s = [...arr].sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import WebSocket from 'ws';
+import { generateLegalMoves, applyMove, type Board } from '../src/gameLogic';
+const target = new URL(process.env.BENCH_URL || 'ws://127.0.0.1:8126');
+assert(target.protocol === 'ws:' && ['127.0.0.1','localhost','[::1]'].includes(target.hostname)
+  && target.pathname === '/' && !target.username && !target.password && !target.search, 'Only loopback test servers are permitted');
+const counts = (process.env.BENCH_CLIENTS || '2,10,25,50,100').split(',').map(Number);
+assert(counts.every(n => Number.isInteger(n) && n >= 2 && n <= 100), 'Client counts must be integers 2..100');
+type Msg = any;
+const sleep = (ms:number) => new Promise(r => setTimeout(r,ms));
+function summary(values:number[]) {
+  assert(values.length, 'No observations collected');
+  const sorted = [...values].sort((a,b)=>a-b);
+  const p = (q:number) => Number(sorted[Math.max(0,Math.ceil(sorted.length*q)-1)].toFixed(3));
+  return {samples:values.length,p50:p(.5),p95:p(.95),max:Number(sorted.at(-1)!.toFixed(3))};
 }
-
-async function main() {
-  const server = spawn("node", ["dist/server.cjs"], {
-    env: {
-      ...process.env,
-      PORT: String(PORT),
-      SUPABASE_URL: "https://dummy.supabase.co",
-      SUPABASE_SECRET_KEY: "dummy",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  server.stderr.on("data", () => {});
-  // wait for HTTP to answer
-  for (let i = 0; i < 60; i++) {
-    try { const r = await fetch(`http://127.0.0.1:${PORT}/`); if (r.status < 600) break; } catch {}
-    await new Promise((r) => setTimeout(r, 250));
-  }
-
-  const mkClient = (name: string) => new Promise<{ ws: WebSocket; inbox: Map<string, ((d: any) => void)[]> }>((resolve) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
-    const inbox = new Map<string, ((d: any) => void)[]>();
-    ws.on("message", (raw) => {
-      if (process.env.BENCH_TRACE) console.error(name, "<-", JSON.parse(String(raw)).type);
-      const d = JSON.parse(String(raw));
-      (d as any).__bytes = String(raw).length;
-      const q = inbox.get(d.type);
-      if (q && q.length) q.shift()!(d);
+class Client {
+  name = `KGuest_${randomBytes(10).toString('hex')}`;
+  ws = new WebSocket(target.toString(), {handshakeTimeout:5000});
+  inbox:Msg[]=[];
+  waiters:{match:(m:Msg)=>boolean;resolve:(m:Msg)=>void;reject:(e:Error)=>void;timer:NodeJS.Timeout}[]=[];
+  failure:Error|null=null;
+  constructor() {
+    this.ws.on('error',error=>this.fail(error));
+    this.ws.on('close',()=>this.fail(new Error('WebSocket closed')));
+    this.ws.on('message',raw=>{
+      let message:Msg;
+      try {message=JSON.parse(String(raw));} catch {this.fail(new Error('Invalid server JSON'));return;}
+      message.__bytes=Buffer.byteLength(String(raw));
+      if (message.type==='error'||message.type==='room-error') {this.fail(new Error(`Protocol error: ${message.code||message.error||message.message}`));return;}
+      const index=this.waiters.findIndex(w=>w.match(message));
+      if(index>=0) {const [w]=this.waiters.splice(index,1);clearTimeout(w.timer);w.resolve(message);}
+      else {this.inbox.push(message);if(this.inbox.length>100)this.inbox.shift();}
     });
-    ws.on("open", () => { ws.send(JSON.stringify({ type: "login", username: name })); resolve({ ws, inbox }); });
-  });
-  const waitFor = (c: { inbox: Map<string, ((d: any) => void)[]> }, type: string) =>
-    new Promise<any>((res) => {
-      if (!c.inbox.has(type)) c.inbox.set(type, []);
-      c.inbox.get(type)!.push(res);
-    });
-
-  console.error("[bench] server up, connecting clients…");
-  const A = await mkClient("BenchAlice");
-  console.error("[bench] A connected");
-  const B = await mkClient("BenchBob");
-  console.error("[bench] B connected");
-
-  // --- create + join + accept + start ---
-  const tCreate0 = performance.now();
-  const roomInfoP = waitFor(A, "room-info");
-  A.ws.send(JSON.stringify({ type: "create-room", gameTime: 5, specialRule: "none", wagerAmount: 0 }));
-  console.error("[bench] create-room sent");
-  const roomInfo = await roomInfoP;
-  console.error("[bench] room-info:", roomInfo.roomId);
-  const tCreate = performance.now() - tCreate0;
-  const roomId = roomInfo.roomId;
-
-  const tPrev0 = performance.now();
-  const prevP = waitFor(B, "room-preview");
-  B.ws.send(JSON.stringify({ type: "join-room", roomId }));
-  await prevP;
-  const tPreview = performance.now() - tPrev0;
-
-  const tAcc0 = performance.now();
-  const startA = waitFor(A, "game-started");
-  const startB = waitFor(B, "game-started");
-  B.ws.send(JSON.stringify({ type: "join-room-accept", roomId }));
-  const [sA] = await Promise.all([startA, startB]);
-  const tAccept = performance.now() - tAcc0;
-
-  const colorA: "W" | "B" = roomInfo.yourColor;
-  let board: Board = sA.gameState.board ?? createInitialBoard();
-  let turn: "W" | "B" = sA.gameState.turn;
-
-  // --- move relay loop: mover sends, BOTH clients must receive the delta ---
-  const lat: number[] = [];
-  const deltaBytes: number[] = [];
-  for (let i = 0; i < MOVES; i++) {
-    const legal = generateLegalMoves(board, turn);
-    if (legal.length === 0) break;
-    const mv: Move = legal[i % legal.length];
-    const mover = turn === colorA ? A : B;
-    const pA = waitFor(A, "move-made");
-    const pB = waitFor(B, "move-made");
-    const t0 = performance.now();
-    mover.ws.send(JSON.stringify({ type: "make-move", move: mv, whiteTime: 300, blackTime: 300 }));
-    const [dA] = await Promise.all([pA, pB]);
-    lat.push(performance.now() - t0);
-    deltaBytes.push(dA.__bytes);
-    board = applyMove(board, dA.move).board;
-    turn = dA.turn;
   }
-
-  // --- full-state resync at end-of-game size, for the wire comparison ---
-  const fullP = waitFor(A, "opponent-moved");
-  A.ws.send(JSON.stringify({ type: "resync" }));
-  const full = await fullP;
-
-  const avg = lat.reduce((a, b) => a + b, 0) / lat.length;
-  const avgDelta = Math.round(deltaBytes.reduce((a, b) => a + b, 0) / deltaBytes.length);
-  console.log(`room create ack:            ${tCreate.toFixed(1)} ms`);
-  console.log(`join preview:               ${tPreview.toFixed(1)} ms`);
-  console.log(`accept -> both started:     ${tAccept.toFixed(1)} ms`);
-  console.log(`moves relayed:              ${lat.length}`);
-  console.log(`move relay avg:             ${avg.toFixed(2)} ms   p50 ${pct(lat, 50).toFixed(2)}  p95 ${pct(lat, 95).toFixed(2)}  max ${Math.max(...lat).toFixed(2)}`);
-  console.log(`per-move wire size (delta): ${avgDelta} bytes avg, ${Math.max(...deltaBytes)} max`);
-  console.log(`full-state at move ${lat.length}:     ${full.__bytes} bytes  (what EVERY move used to cost)`);
-  console.log(`bandwidth saved per game:   ~${(((full.__bytes - avgDelta) * lat.length * 2) / 1024).toFixed(0)} KB across both players`);
-
-  A.ws.close(); B.ws.close(); server.kill("SIGTERM");
-  process.exit(0);
+  fail(error:Error) {this.failure||=error;for(const w of this.waiters.splice(0)){clearTimeout(w.timer);w.reject(error);}}
+  wait(match:(m:Msg)=>boolean,timeout=8000):Promise<Msg> {
+    if(this.failure)return Promise.reject(this.failure);
+    const index=this.inbox.findIndex(match);if(index>=0)return Promise.resolve(this.inbox.splice(index,1)[0]);
+    return new Promise((resolve,reject)=>{
+      const waiter={match,resolve,reject,timer:setTimeout(()=>{
+        const i=this.waiters.indexOf(waiter);if(i>=0)this.waiters.splice(i,1);reject(new Error('Timed out waiting for server reply'));
+      },timeout)};this.waiters.push(waiter);
+    });
+  }
+  send(message:Msg){this.ws.send(JSON.stringify(message));}
+  async login(){
+    if(this.ws.readyState!==WebSocket.OPEN)await new Promise<void>((resolve,reject)=>{this.ws.once('open',resolve);this.ws.once('error',reject);});
+    const reply=this.wait(m=>m.type==='login-success');this.send({type:'login',username:this.name});
+    assert.match((await reply).sessionToken,/^[0-9a-f]{32}$/);
+  }
+  async close(){
+    if(this.ws.readyState===WebSocket.CLOSED)return;
+    await new Promise<void>(resolve=>{
+      const timer=setTimeout(()=>{this.ws.terminate();resolve();},500);
+      this.ws.once('close',()=>{clearTimeout(timer);resolve();});this.ws.close();
+    });
+  }
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+function processSample(){
+  const pid=process.env.BENCH_SERVER_PID;if(!pid||!/^\d+$/.test(pid))return null;
+  const status=fs.readFileSync(`/proc/${pid}/status`,'utf8');
+  const stat=fs.readFileSync(`/proc/${pid}/stat`,'utf8').split(') ')[1].split(' ');
+  return {rssKiB:Number(status.match(/^VmRSS:\s+(\d+)/m)?.[1]),ticks:Number(stat[11])+Number(stat[12])};
+}
+async function runStage(count:number){
+  const clients:Client[]=[];const started=performance.now();const before=processSample();
+  const roomSetup:number[]=[],moves:number[]=[],pings:number[]=[],sizes:number[]=[];
+  try{
+    for(let i=0;i<count;i++){const c=new Client();clients.push(c);await c.login();}
+    const rooms=await Promise.all(Array.from({length:Math.floor(count/2)},async(_,i)=>{
+      const a=clients[i*2],b=clients[i*2+1],start=performance.now();
+      const infoP=a.wait(m=>m.type==='room-info');a.send({type:'create-room',gameTime:5,bestOf:1,specialRule:'none',wagerAmount:0});const info=await infoP;
+      const previewP=b.wait(m=>m.type==='room-preview');b.send({type:'join-room',roomId:info.roomId});await previewP;
+      const startA=a.wait(m=>m.type==='game-started'),startB=b.wait(m=>m.type==='game-started');
+      b.send({type:'join-room-accept',roomId:info.roomId});const [game]=await Promise.all([startA,startB]);
+      roomSetup.push(performance.now()-start);const color=info.players.find((p:Msg)=>p.username===a.name)?.color;assert(color==='W'||color==='B');
+      return {a,b,color,board:game.gameState.board as Board,turn:game.gameState.turn as 'W'|'B',seq:0};
+    }));
+    for(let round=0;round<12;round++){
+      await Promise.all(rooms.map(async room=>{
+        const legal=generateLegalMoves(room.board,room.turn);assert(legal.length>0,'Game ended before benchmark move budget');
+        const waitA=room.a.wait(m=>m.type==='move-made'&&m.seq>room.seq),waitB=room.b.wait(m=>m.type==='move-made'&&m.seq>room.seq);
+        const start=performance.now();(room.turn===room.color?room.a:room.b).send({type:'make-move',move:legal[round%legal.length]});
+        const [a,b]=await Promise.all([waitA,waitB]);assert.deepEqual(a.move,b.move);assert.equal(a.seq,b.seq);assert.equal(a.turn,b.turn);
+        moves.push(performance.now()-start);sizes.push(a.__bytes);room.board=applyMove(room.board,a.move).board;room.turn=a.turn;room.seq=a.seq;
+      }));await sleep(25);
+    }
+    for(let round=0;round<10;round++){
+      await Promise.all(clients.map(async(c,i)=>{
+        const nonce=round*count+i,reply=c.wait(m=>m.type==='pong'&&m.t===nonce),start=performance.now();c.send({type:'ping',t:nonce});await reply;pings.push(performance.now()-start);
+      }));await sleep(25);
+    }
+    const after=processSample(),elapsedMs=performance.now()-started;
+    const result={clients:count,rooms:rooms.length,elapsedMs:Number(elapsedMs.toFixed(1)),roomSetupMs:summary(roomSetup),moveRelayMs:summary(moves),pingMs:summary(pings),deltaBytes:summary(sizes),
+      nodeRssMiB:after?Number((after.rssKiB/1024).toFixed(1)):null,
+      nodeCpuOneCorePercent:before&&after?Number(((after.ticks-before.ticks)/elapsedMs*1000).toFixed(1)):null,failures:0};
+    await Promise.all(clients.map(async c=>{const reply=c.wait(m=>m.type==='left-room-success');c.send({type:'leave-room'});await reply;}));
+    console.log(JSON.stringify(result));
+  }finally{await Promise.all(clients.map(c=>c.close()));}
+}
+async function main(){for(const count of counts){await runStage(count);await sleep(250);}}
+main().catch(error=>{console.error(error);process.exitCode=1;});

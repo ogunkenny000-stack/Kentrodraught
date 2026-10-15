@@ -879,7 +879,7 @@ export function useLoungeData(
           user2: cleanTarget,
           user1Elo: profileStats?.elo || 1500,
           user2Elo: targetElo,
-          status: "accepted",
+          status: "pending",
           sender: username
         })
         .then(() => {}, () => {});

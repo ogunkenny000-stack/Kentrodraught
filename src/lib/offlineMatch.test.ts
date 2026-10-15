@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateLegalMoves, boardToScanFen } from '../gameLogic';
-import { initialOfflineMatch, playOfflineMove, makeOfflineMoveMessage, receiveOfflineMove, makePairingCode, parsePairingCode } from './offlineMatch';
+import { initialOfflineMatch, playOfflineMove, makeOfflineMoveMessage, receiveOfflineMove, receiveOfflineReply, makePairingCode, parsePairingCode, ensureNearbyCandidates } from './offlineMatch';
+import type { OfflineRequests } from './offlineMatch';
 
 describe('nearby offline match rules', () => {
   it('starts with Nigerian 10x10 legal first moves', () => {
@@ -51,7 +52,38 @@ describe('nearby offline match rules', () => {
   });
 });
 
+describe('nearby agreement consent', () => {
+  const requests: OfflineRequests = { drawIncoming: false, drawOutgoing: false, rematchIncoming: false, rematchOutgoing: false };
+  it('prevents an unsolicited acceptance from ending or resetting the game', () => {
+    const state = initialOfflineMatch();
+    expect(() => receiveOfflineReply(state, { type: 'draw-reply', accept: true }, requests)).toThrow('Unexpected');
+    const ended = { ...state, result: { winner: 'W' as const, reason: 'Resignation' } };
+    expect(() => receiveOfflineReply(ended, { type: 'rematch-accept' }, requests)).toThrow('Unexpected');
+    expect(state.result).toBeNull();
+    expect(ended.result.reason).toBe('Resignation');
+  });
+  it('requires a pending local offer and boolean answer to agree to a draw', () => {
+    const state = initialOfflineMatch();
+    const pending = { ...requests, drawOutgoing: true };
+    expect(receiveOfflineReply(state, { type: 'draw-reply', accept: true }, pending).result).toEqual({ winner: null, reason: 'Draw agreed' });
+    expect(receiveOfflineReply(state, { type: 'draw-reply', accept: false }, pending)).toBe(state);
+    expect(() => receiveOfflineReply(state, { type: 'draw-reply', accept: 'yes' as any }, pending)).toThrow('Unexpected');
+  });
+  it('rematches an ended game only after a local rematch request', () => {
+    const state = initialOfflineMatch();
+    const move = generateLegalMoves(state.board, 'W')[0];
+    const ended = { ...playOfflineMove(state, move, 'W'), result: { winner: null, reason: 'Draw agreed' } };
+    const pending = { ...requests, rematchOutgoing: true };
+    expect(receiveOfflineReply(ended, { type: 'rematch-accept' }, pending)).toEqual(initialOfflineMatch());
+    expect(() => receiveOfflineReply(state, { type: 'rematch-accept' }, pending)).toThrow('Unexpected');
+  });
+});
+
 describe('pairing exchange', () => {
+  it('does not advertise a gathered connection that has no local ICE address', () => {
+    expect(() => ensureNearbyCandidates('v=0\r\na=end-of-candidates\r\n')).toThrow('local Wi-Fi address');
+    expect(() => ensureNearbyCandidates('v=0\r\na=candidate:1 1 UDP 2122260223 192.168.1.2 60000 typ host\r\n')).not.toThrow();
+  });
   it('round trips an SDP offer without any server', () => {
     const description = { type: 'offer' as const, sdp: 'v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\n' };
     expect(parsePairingCode(makePairingCode(description), 'offer')).toEqual(description);

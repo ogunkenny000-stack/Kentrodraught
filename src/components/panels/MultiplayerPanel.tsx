@@ -181,6 +181,8 @@ export interface MultiplayerPanelProps {
   setSetupWagerAmount: React.Dispatch<React.SetStateAction<number>>;
   setupBestOf: number;
   setSetupBestOf: React.Dispatch<React.SetStateAction<number>>;
+  setupPrivate: boolean;
+  setSetupPrivate: React.Dispatch<React.SetStateAction<boolean>>;
   coinBalance: number;
   onConfirmHostSetup: () => void;
   // In-room
@@ -249,6 +251,7 @@ export function MultiplayerPanel(props: MultiplayerPanelProps) {
     setupHostTime, setSetupHostTime, setupGuestTime, setSetupGuestTime,
     setupSpecialRule, setSetupSpecialRule, setupWagerAmount, setSetupWagerAmount,
     setupBestOf, setSetupBestOf,
+    setupPrivate, setSetupPrivate,
     coinBalance, onConfirmHostSetup,
     roomPlayers, yourColor, isReady, multiplayerStarted, multiplayerWagerAmount, seriesInfo,
     isSpectating, spectatorCount, onLeaveSpectate,
@@ -751,7 +754,10 @@ export function MultiplayerPanel(props: MultiplayerPanelProps) {
                 </div>
               </div>
 
-
+              <label className="flex items-start gap-3 bg-slate-950 p-3 border border-slate-800 rounded-xl text-xs text-slate-300">
+                <input type="checkbox" checked={setupPrivate} onChange={event => setSetupPrivate(event.target.checked)} className="mt-0.5 accent-amber-500" />
+                <span><strong className="block text-white mb-1">Private match</strong>Join by room code only. Hidden from public challenges and Kentro TV; spectators cannot watch.</span>
+              </label>
               <button
                 onClick={onConfirmHostSetup}
                 className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 rounded-xl transition cursor-pointer text-xs mt-1"

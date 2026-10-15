@@ -1,0 +1,2 @@
+/: 30 requests; p50=3.4ms p95=8.7ms
+/api/games/recent?limit=1: 30 requests; p50=12.7ms p95=15.5ms

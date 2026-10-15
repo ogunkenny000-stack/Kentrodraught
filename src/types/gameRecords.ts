@@ -2,6 +2,9 @@ import { Board, Move } from "../gameLogic";
 
 export interface KentroGameRecord {
   gameCode: string; // e.g. "2690001"
+  private?: boolean;
+  participantUserIds?: string[];
+  serverSyncPending?: boolean;
   previousGameCode: string | null; // e.g. "2690000" if rematch
   nextGameCode?: string | null;
   seriesId: string; // Connected rematch series ID
