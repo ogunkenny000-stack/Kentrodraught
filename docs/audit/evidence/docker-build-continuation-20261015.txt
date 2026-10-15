@@ -1,0 +1,165 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.14kB done
+#1 DONE 0.0s
+
+#2 resolve image config for docker-image://docker.io/docker/dockerfile:1
+#2 DONE 0.7s
+
+#3 docker-image://docker.io/docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+#3 CACHED
+
+#4 [internal] load metadata for docker.io/library/node:22-bookworm-slim
+#4 DONE 0.7s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 614B done
+#5 DONE 0.0s
+
+#6 [builder 1/7] FROM docker.io/library/node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 91.64kB 0.0s done
+#7 DONE 0.0s
+
+#8 [builder 2/7] WORKDIR /app
+#8 CACHED
+
+#9 [builder 3/7] RUN apt-get update && apt-get install -y --no-install-recommends g++ make     && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [builder 4/7] COPY package.json package-lock.json ./
+#10 CACHED
+
+#11 [builder 5/7] RUN --mount=type=secret,id=proxy_ca     if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi;     npm ci --ignore-scripts --strict-ssl=true --no-audit --no-fund
+#11 CACHED
+
+#12 [builder 6/7] COPY . .
+#12 DONE 3.9s
+
+#13 [builder 7/7] RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
+#13 2.815 
+#13 2.815 > kentro-draughts@0.0.0 prebuild
+#13 2.815 > node scripts/build-engine.cjs
+#13 2.815 
+#13 2.872 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o bb_base.o bb_base.cpp
+#13 2.872 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o bb_comp.o bb_comp.cpp
+#13 2.872 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o bb_index.o bb_index.cpp
+#13 2.873 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o bit.o bit.cpp
+#13 3.219 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o book.o book.cpp
+#13 3.328 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o common.o common.cpp
+#13 3.351 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o eval.o eval.cpp
+#13 3.379 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o fen.o fen.cpp
+#13 3.729 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o game.o game.cpp
+#13 3.729 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o gen.o gen.cpp
+#13 3.759 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o hash.o hash.cpp
+#13 3.911 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o hub.o hub.cpp
+#13 4.111 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o libmy.o libmy.cpp
+#13 4.123 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o list.o list.cpp
+#13 4.173 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o main.o main.cpp
+#13 4.507 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o move.o move.cpp
+#13 4.660 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o pos.o pos.cpp
+#13 4.670 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o score.o score.cpp
+#13 4.900 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o search.o search.cpp
+#13 4.956 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o sort.o sort.cpp
+#13 5.018 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o thread.o thread.cpp
+#13 5.151 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o tt.o tt.cpp
+#13 5.370 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o util.o util.cpp
+#13 5.536 g++ -pthread -Wall -Wextra -Wno-unused -Wno-unused-parameter -std=c++14 -fno-rtti -O3 -DNDEBUG -flto -funroll-loops -ffast-math -c -o var.o var.cpp
+#13 5.968 g++ -pthread -O3 -flto -o scan_nigerian bb_base.o bb_comp.o bb_index.o bit.o book.o common.o eval.o fen.o game.o gen.o hash.o hub.o libmy.o list.o main.o move.o pos.o score.o search.o sort.o thread.o tt.o util.o var.o
+#13 6.076 lto-wrapper: warning: using serial compilation of 3 LTRANS jobs
+#13 6.076 lto-wrapper: note: see the '-flto' option documentation for more information
+#13 9.773 [build:engine] Native engine rebuilt and search-verified.
+#13 9.776 
+#13 9.776 > kentro-draughts@0.0.0 build
+#13 9.776 > vite build && node scripts/inject-sw-assets.cjs && node scripts/precompress-assets.cjs && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
+#13 9.776 
+#13 10.01 vite v6.4.3 building for production...
+#13 10.07 transforming...
+#13 13.93 ✓ 2241 modules transformed.
+#13 14.22 rendering chunks...
+#13 14.59 [plugin vite:reporter] 
+#13 14.59 (!) /app/src/lib/pushSubscription.ts is dynamically imported by /app/src/supabase.ts but also statically imported by /app/src/components/NotificationCenter.tsx, dynamic import will not move module into another chunk.
+#13 14.59 
+#13 14.62 computing gzip size...
+#13 14.65 dist/index.html                                                      2.11 kB │ gzip:   0.89 kB
+#13 14.65 dist/assets/idiot_goat_sticker_1783328576437-DOVwspeK.jpg           20.04 kB
+#13 14.65 dist/assets/ok_noted_sticker_1783328622945-BLbHENjr.jpg             26.14 kB
+#13 14.65 dist/assets/you_say_sticker_1783328552772-DsdFLDBp.jpg              26.54 kB
+#13 14.65 dist/assets/talk_am_again_sticker_1783328563690-B_-tvTVH.jpg        27.37 kB
+#13 14.65 dist/assets/gbemidebe_sticker_1783328591091-CBhMAAAH.jpg            27.55 kB
+#13 14.65 dist/assets/take_time_sticker_1783328542659-CfsgOP6S.jpg            29.68 kB
+#13 14.65 dist/assets/egg_zactly_sticker_1783328613445-CK_33Krm.jpg           30.41 kB
+#13 14.65 dist/assets/bring_your_plate_sticker_1783328602603-CufZc4qC.jpg     34.11 kB
+#13 14.65 dist/assets/kentro_gold_coin_1787044207657-Dgcbctqm.jpg            780.11 kB
+#13 14.65 dist/assets/kentro_coin_stack_1787044217748-BGECzb5a.jpg           839.40 kB
+#13 14.65 dist/assets/index-B_7eigaG.css                                     203.92 kB │ gzip:  29.78 kB
+#13 14.65 dist/assets/flame-DjiXFCDG.js                                        0.37 kB │ gzip:   0.28 kB
+#13 14.65 dist/assets/user-plus-BqBtDKiu.js                                    0.48 kB │ gzip:   0.34 kB
+#13 14.65 dist/assets/PlayerDirectoryModal-Bp__9CZt.js                         4.85 kB │ gzip:   1.36 kB
+#13 14.65 dist/assets/PuzzlesPane-PW7MZxdf.js                                  4.97 kB │ gzip:   1.81 kB
+#13 14.65 dist/assets/FriendsPage-BEKbK-r1.js                                  7.67 kB │ gzip:   2.86 kB
+#13 14.65 dist/assets/ProfilePage-KvMdSAs7.js                                  7.87 kB │ gzip:   2.84 kB
+#13 14.65 dist/assets/PastGamesModal-BB1sz1Wm.js                               9.35 kB │ gzip:   2.78 kB
+#13 14.65 dist/assets/KentroTV-C8xuHsIS.js                                    16.37 kB │ gzip:   5.89 kB
+#13 14.65 dist/assets/AnalysisLabModal-DFXbe3WU.js                            20.76 kB │ gzip:   5.15 kB
+#13 14.65 dist/assets/OfflineNearby-QF9ILEkj.js                               22.27 kB │ gzip:   7.36 kB
+#13 14.65 dist/assets/TournamentDashboard-C1TeHj9G.js                         47.73 kB │ gzip:  11.79 kB
+#13 14.65 dist/assets/GlobalChatLounge-JRW_YoQI.js                           106.54 kB │ gzip:  25.17 kB
+#13 14.65 dist/assets/AdminPanel-Be4PsvQQ.js                                 513.70 kB │ gzip:  97.83 kB
+#13 14.65 dist/assets/index-DqrjveTl.js                                    1,129.46 kB │ gzip: 312.17 kB
+#13 14.65 
+#13 14.65 (!) Some chunks are larger than 500 kB after minification. Consider:
+#13 14.65 - Using dynamic import() to code-split the application
+#13 14.65 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+#13 14.65 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+#13 14.65 ✓ built in 4.62s
+#13 14.74 [inject-sw-assets] Startup and nearby offline assets: 3. Other feature chunks load only when opened.
+#13 15.00 [Kentro] Precompressed 15 gzip and 15 Brotli files at build time
+#13 15.05 
+#13 15.05   dist/server.cjs      312.5kb
+#13 15.05   dist/server.cjs.map  639.0kb
+#13 15.05 
+#13 15.05 ⚡ Done in 21ms
+#13 15.68 
+#13 15.68 up to date in 579ms
+#13 DONE 15.7s
+
+#14 [runtime  7/11] COPY --from=builder /app/nd_upgraded/data/eval_nigerian ./nd_upgraded/data/eval_nigerian
+#14 CACHED
+
+#15 [runtime  9/11] COPY --from=builder /app/data/eval_nigerian ./data/eval_nigerian
+#15 CACHED
+
+#16 [runtime  6/11] COPY --from=builder /app/nd_upgraded/scan_nigerian ./nd_upgraded/scan_nigerian
+#16 CACHED
+
+#17 [runtime  8/11] COPY --from=builder /app/nd_upgraded/scan.ini ./nd_upgraded/scan.ini
+#17 CACHED
+
+#18 [runtime  5/11] COPY --from=builder /app/dist ./dist
+#18 CACHED
+
+#19 [runtime 10/11] COPY --from=builder /app/supabase ./supabase
+#19 CACHED
+
+#20 [runtime  3/11] COPY --from=builder /app/package.json ./
+#20 CACHED
+
+#21 [runtime  4/11] COPY --from=builder /app/node_modules ./node_modules
+#21 CACHED
+
+#22 [runtime 11/11] RUN chown -R node:node /app/data /app/nd_upgraded
+#22 CACHED
+
+#23 exporting to image
+#23 exporting layers done
+#23 writing image sha256:4858dc0c06884af8045b2dbfb22a608036f9deb598201eeabcff4097c74e9630 done
+#23 naming to docker.io/library/kentro-audit:20261015 done
+#23 DONE 0.0s
+
+ [33m2 warnings found (use docker --debug to expand):
+[0m - SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ARG "VITE_SUPABASE_PUBLISHABLE_KEY") (line 17)
+ - SecretsUsedInArgOrEnv: Do not use ARG or ENV instructions for sensitive data (ENV "VITE_SUPABASE_PUBLISHABLE_KEY") (line 19)

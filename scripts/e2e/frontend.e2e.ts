@@ -15,7 +15,7 @@ async function clickVisible(page: Page, text: string, exact = false) {
     .find(button => button.getClientRects().length && (matchExactly ? button.innerText.trim() === needle : button.innerText.toLowerCase().includes(needle.toLowerCase()))) || null, text, exact);
   const element = handle.asElement();
   if (!element) throw new Error(`No visible button: ${text}`);
-  await element.click();
+  await element.asLocator().click();
   await handle.dispose();
 }
 
@@ -76,7 +76,8 @@ try {
   await clickVisible(desktop, "Sign In", true);
   await clickVisible(desktop, "Forgot password?");
   await desktop.locator("#auth-username").fill("");
-  assert(await desktop.$eval("#auth-username", input => (input as HTMLInputElement).value === ""), "recovery validation starts with an empty username");
+  await desktop.type("#auth-username", "a");
+  assert(await desktop.$eval("#auth-username", input => (input as HTMLInputElement).value === "a"), "recovery validation starts with a short username");
   await clickVisible(desktop, "Send Reset Link", true);
   await waitForText(desktop, "Username must be at least 3 characters");
   assert(!(await desktop.$("#auth-password")), "password recovery validates username and does not ask for the old password");

@@ -1,3 +1,7 @@
+# Audit continuation — 15 October 2026
+
+**Ready only for staging.** See the [audit reports](docs/audit/README.md), [executed checks](docs/audit/13_TEST_RESULTS.md) and [remaining release blockers](docs/audit/14_REMAINING_ISSUES.md). The latest work continues from the owner’s GitHub audit checkpoint; it does not certify the hosted Supabase project or a production deployment.
+
 ---
 title: Kentro Draught
 emoji: 👑

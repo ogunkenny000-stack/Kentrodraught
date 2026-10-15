@@ -1,0 +1,18 @@
+
+> kentro-draughts@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.11 /workspace/Kentrodraught
+
+
+ Test Files  43 passed (43)
+      Tests  468 passed (468)
+   Start at  06:36:44
+   Duration  6.45s (transform 1.03s, setup 0ms, import 2.02s, tests 11.65s, environment 4ms)
+
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

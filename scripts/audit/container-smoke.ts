@@ -35,6 +35,20 @@ async function ready() {
   }
   throw new Error("Container readiness timed out");
 }
+async function updateAddress() {
+  // Docker may allocate a new ephemeral published port after stop/start.
+  const inspect = JSON.parse(await docker("inspect", container))[0];
+  base = `http://127.0.0.1:${inspect.NetworkSettings.Ports["3000/tcp"][0].HostPort}`;
+}
+async function dockerHealthy() {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const state = JSON.parse(await docker("inspect", container))[0].State;
+    if (state.Health?.Status === "healthy") return;
+    if (!state.Running || state.Health?.Status === "unhealthy") throw new Error("Docker healthcheck failed");
+    await wait(200);
+  }
+  throw new Error("Docker healthcheck did not become healthy");
+}
 async function peer() {
   const name = `KGuest_${randomBytes(10).toString("hex")}`;
   const socket = new WebSocket(base.replace(/^http:/, "ws:"));
@@ -67,8 +81,7 @@ try {
   await docker("run", "-d", "--init", "--name", container, "-p", "127.0.0.1::3000",
     "--mount", `type=volume,source=${volume},target=/app/data`,
     "-e", "KENTRO_DATA_DIR=/app/data/smoke-state", "-e", "SKIP_DB_MIGRATION=1", image);
-  const inspect = JSON.parse(await docker("inspect", container))[0];
-  base = `http://127.0.0.1:${inspect.NetworkSettings.Ports["3000/tcp"][0].HostPort}`;
+  await updateAddress();
   await ready(); checks.push("Production HTTP readiness");
   const runtime = JSON.parse(await docker("exec", container, "node", "-e",
     "console.log(JSON.stringify({uid:process.getuid(),node:process.version,compiler:require('fs').existsSync('/usr/bin/g++'),vite:require('fs').existsSync('/app/node_modules/vite'),dataDir:process.env.KENTRO_DATA_DIR}))"));
@@ -107,13 +120,14 @@ try {
   checks.push("Real two-client production WebSocket create/consent/join/legal move/agreed draw");
   const record = (await json(`/api/games/code/${started.gameCode}`)).game;
   assert.equal(record.completeMoveHistory.length, 1); assert.equal(record.isDraw, true);
+  await dockerHealthy(); checks.push("Configured Docker healthcheck reports healthy");
   const began = performance.now();
   await docker("stop", "--time", "10", container);
   const shutdownMs = Math.round(performance.now() - began);
   assert.equal(JSON.parse(await docker("inspect", container))[0].State.ExitCode, 0);
   assert.equal(a.socket.readyState, WebSocket.CLOSED); assert.equal(b.socket.readyState, WebSocket.CLOSED);
   checks.push("Graceful SIGTERM exits zero and closes WebSockets");
-  await docker("start", container); await ready();
+  await docker("start", container); await updateAddress(); await ready();
   const restored = (await json(`/api/games/code/${started.gameCode}`)).game;
   assert.equal(restored.gameCode, record.gameCode); assert.equal(restored.isDraw, true);
   assert.deepEqual(restored.completeMoveHistory, record.completeMoveHistory);

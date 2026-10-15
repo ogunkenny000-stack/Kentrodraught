@@ -567,7 +567,7 @@ void Search_Output::new_best_move(Move mv, Score sc, Flag flag, Depth depth, con
 
       case Output_Terminal :
 
-         std::printf("%2d/%4.1f%+7.2f%11lld%7.2f%5.1f  %s\n", depth, ply_avg(), double(score) / 100.0, node, time, speed / 1E6, pv.to_string(m_pos, 7).c_str());
+         std::printf("%2d/%4.1f%+7.2f%11lld%7.2f%5.1f  %s\n", depth, ply_avg(), double(score) / 100.0, static_cast<long long>(node), time, speed / 1E6, pv.to_string(m_pos, 7).c_str());
          std::fflush(stdout);
          break;
 

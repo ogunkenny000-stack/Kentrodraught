@@ -20,6 +20,11 @@ Brotli. It remains a substantial initial payload on slower mobile networks.
 New final build hashes/sizes belong in the consolidated validation report;
 the older measurement is retained rather than relabeled as current.
 
+The resumed audit also ran a fresh thirty-request sequential loopback HTTP
+smoke against the built Node application: `/` p50/p95 3.4/13.3 ms and
+`/api/games/recent?limit=1` 1.9/3.6 ms. Browser verification shared the machine.
+These timings describe this short local run and do not establish capacity.
+
 The C++ engine runs in a separate process. Node RSS alone excludes its
 transposition table, evaluation weights and search allocations. Capacity
 planning must measure the container or full process tree under real engine,
@@ -42,6 +47,8 @@ from serving compressed bytes from an older source. Fresh
 `node scripts/performance-smoke.cjs` passed byte-perfect decompression,
 compression cleanup and Nearby/startup precache checks. `go test -race ./...`
 and `go vet ./...` also passed after the current edge changes.
+Their fresh command output is retained in
+[Go evidence](evidence/go-edge-continuation-20261015.txt).
 
 The service worker precaches the startup and Nearby static dependency closure;
 TV remains lazy. This preserves Nearby cached loading without downloading

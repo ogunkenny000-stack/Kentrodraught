@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-10-15T03:52:05.945Z",
+  "generatedAt": "2026-10-15T06:38:23.102Z",
   "branch": "codex-audit-recovery-20261014",
-  "sourceHead": "090e8d9c2ceac66c309e0d8179cfeb8172c3d546",
+  "sourceHead": "3648e9371975ffb548c703beec5f1365786f52e8",
   "components": [
     "src/components/BestMoveArrow.tsx",
     "src/components/ChessClock.tsx",
@@ -82,6 +82,7 @@
   "frontendLibraries": [
     "src/lib/adminProfileContext.tsx",
     "src/lib/analysis.ts",
+    "src/lib/analysisReplay.ts",
     "src/lib/arenaDiscovery.ts",
     "src/lib/audio.ts",
     "src/lib/avatarCache.ts",
@@ -89,13 +90,16 @@
     "src/lib/callStateMachine.ts",
     "src/lib/completedMatches.ts",
     "src/lib/constants.ts",
+    "src/lib/dialogFocus.ts",
     "src/lib/fastResume.ts",
+    "src/lib/friendRequests.ts",
     "src/lib/gameSocket.ts",
     "src/lib/geminiKenTrainingLab.ts",
     "src/lib/guestTrial.ts",
     "src/lib/highlightVideo.ts",
     "src/lib/kenEngine.ts",
     "src/lib/kentroTv.ts",
+    "src/lib/loungeProtocol.ts",
     "src/lib/offlineMatch.ts",
     "src/lib/pushSubscription.ts",
     "src/lib/puzzles.ts",
@@ -110,16 +114,21 @@
   "backend": [
     "src/server/accountAuth.ts",
     "src/server/authoritativeRatings.ts",
-    "src/server/httpAuth.ts",
+    "src/server/bodyParsing.ts",
     "src/server/engineMutex.ts",
     "src/server/engineRequest.ts",
     "src/server/gameEnd.ts",
     "src/server/gameRecordsManager.ts",
     "src/server/guestQuota.ts",
+    "src/server/httpAuth.ts",
+    "src/server/nativeEngine.ts",
     "src/server/notifications.ts",
     "src/server/onlinePlay.ts",
     "src/server/roomClock.ts",
+    "src/server/securityMiddleware.ts",
     "src/server/sessions.ts",
+    "src/server/staticAssets.ts",
+    "src/server/tournamentInvites.ts",
     "src/server/webPush.ts",
     "src/server/wsValidation.ts"
   ],
@@ -341,10 +350,6 @@
       "path": "/api/admin/chat/delete"
     },
     {
-      "method": "GET",
-      "path": "*"
-    },
-    {
       "method": "POST",
       "path": "/api/auth/login"
     },
@@ -395,18 +400,6 @@
       "name": "auth"
     },
     {
-      "file": "supabase/migrations/20261014_security_authorization.sql",
-      "name": "kentro_security_policy_backup"
-    },
-    {
-      "file": "supabase/migrations/20261014_wallet_transactions.sql",
-      "name": "kentro_match_settlements"
-    },
-    {
-      "file": "supabase/migrations/20261015_authoritative_ratings.sql",
-      "name": "kentro_rated_matches"
-    },
-    {
       "file": "supabase/all_migrations_combined.sql",
       "name": "withdrawal_requests"
     },
@@ -416,11 +409,27 @@
     },
     {
       "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_notifications"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_push_subscriptions"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
       "name": "kentro_security_policy_backup"
     },
     {
       "file": "supabase/all_migrations_combined.sql",
       "name": "kentro_match_settlements"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_rated_matches"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_tournament_invites"
     },
     {
       "file": "supabase/guest_trials.sql",
@@ -441,6 +450,22 @@
     {
       "file": "supabase/migrations/20261011_kentro_tv_notifications.sql",
       "name": "kentro_push_subscriptions"
+    },
+    {
+      "file": "supabase/migrations/20261014_security_authorization.sql",
+      "name": "kentro_security_policy_backup"
+    },
+    {
+      "file": "supabase/migrations/20261014_wallet_transactions.sql",
+      "name": "kentro_match_settlements"
+    },
+    {
+      "file": "supabase/migrations/20261015_authoritative_ratings.sql",
+      "name": "kentro_rated_matches"
+    },
+    {
+      "file": "supabase/migrations/20261015_tournament_privacy.sql",
+      "name": "kentro_tournament_invites"
     },
     {
       "file": "supabase/schema.sql",
@@ -501,13 +526,6 @@
   ],
   "sqlFiles": [
     "scripts/audit/supabase-fixture.sql",
-    "supabase/migrations/20261014_security_authorization.sql",
-    "supabase/migrations/20261014_wallet_transactions.sql",
-    "supabase/migrations/20261015_account_email_privacy.sql",
-    "supabase/migrations/20261015_authoritative_ratings.sql",
-    "supabase/rollback/20261014_security_authorization.sql",
-    "supabase/rollback/20261014_wallet_transactions.sql",
-    "supabase/rollback/20261015_authoritative_ratings.sql",
     "supabase/all_migrations_combined.sql",
     "supabase/guest_trials.sql",
     "supabase/migrations/2026-07-22_tournament_admin_gate.sql",
@@ -520,7 +538,16 @@
     "supabase/migrations/2026-07-27_tournament_hardening.sql",
     "supabase/migrations/2026-07-28_fix_debit_wallet_ambiguous.sql",
     "supabase/migrations/20261011_kentro_tv_notifications.sql",
+    "supabase/migrations/20261014_security_authorization.sql",
+    "supabase/migrations/20261014_wallet_transactions.sql",
+    "supabase/migrations/20261015_account_email_privacy.sql",
+    "supabase/migrations/20261015_authoritative_ratings.sql",
+    "supabase/migrations/20261015_tournament_privacy.sql",
     "supabase/reset_all_data.sql",
+    "supabase/rollback/20261014_security_authorization.sql",
+    "supabase/rollback/20261014_wallet_transactions.sql",
+    "supabase/rollback/20261015_authoritative_ratings.sql",
+    "supabase/rollback/20261015_tournament_privacy.sql",
     "supabase/schema.sql"
   ],
   "environmentVariableNames": [
@@ -538,9 +565,11 @@
     "E2E_APP_URL",
     "E2E_SKIP_MEDIA",
     "E2E_SUPABASE_REF",
+    "ENGINE_AUDIT_URL",
     "ENGINE_DEBUG",
     "GEMINI_API_KEY",
     "HOST",
+    "KENTRO_DATA_DIR",
     "KENTRO_DIST_DIR",
     "NATIVE_RULES_SANITIZE",
     "NODE_ENV",
@@ -550,6 +579,7 @@
     "SUPABASE_DB_URL",
     "SUPABASE_SECRET_KEY",
     "SUPABASE_URL",
+    "TRUST_PROXY",
     "VITE_GEMINI_API_KEY",
     "VITE_SUPABASE_PUBLISHABLE_KEY",
     "VITE_SUPABASE_URL",
@@ -558,56 +588,68 @@
     "WEB_PUSH_VAPID_PUBLIC_KEY"
   ],
   "tests": [
+    "scripts/e2e/recovery.e2e.ts",
+    "scripts/arena-discovery-smoke.mjs",
+    "scripts/audit/container-smoke.ts",
+    "scripts/audit/multiplayer-smoke.ts",
+    "scripts/board-style-smoke.cjs",
     "scripts/e2e/frontend.e2e.ts",
+    "scripts/e2e/harness.ts",
     "scripts/e2e/nearby.e2e.ts",
     "scripts/e2e/offline.e2e.ts",
+    "scripts/e2e/pvp.e2e.ts",
     "scripts/e2e/surfaces.e2e.ts",
     "scripts/e2e/tv.e2e.ts",
     "scripts/engine-benchmark.mjs",
-    "scripts/static-serving-smoke.mjs",
-    "src/engineBuild.audit.test.ts",
-    "src/lib/offlinePrecache.test.ts",
-    "src/lib/pushSubscription.test.ts",
-    "src/lib/serviceWorker.test.ts",
-    "src/nativeRules.audit.test.ts",
-    "src/rules.audit.test.ts",
-    "src/server/accountAuth.test.ts",
-    "src/server/adminService.test.ts",
-    "src/server/authoritativeRatings.test.ts",
-    "src/server/httpAuth.test.ts",
-    "src/server/supabaseAdmin.test.ts",
-    "scripts/arena-discovery-smoke.mjs",
-    "scripts/board-style-smoke.cjs",
-    "scripts/e2e/harness.ts",
-    "scripts/e2e/pvp.e2e.ts",
     "scripts/engine-mutex-smoke.mjs",
     "scripts/perf-smoke.cjs",
     "scripts/performance-smoke.cjs",
     "scripts/pvp-smoke.ts",
     "scripts/screen-audit-smoke.mjs",
+    "scripts/static-serving-smoke.mjs",
     "scripts/ws-bench.ts",
+    "src/engineBuild.audit.test.ts",
     "src/lib/analysis.test.ts",
     "src/lib/callSignalling.test.ts",
     "src/lib/callStateMachine.test.ts",
     "src/lib/completedMatches.test.ts",
     "src/lib/fastResume.test.ts",
+    "src/lib/friendRequests.test.ts",
     "src/lib/gameSocket.test.ts",
     "src/lib/guestTrial.test.ts",
     "src/lib/kenEngine.test.ts",
     "src/lib/kentroTv.test.ts",
+    "src/lib/loungeProtocol.test.ts",
     "src/lib/offlineMatch.test.ts",
+    "src/lib/offlinePrecache.test.ts",
+    "src/lib/pushSubscription.test.ts",
     "src/lib/roomInvite.test.ts",
     "src/lib/roomState.test.ts",
+    "src/lib/serviceWorker.test.ts",
     "src/lib/useServerClock.test.ts",
     "src/lib/voiceNoteMime.test.ts",
+    "src/nativeRules.audit.test.ts",
+    "src/rules.audit.test.ts",
     "src/rules.regression.test.ts",
     "src/rules.test.ts",
+    "src/server/accountAuth.test.ts",
+    "src/server/adminService.test.ts",
+    "src/server/authoritativeRatings.test.ts",
+    "src/server/bodyParsing.test.ts",
     "src/server/coinsService.test.ts",
     "src/server/engineRequest.test.ts",
+    "src/server/gameRecordsManager.restart.test.ts",
     "src/server/gameRecordsManager.test.ts",
+    "src/server/httpAuth.test.ts",
     "src/server/infrastructure.test.ts",
+    "src/server/nativeEngine.integration.test.ts",
+    "src/server/nativeEngine.test.ts",
     "src/server/onlinePlay.regression.test.ts",
+    "src/server/securityMiddleware.test.ts",
     "src/server/serverReliability.test.ts",
+    "src/server/staticAssets.test.ts",
+    "src/server/supabaseAdmin.test.ts",
+    "src/server/tournamentInvites.test.ts",
     "src/server/webPush.test.ts"
   ],
   "nativeSources": [

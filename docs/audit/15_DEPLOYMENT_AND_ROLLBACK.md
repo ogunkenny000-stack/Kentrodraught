@@ -40,9 +40,13 @@ records, sequence counters and any other required database data separately.
 volume, publishes HTTP only on loopback, and passes no host credentials. It
 checks non-root execution, actual native search, protected static delivery,
 two-client guest gameplay, graceful shutdown and completed-record restoration
-using a configured data-directory subpath. The final validation report links
-the fresh image evidence once executed. Earlier checkpoint image evidence
-predates later source changes and must not substitute for a final rebuild.
+using a configured data-directory subpath. The fresh production image passed
+these checks: [runtime and restart evidence](evidence/docker-continuation-20261015.json).
+It uses Node 22.23.3 and UID 1000, and occupies 362,469,195 bytes (345.7 MiB).
+The earlier checkpoint image evidence predates later source changes and must
+not substitute for this rebuild. The build uses synthetic public frontend
+settings and no hosted credentials; it is a tested local image, not a deployed
+production instance.
 
 Durable completed records do not imply durable live rooms. Rooms, clocks and
 session ownership are in process memory; active-game restart recovery remains
