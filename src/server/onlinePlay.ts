@@ -1,3 +1,6 @@
+import path from "node:path";
+import { DurableState } from "./durableState";
+import { replayForAnalysis } from "../lib/analysisReplay";
 // Online play (multiplayer rooms) -- the WebSocket server.
 //
 // Implements the server side of docs/ONLINE_PLAY_PROTOCOL.md (v2):
@@ -31,7 +34,7 @@ import {
   type RoomClock,
 } from "./roomClock";
 import { SessionStore, type Session } from "./sessions";
-import { isOnlineGuest, guestHasOnlineTrial, claimOnlineGuestTrials } from "./guestQuota";
+import { isOnlineGuest, guestHasOnlineTrial, claimOnlineGuestTrials, localGuestTrials, restoreGuestTrials } from "./guestQuota";
 import { notifyMatchEnded } from "./notifications";
 import { isCallMessageType, validateMessage } from "./wsValidation";
 import {
@@ -52,6 +55,8 @@ import {
 type WS = any;
 
 export interface OnlinePlayDeps {
+  recoveryPath?: string | false;
+  onGameCompleted?: (game: { gameCode: string; white: string; black: string; winner: Color | null; draw: boolean; roomId: string }) => void | Promise<void>;
   coinsEnabled: boolean;
   getCoinSettings: () => Promise<{ matchRakePercent: number } & Record<string, any>>;
   resolveEntryFee: (room: { gameTime: number; specialRule: string; wagerAmount?: number }, settings: any) => number;
@@ -108,6 +113,7 @@ interface GameState {
 
 interface Room {
   id: string;
+  terminalResult?: { isDraw: boolean; winnerColor: Color | null; reason: string };
   private: boolean;
   seq: number;
   phase: RoomPhase;
@@ -212,6 +218,19 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   const callDisconnectTimers = new Map<string, NodeJS.Timeout>();
   const signalBuffers = new Map<string, { items: any[]; timer: NodeJS.Timeout }>();
   let shuttingDown = false;
+  let storageFailed = false;
+  const recovery = new DurableState<any>(deps.recoveryPath ?? (process.env.NODE_ENV === 'test' && !process.env.KENTRO_DATA_DIR ? false : path.join(process.env.KENTRO_DATA_DIR || path.join(process.cwd(), 'data'), 'live_rooms.json')));
+  const excluded = new Set(['ws', 'expireTimer', 'flagTimer', 'deletionTimer', 'seriesNextGameTimer', 'awayForfeitTimer', 'forfeitTimer']);
+  function checkpoint(): void {
+    if (shuttingDown || !recovery.file) return;
+    if (storageFailed) throw new Error('Room persistence unavailable; restart after repairing storage');
+    try {
+      const persistedRooms = JSON.parse(JSON.stringify([...rooms.values()], (key, value) => excluded.has(key) ? undefined : value));
+      for (const room of persistedRooms) { const live = rooms.get(room.id)!; room.clock = { ...live.clock, whiteMs: clockRemainingMs(live.clock, "W", now()), blackMs: clockRemainingMs(live.clock, "B", now()), running: null }; }
+      recovery.write({ rooms: persistedRooms, sessions: sessions.snapshot(), guestTrials: localGuestTrials() });
+    } catch (error) { storageFailed = true; throw error; }
+  }
+
 
   // ------------------------------------------------------------------
   // Small utilities
@@ -273,6 +292,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   /** Players AND live spectators. Every room-scoped message carries `seq`. Seated players receive their specific `yourColor`. */
   function sendToRoom(room: Room, message: any, excludeWs?: WS): void {
     const seq = nextSeq(room);
+    checkpoint();
     for (const p of room.players) {
       if (p.ws && p.ws !== excludeWs && isLive(p.ws)) {
         sendJson(p.ws, message.yourColor !== undefined
@@ -871,6 +891,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     opts?: { forfeitWholeSeries?: boolean; recordReason?: string; abandonSeries?: boolean },
   ): boolean {
     if (room.resultRecorded || !isLivePhase(room)) return false;
+    room.terminalResult = { ...result, reason: opts?.recordReason ?? reason };
     room.resultRecorded = true;
     pauseClock(room.clock, now());
     clearFlagTimer(room);
@@ -885,6 +906,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     refreshLegacyTimes(room);
     if (room.gameState) room.gameState.statusMessage = statusMessage;
 
+    recordGameResultAndSettle(room, result, {
+      forfeitWholeSeries: opts?.forfeitWholeSeries,
+      reason: opts?.recordReason ?? reason,
+      abandonSeries: opts?.abandonSeries,
+    });
     sendToRoom(room, {
       type: "game-ended",
       reason,
@@ -893,11 +919,6 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       clock: clockOf(room),
       phase: room.phase,
       gameCode: room.gameCode,
-    });
-    recordGameResultAndSettle(room, result, {
-      forfeitWholeSeries: opts?.forfeitWholeSeries,
-      reason: opts?.recordReason ?? reason,
-      abandonSeries: opts?.abandonSeries,
     });
     if (room.players.every((p) => !isLive(p.ws))) armDeletionTimer(room);
     broadcastOpenRooms();
@@ -926,6 +947,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if ((room.potGeneration ?? 0) === generation) {
             room.potSettled = true;
             room.potSettling = false;
+            checkpoint();
           }
           console.log(`[Coins] Pot ${potId} settled (${label}) on attempt ${attempt + 1}.`);
           return;
@@ -988,6 +1010,8 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       }).then(() => notifyMatchEnded(gameCode, whitePlayer, blackPlayer, winner))
         .catch((err) => console.error("[GameRecord/Notifications] Failed to save game result or send alert:", err));
     }
+
+    if (deps.onGameCompleted) void Promise.resolve(deps.onGameCompleted({ gameCode: room.gameCode, white: whitePlayer, black: blackPlayer, winner: result.winnerColor, draw: result.isDraw, roomId: room.id })).catch(error => console.error('[Tournament] Result synchronization pending', error));
 
     // ---- Classic single game ----
     if (!room.bestOf || room.bestOf <= 1) {
@@ -1719,7 +1743,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     ws.on("message", (raw: any) => {
       ws.isAlive = true;
       (ws as any).missedPings = 0;
-      return handleMessage(ws, raw).catch((err) => {
+      return handleMessage(ws, raw).then(() => checkpoint()).catch((err) => {
         console.error("[WS] Error processing msg:", err);
       });
     });
@@ -1735,10 +1759,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       if (session && session.ws === ws) sessions.detach(session);
       onCallPartyDisconnected(player.key);
       broadcastOnlineUsers();
+      checkpoint();
     }
 
     async function handleMessage(ws: WS, raw: any): Promise<void> {
-      if (shuttingDown || !isLive(ws)) return;
+      if (shuttingDown || !isLive(ws) || storageFailed) { if (storageFailed) ws.close(1011, "room storage unavailable"); return; }
       // Flood protection: max 75 messages per 3 s window per socket.
       const t = now();
       if (t > windowReset) {
@@ -1886,6 +1911,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
 
           const player: OnlinePlayer = { ws, username: cleanedName, key, roomId: null, token: session.token };
           onlinePlayers.set(ws, player);
+          checkpoint();
           sendJson(ws, { type: "login-success", username: cleanedName, sessionToken: session.token, serverNow: now(), onlineUsers: onlineUsernames() });
           if (isOnlineGuest(cleanedName)) {
             try {
@@ -2787,6 +2813,61 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     }
   });
 
+  // Restore durable seats before admitting connections. Clocks freeze during
+  // the outage; each player receives a fresh bounded reconnect window.
+  const saved = recovery.read();
+  if (saved) {
+    if (!Array.isArray(saved.rooms) || !Array.isArray(saved.sessions) || saved.rooms.length > 1000) throw new Error('Invalid saved multiplayer state');
+    restoreGuestTrials(saved.guestTrials || []);
+    for (const raw of saved.rooms) {
+      if (!/^\d{7,10}$/.test(raw.id) || !Array.isArray(raw.players) || raw.players.length > 2 || !['lobby','setup','playing','ended'].includes(raw.phase)) throw new Error('Invalid saved room');
+      const room = raw as Room;
+      if (room.gameState?.board && room.phase !== 'setup') {
+        const replay = replayForAnalysis(room.gameState.moveHistory, room.startBoard, room.startTurn);
+        const board = replay.boards.at(-1)!;
+        if (JSON.stringify(normalizeBoard(board)) !== JSON.stringify(normalizeBoard(room.gameState.board)) || replay.turns.at(-1) !== room.gameState.turn) throw new Error('Saved room history does not match its board');
+      }
+      if (room.clock) {
+        for (const value of [room.clock.whiteMs, room.clock.blackMs, room.clock.turnStartedAt, room.clock.incrementMs]) if (!Number.isFinite(value) || value < 0) throw new Error('Invalid saved clock');
+        // The snapshot stores a wall-clock turn anchor. Bound elapsed to the
+        // last persisted event by saving remaining time during checkpoint.
+        room.clock.running = null;
+      }
+      room.flagTimer = room.deletionTimer = room.seriesNextGameTimer = null;
+      room.starting = room.potSettling = false;
+      room.spectators = []; // spectators must explicitly re-authorize discovery
+      for (const seat of room.players) {
+        seat.ws = null; seat.forfeitTimer = seat.awayForfeitTimer = null;
+        seat.disconnectedAt = now(); seat.awaySince = null; seat.graceExpired = false;
+      }
+      rooms.set(room.id, room);
+    }
+    sessions.restore(saved.sessions);
+    for (const session of sessions.snapshot()) {
+      const live = sessions.get(session.key)!;
+      if (live.userId) { const bound = userSessions.get(live.userId) || new Set<Session>(); bound.add(live); userSessions.set(live.userId, bound); }
+    }
+    for (const room of rooms.values()) {
+      if (isLivePhase(room) || isSeriesUnderway(room)) for (const seat of room.players) {
+        seat.forfeitTimer = setTimeout(() => safeTimer('restart grace', () => onGraceExpired(room, seat)), 120_000);
+      } else armDeletionTimer(room);
+      if (room.terminalResult) {
+        const result = room.terminalResult;
+        const white = room.players.find(p => p.color === 'W')?.username || '';
+        const black = room.players.find(p => p.color === 'B')?.username || '';
+        void recordGameEnd({ gameCode: room.gameCode, completeMoveHistory: room.gameState?.moveHistory || [], currentPosition: room.gameState?.board, currentTurn: room.gameState?.turn, startingPosition: room.startBoard, startingTurn: room.startTurn, private: room.private, participantUserIds: room.players.flatMap(p => p.userId ? [p.userId] : []), winnerColor: result.winnerColor, winnerUsername: result.isDraw ? null : result.winnerColor === 'W' ? white : black, loserUsername: result.isDraw ? null : result.winnerColor === 'W' ? black : white, isDraw: result.isDraw, finalResult: result.isDraw ? '½–½' : result.winnerColor === 'W' ? '1–0' : '0–1', resultReason: result.reason }).catch(error => console.error('[Recovery] Terminal sync pending', error));
+        if (deps.onGameCompleted) void Promise.resolve(deps.onGameCompleted({ gameCode: room.gameCode, white, black, winner: result.winnerColor, draw: result.isDraw, roomId: room.id })).catch(error => console.error('[Recovery] Tournament sync pending', error));
+        if (room.bestOf <= 1) settleWithRetry(room, result, 'restart recovery');
+        else if (room.seriesOver) {
+          const ranked = room.players.slice().sort((a,b) => (room.seriesScore[b.username] || 0) - (room.seriesScore[a.username] || 0));
+          const tied = !ranked[1] || room.seriesScore[ranked[0].username] === room.seriesScore[ranked[1].username];
+          settleWithRetry(room, { isDraw: tied, winnerColor: tied ? null : ranked[0].color }, 'restart series recovery');
+        }
+      }
+    }
+    console.log(`[WS] Restored ${rooms.size} durable rooms; clocks await reconnection.`);
+  }
+
   // Periodic WebSocket heartbeat every 20s to prune dead/stale connections safely
   const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((wsClient: any) => {
@@ -2811,6 +2892,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   /** Stop transport timers on process shutdown without adjudicating games. */
   function shutdown(): void {
     if (shuttingDown) return;
+    checkpoint();
     shuttingDown = true;
     clearInterval(heartbeatInterval);
     onlineUsersBroadcast.cancel();
@@ -2828,6 +2910,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     userSessions.clear();
     onlinePlayers.clear();
     rooms.clear();
+    recovery.close();
     activeCalls.clear();
     callDisconnectTimers.clear();
     signalBuffers.clear();
@@ -2845,6 +2928,8 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     /** Live room map (read-only use: /api/games/next-code avoids codes of live rooms). */
     rooms: rooms as ReadonlyMap<string, unknown> as Map<string, unknown>,
     /** Test/diagnostic hooks -- not used by the app itself. */
+    checkpoint,
+    storageHealthy: () => !storageFailed,
     stats: () => ({ players: onlinePlayers.size, rooms: rooms.size, sessions: sessions.size, calls: activeCalls.size }),
   };
 }

@@ -32,3 +32,9 @@ export async function claimOnlineGuestTrials(usernames: string[]): Promise<boole
   if (error) throw error;
   return data === true;
 }
+
+export function localGuestTrials(): string[] { return [...localUsed].sort(); }
+export function restoreGuestTrials(names: string[]): void {
+  if (!Array.isArray(names) || names.some(name => !isOnlineGuest(name))) throw new Error('Invalid saved guest quotas');
+  names.forEach(name => localUsed.add(name));
+}

@@ -87,6 +87,19 @@ export class SessionStore {
     if (this.byKey.get(s.key) === s) this.byKey.delete(s.key);
   }
 
+  snapshot(): Omit<Session, 'ws' | 'expireTimer'>[] {
+    return [...this.byKey.values()].map(({ ws, expireTimer, ...session }) => session);
+  }
+
+  restore(rows: Omit<Session, 'ws' | 'expireTimer'>[]): void {
+    for (const row of rows) {
+      if (typeof row.username !== 'string' || row.key !== row.username.toLowerCase() || !/^[a-f0-9]{32}$/.test(row.token)) throw new Error('Invalid saved session');
+      const session: Session = { ...row, ws: null, expireTimer: null, detachedAt: Date.now() };
+      this.byKey.set(session.key, session);
+      this.armExpiry(session);
+    }
+  }
+
   /** Release expiry timers when the owning WebSocket server shuts down. */
   dispose(): void {
     for (const session of this.byKey.values()) this.remove(session);
