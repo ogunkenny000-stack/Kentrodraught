@@ -1,0 +1,19 @@
+{
+  "mode": "Disposable PostgreSQL WASM, original backed-up schema/data",
+  "passed": true,
+  "accounts": 98,
+  "games": 3968,
+  "wallets": 34,
+  "walletTotal": 3035,
+  "ledgerRows": 45,
+  "retainedProfiles": 96,
+  "financialReadiness": {
+    "ready": true,
+    "issues": []
+  },
+  "reinstallPreservesData": true,
+  "atomicRollbackVerified": true,
+  "sqlSha256": "59a0b3afab2c45983d4dc5f48ad8d2f8a74b379d6c5c94c3412259e53ec1c067",
+  "liveDatabaseModified": false,
+  "hostingDeploymentBlocked": true
+}

@@ -1,0 +1,1943 @@
+-- Original project only; deploy the updated gated backend BEFORE executing.
+BEGIN;
+SET LOCAL lock_timeout='8s';
+SET LOCAL statement_timeout='120s';
+SELECT pg_advisory_xact_lock(hashtextextended('kentro-original-upgrade-20261018',0));
+LOCK TABLE public.coin_wallets,public.coin_transactions,public.profiles,public.completed_games,public.tournaments,public.purchase_requests,public.withdrawal_requests IN SHARE ROW EXCLUSIVE MODE;
+DO $$ DECLARE v_owner uuid; BEGIN SELECT "ownerId" INTO v_owner FROM public.profiles WHERE "usernameLower"='kguest_f87b8dd01509e612a131'; IF FOUND THEN IF NOT EXISTS(SELECT 1 FROM public.profiles p JOIN auth.users u ON u.id=p."ownerId" WHERE p."usernameLower"='sunsat' AND p."ownerId"=v_owner AND lower(u.raw_user_meta_data->>'username')='sunsat') OR EXISTS(SELECT 1 FROM public.coin_wallets WHERE username='kguest_f87b8dd01509e612a131') OR EXISTS(SELECT 1 FROM public.coin_transactions WHERE username='kguest_f87b8dd01509e612a131') OR EXISTS(SELECT 1 FROM public.profiles WHERE "usernameLower"='kguest_f87b8dd01509e612a131' AND coalesce("gamesCount",0)<>0) THEN RAISE EXCEPTION 'Duplicate guest cleanup requires review'; END IF; DELETE FROM public.profiles WHERE "usernameLower"='kguest_f87b8dd01509e612a131'; END IF; END $$;
+
+-- kentro-finance-permissions.sql
+
+REVOKE ALL ON FUNCTION public.debit_wallet(text,numeric,text,text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.credit_wallet(text,numeric,text,text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.debit_multiple_wallets(text[],numeric,text,text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.refund_tournament_entries(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.pay_tournament_prize(text,text,numeric) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.debit_wallet(text,numeric,text,text), public.credit_wallet(text,numeric,text,text), public.debit_multiple_wallets(text[],numeric,text,text), public.refund_tournament_entries(text), public.pay_tournament_prize(text,text,numeric) TO service_role;
+
+
+-- 20261010_guest_online_trials.sql
+-- Canonical ordered migration (copy of legacy standalone guest_trials.sql).
+-- Keep the standalone file for older operators; do not apply both manually.
+
+-- Apply in Supabase SQL editor BEFORE enabling guest online play in production.
+-- All usage changes are server-only via the service-role credential; clients
+-- cannot grant or reset their online allowance using the Supabase anon key.
+create table if not exists public.guest_online_trials (
+  guest_name text primary key,
+  used_at timestamptz not null default now(),
+  constraint guest_online_name_format check (guest_name ~ '^KGuest_[a-f0-9]{20}$')
+);
+alter table public.guest_online_trials enable row level security;
+revoke all on public.guest_online_trials from anon, authenticated;
+grant select, insert on public.guest_online_trials to service_role;
+
+-- Invoker-rights RPCs: ONLY service_role can call; no RLS bypass by callers.
+create or replace function public.guest_online_available(p_guest text)
+returns boolean language plpgsql security invoker set search_path = public as $$
+begin
+  if p_guest !~ '^KGuest_[a-f0-9]{20}$' then return false; end if;
+  return not exists (select 1 from public.guest_online_trials where guest_name = p_guest);
+end $$;
+
+create or replace function public.claim_guest_online_games(p_guests text[])
+returns boolean language plpgsql security invoker set search_path = public as $$
+declare g text;
+begin
+  if cardinality(p_guests) > 2 then return false; end if;
+  if exists (select 1 from unnest(p_guests) x where x !~ '^KGuest_[a-f0-9]{20}$') then return false; end if;
+  -- Serialize admissions even across multiple server instances.
+  for g in select distinct unnest(p_guests) order by 1 loop
+    perform pg_advisory_xact_lock(hashtextextended(g, 3818));
+  end loop;
+  if exists (select 1 from public.guest_online_trials where guest_name = any(p_guests)) then return false; end if;
+  insert into public.guest_online_trials(guest_name) select distinct unnest(p_guests);
+  return true;
+end $$;
+revoke all on function public.guest_online_available(text) from public, anon, authenticated;
+revoke all on function public.claim_guest_online_games(text[]) from public, anon, authenticated;
+grant execute on function public.guest_online_available(text) to service_role;
+grant execute on function public.claim_guest_online_games(text[]) to service_role;
+
+
+-- 20261011_kentro_tv_notifications.sql
+-- Kentro TV / Smart Notifications. Run once in the Supabase SQL editor before deploying.
+-- Durable recipient-only inbox; no user-created notifications (spam/forgery prevention).
+create table if not exists public.kentro_notifications (
+  id uuid primary key default gen_random_uuid(),
+  recipient_id uuid not null references auth.users(id) on delete cascade,
+  category text not null check (category in ('challenge','friend','tournament','result','system')),
+  title text not null check (char_length(title) between 1 and 150),
+  body text not null check (char_length(body) <= 500),
+  target_path text not null default '/' check (target_path like '/%' and target_path not like '//%'),
+  dedupe_key text not null,
+  created_at timestamptz not null default now(),
+  read_at timestamptz,
+  push_delivered_at timestamptz,
+  unique (recipient_id, dedupe_key)
+);
+create index if not exists kentro_notifications_recipient_created_idx on public.kentro_notifications(recipient_id, created_at desc);
+alter table public.kentro_notifications enable row level security;
+revoke all on public.kentro_notifications from anon;
+grant select on public.kentro_notifications to authenticated;
+grant update (read_at) on public.kentro_notifications to authenticated;
+-- Supabase service-role and restricted DB triggers can insert.
+drop policy if exists "kentro_notifications_read_own" on public.kentro_notifications;
+create policy "kentro_notifications_read_own" on public.kentro_notifications for select to authenticated using (recipient_id = (select auth.uid()));
+drop policy if exists "kentro_notifications_update_own" on public.kentro_notifications;
+create policy "kentro_notifications_update_own" on public.kentro_notifications for update to authenticated
+  using (recipient_id = (select auth.uid())) with check (recipient_id = (select auth.uid()));
+
+-- Resolve a target by actual profile ownership; never use a user-provided uid as authority.
+create or replace function public.kentro_notify_friend() returns trigger language plpgsql security definer set search_path = '' as $$
+declare other_name text; other_id uuid;
+begin
+  if new.status <> 'accepted' or (tg_op = 'UPDATE' and old.status = 'accepted') then return new; end if;
+  -- Notify the original sender when the other player accepts.
+  other_name := new.sender;
+  select p."ownerId" into other_id from public.profiles p where p."usernameLower" = lower(other_name) limit 1;
+  if other_id is not null then
+    insert into public.kentro_notifications(recipient_id,category,title,body,target_path,dedupe_key)
+    values (other_id,'friend','Friend request accepted',left(coalesce(case when lower(new.sender) = lower(new.user1) then new.user2 else new.user1 end,'A player') || ' accepted your friend request.',500),'/','friend:'||new.id)
+    on conflict (recipient_id,dedupe_key) do nothing;
+  end if;
+  return new;
+end $$;
+revoke execute on function public.kentro_notify_friend() from public, anon, authenticated;
+drop trigger if exists trg_kentro_notify_friend on public.friends;
+create trigger trg_kentro_notify_friend after insert or update on public.friends for each row execute function public.kentro_notify_friend();
+
+-- Tournament events, deduped by status/round. Existing registration is not altered.
+create or replace function public.kentro_notify_tournament() returns trigger language plpgsql security definer set search_path = '' as $$
+declare player jsonb; player_name text; player_uid uuid; event_key text; event_title text;
+begin
+  if new.status not in ('active','completed') then return new; end if;
+  -- Legacy tournament RLS permits general updates: only notify for admin updates
+  -- or service-role jobs (auth.uid() is NULL), preventing player-generated spam.
+  if auth.uid() is not null and not public.is_tournament_admin(auth.uid()) then return new; end if;
+  if tg_op = 'UPDATE' and new.status is not distinct from old.status and new."currentRound" is not distinct from old."currentRound" then return new; end if;
+  event_key := 'tournament:'||new.id||':'||coalesce(new.status,'')||':'||coalesce(new."currentRound"::text,'0');
+  event_title := case when new.status='completed' then 'Tournament results are in' else 'Tournament round is live' end;
+  for player in select value from jsonb_array_elements(coalesce(new.players,'[]'::jsonb)) loop
+    player_name := case when jsonb_typeof(player) = 'string' then trim(both '"' from player::text) else coalesce(player->>'username', player->>'name') end;
+    if player_name is null then continue; end if;
+    select p."ownerId" into player_uid from public.profiles p where p."usernameLower" = lower(player_name) limit 1;
+    if player_uid is not null then
+      insert into public.kentro_notifications(recipient_id,category,title,body,target_path,dedupe_key)
+      values(player_uid,'tournament',event_title,left(coalesce(new.name,'Your tournament')||' · '||case when new.status='completed' then 'Check the final standings.' else 'Open the tournament hub for your fixtures.' end,500),'/?view=tournament',event_key)
+      on conflict (recipient_id,dedupe_key) do nothing;
+    end if;
+  end loop;
+  return new;
+end $$;
+revoke execute on function public.kentro_notify_tournament() from public, anon, authenticated;
+drop trigger if exists trg_kentro_notify_tournament on public.tournaments;
+create trigger trg_kentro_notify_tournament after insert or update on public.tournaments for each row execute function public.kentro_notify_tournament();
+
+-- Optional: enable Postgres Changes for this table in Supabase Realtime publication.
+-- Client also polls on focus and every 35 s, so realtime configuration isn't required.
+
+-- Device subscriptions are server-managed; a user may revoke them through the authenticated endpoint.
+create table if not exists public.kentro_push_subscriptions (
+  endpoint text primary key,
+  recipient_id uuid not null references auth.users(id) on delete cascade,
+  p256dh text not null,
+  auth text not null,
+  categories jsonb not null default '["challenge","friend","tournament","result","system"]'::jsonb,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+create index if not exists kentro_push_recipient_idx on public.kentro_push_subscriptions(recipient_id);
+alter table public.kentro_push_subscriptions enable row level security;
+revoke all on public.kentro_push_subscriptions from anon, authenticated;
+-- Subscription keys are not exposed by the Data API; all writes occur through token-verified server routes.
+
+
+-- 20261014_security_authorization.sql
+-- Reviewed incremental security repair; no rows deleted or balances rewritten.
+-- Apply as database owner after backup and staging verification. All schema
+-- changes occur in one transaction. Never run reset_all_data.sql for this fix.
+
+-- Exact policy snapshots support a deliberate operator rollback. This table
+-- contains DDL only and is inaccessible to browser roles.
+create table if not exists public.kentro_security_policy_backup (
+  migration text not null, table_name text not null, policy_name text not null,
+  ddl text not null, primary key (migration, table_name, policy_name)
+);
+alter table public.kentro_security_policy_backup enable row level security;
+revoke all on public.kentro_security_policy_backup from public, anon, authenticated;
+insert into public.kentro_security_policy_backup
+select '20261014_security_authorization', tablename, policyname,
+  format('create policy %I on public.%I as %s for %s to %s%s%s;', policyname,
+    tablename, permissive, cmd, array_to_string(roles, ', '),
+    case when qual is null then '' else ' using (' || qual || ')' end,
+    case when with_check is null then '' else ' with check (' || with_check || ')' end)
+from pg_policies where schemaname = 'public' and tablename in
+  ('profiles','friends','private_messages','global_chat','completed_games','tournaments','purchase_requests','coin_wallets','coin_transactions')
+  and not exists(select 1 from public.kentro_security_policy_backup where migration='20261014_security_authorization')
+on conflict do nothing;
+
+create or replace function public.kentro_owns_username(p_username text)
+returns boolean language sql stable security invoker set search_path = '' as $$
+  select exists (select 1 from public.profiles p
+    where p."ownerId" = (select auth.uid())
+      and p."usernameLower" = lower(trim(p_username)) and p."usernameLower"<>'kentro_house'
+      and not p.banned and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint));
+$$;
+revoke all on function public.kentro_owns_username(text) from public;
+grant execute on function public.kentro_owns_username(text) to authenticated;
+
+create or replace function public.kentro_account_active()
+returns boolean language sql stable security invoker set search_path='' as $$
+  select exists(select 1 from public.profiles p where p."ownerId"=(select auth.uid())
+    and p."usernameLower"<>'kentro_house' and not p.banned
+    and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint));
+$$;
+revoke all on function public.kentro_account_active() from public;
+grant execute on function public.kentro_account_active() to authenticated;
+create or replace function public.is_tournament_admin(p_uid uuid)
+returns boolean language sql stable security definer set search_path='' as $$
+  select exists(select 1 from public.admins a join public.profiles p on p."ownerId"=a.uid
+    where a.uid=p_uid and 'manage_tournaments'=any(a.permissions)
+      and p."usernameLower"<>'kentro_house' and not p.banned
+      and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint));
+$$;
+
+-- A permissive policy is ORed with every other permissive policy, so remove
+-- all legacy policies for the tables below before installing explicit rules.
+do $$ declare r record; begin
+  for r in select tablename, policyname from pg_policies
+    where schemaname='public' and tablename in
+      ('friends','private_messages','global_chat','completed_games','tournaments','purchase_requests','coin_wallets','coin_transactions')
+  loop execute format('drop policy %I on public.%I', r.policyname, r.tablename); end loop;
+end $$;
+
+-- Profile authority stays on the server: ratings, standings, paid unlocks,
+-- identity, account age, and moderation cannot be forged by a browser.
+-- Clients may update their avatar. Practice records remain locally usable;
+-- a rated result requires an authoritative server completion pipeline.
+create or replace function public.kentro_profile_guard()
+returns trigger language plpgsql security invoker set search_path = '' as $$
+begin
+  -- Signup runs through a SECURITY DEFINER trigger, so this reservation must
+  -- apply to every database role, including the trigger's owner. Existing
+  -- reserved rows stay available for operator reconciliation but cannot be
+  -- claimed or renamed through a new write.
+  if new."usernameLower"='kentro_house' and
+    (tg_op='INSERT' or new."ownerId" is distinct from old."ownerId")
+  then raise exception 'Reserved system identity' using errcode='42501'; end if;
+  if current_user in ('anon','authenticated') then
+    if tg_op='INSERT' then
+      -- Serialize two first-profile claims by the same Auth identity; an
+      -- EXISTS check on its own can race without an ownerId unique index.
+      perform pg_advisory_xact_lock(hashtextextended('kentro-profile:'||auth.uid()::text,0));
+      if new."usernameLower" <> lower(trim(new."username"))
+        or new."usernameLower" in ('kentro_house')
+        or new."ownerId" is distinct from auth.uid()
+        or exists(select 1 from public.profiles p where p."ownerId"=auth.uid())
+        or new."banned" or new."bannedAt" is not null or new."bannedBy" is not null
+        or new."suspendedUntil" is not null or new."suspendedBy" is not null
+        or new."maxUnlockedKenLevel" > 3
+        or new.elo<>1500 or new.wins<>0 or new.losses<>0 or new.draws<>0
+        or new."gamesCount"<>0 or new."totalPlayTime"<>0 or new."averageDuration"<>0
+        or new.rd is not null or new.vol is not null
+      then raise exception 'Invalid profile creation' using errcode='42501'; end if;
+      new."createdAt" := (extract(epoch from now())*1000)::bigint;
+    elsif (to_jsonb(new) - 'avatarUrl') is distinct from (to_jsonb(old) - 'avatarUrl')
+    then raise exception 'Profile identity, ratings and access are server-managed' using errcode='42501'; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists kentro_profile_guard on public.profiles;
+create trigger kentro_profile_guard before insert or update on public.profiles
+  for each row execute function public.kentro_profile_guard();
+
+alter table public.completed_games add column if not exists private boolean not null default false;
+alter table public.completed_games add column if not exists "participantUserIds" jsonb not null default '[]'::jsonb;
+create policy completed_games_select_visible on public.completed_games for select
+  using (not private or "participantUserIds" ? (auth.uid()::text));
+create policy completed_games_insert_own_practice on public.completed_games for insert to authenticated
+  with check (not private and "participantUserIds"='[]'::jsonb and "playMode" in ('Human_vs_AI','AI_vs_Human','Training','Analysis','Local','Position_Editor')
+    and (public.kentro_owns_username("whitePlayer") or public.kentro_owns_username("blackPlayer")));
+-- Official Multiplayer/Tournament records, outcomes, and analysis are server-only.
+
+create policy tournaments_select_all on public.tournaments for select using (true);
+create policy tournaments_admin_insert on public.tournaments for insert to authenticated
+  with check (public.is_tournament_admin(auth.uid()));
+create policy tournaments_admin_delete on public.tournaments for delete to authenticated
+  using (public.is_tournament_admin(auth.uid()));
+-- Ordinary writes go through narrowly scoped RPCs; no blanket roster/status/
+-- standings/prize updates remain. Tournament admins retain management access.
+create policy tournaments_admin_update on public.tournaments for update to authenticated
+  using (public.is_tournament_admin(auth.uid())) with check (public.is_tournament_admin(auth.uid()));
+
+create policy friends_select_participant on public.friends for select to authenticated
+  using (public.kentro_owns_username("user1") or public.kentro_owns_username("user2"));
+create policy friends_insert_sender on public.friends for insert to authenticated
+  with check (public.kentro_owns_username(sender) and status='pending'
+    and lower("user1") <> lower("user2")
+    and lower(sender) in (lower("user1"),lower("user2"))
+    and exists(select 1 from public.profiles p where p."usernameLower"=lower("user1"))
+    and exists(select 1 from public.profiles p where p."usernameLower"=lower("user2")));
+create policy friends_update_recipient on public.friends for update to authenticated
+  using (status='pending' and not public.kentro_owns_username(sender)
+    and (public.kentro_owns_username("user1") or public.kentro_owns_username("user2")))
+  with check (status='accepted' and not public.kentro_owns_username(sender)
+    and (public.kentro_owns_username("user1") or public.kentro_owns_username("user2")));
+create policy friends_delete_participant on public.friends for delete to authenticated
+  using (public.kentro_owns_username("user1") or public.kentro_owns_username("user2"));
+create or replace function public.kentro_friend_guard()
+returns trigger language plpgsql security invoker set search_path='' as $$ begin
+  if current_user in ('anon','authenticated') and
+    (new.id is distinct from old.id or new."user1" is distinct from old."user1"
+      or new."user2" is distinct from old."user2" or new.sender is distinct from old.sender)
+  then raise exception 'Friend participants are immutable' using errcode='42501'; end if;
+  return new;
+end $$;
+drop trigger if exists kentro_friend_guard on public.friends;
+create trigger kentro_friend_guard before update on public.friends for each row execute function public.kentro_friend_guard();
+
+-- Add rich chat fields already sent by the UI but missing from the baseline.
+alter table public.private_messages add column if not exists status text not null default 'delivered';
+alter table public.global_chat add column if not exists reactions jsonb not null default '{}'::jsonb;
+alter table public.global_chat add column if not exists elo numeric;
+alter table public.global_chat add column if not exists "voiceNote" text;
+alter table public.global_chat add column if not exists duration numeric;
+alter table public.global_chat add column if not exists sticker text;
+alter table public.global_chat add column if not exists "stickerEmoji" text;
+alter table public.global_chat add column if not exists "stickerImageUrl" text;
+alter table public.global_chat add column if not exists "stickerLabel" text;
+
+create policy private_messages_select_participant on public.private_messages for select to authenticated
+  using (auth.uid()="senderOwnerId" or auth.uid()="recipientOwnerId");
+create policy private_messages_insert_sender on public.private_messages for insert to authenticated
+  with check (auth.uid()="senderOwnerId" and public.kentro_owns_username(sender)
+    and exists(select 1 from public.profiles p where p."usernameLower"=lower(recipient) and p."ownerId"="recipientOwnerId")
+    and status='delivered');
+create policy private_messages_update_participant on public.private_messages for update to authenticated
+  using ((auth.uid()="senderOwnerId" or auth.uid()="recipientOwnerId") and public.kentro_account_active())
+  with check ((auth.uid()="senderOwnerId" or auth.uid()="recipientOwnerId") and public.kentro_account_active());
+create or replace function public.kentro_message_guard()
+returns trigger language plpgsql security invoker set search_path='' as $$ begin
+  if current_user in ('anon','authenticated') and
+    (to_jsonb(new) - array['reactions','status']) is distinct from
+    (to_jsonb(old) - array['reactions','status'])
+  then raise exception 'Message content and participants are immutable' using errcode='42501'; end if;
+  return new;
+end $$;
+drop trigger if exists kentro_message_guard on public.private_messages;
+create trigger kentro_message_guard before update on public.private_messages for each row execute function public.kentro_message_guard();
+create policy global_chat_select_authenticated on public.global_chat for select to authenticated using (true);
+create policy global_chat_insert_sender on public.global_chat for insert to authenticated with check (public.kentro_owns_username(sender));
+create policy global_chat_update_sender on public.global_chat for update to authenticated
+  using (public.kentro_account_active()) with check (public.kentro_account_active());
+drop trigger if exists kentro_global_message_guard on public.global_chat;
+create trigger kentro_global_message_guard before update on public.global_chat for each row execute function public.kentro_message_guard();
+
+create policy purchase_requests_select_own on public.purchase_requests for select to authenticated using (auth.uid()="ownerId");
+create policy purchase_requests_insert_own_pending on public.purchase_requests for insert to authenticated
+  with check (auth.uid()="ownerId" and public.kentro_owns_username(username) and status='pending'
+    and "resolvedAt" is null and "resolvedBy" is null and "coinsCredited" is null);
+create policy coin_wallets_select_owner on public.coin_wallets for select to authenticated
+  using (public.kentro_owns_username(username) and ("ownerId" is null or "ownerId"=auth.uid()));
+create policy coin_transactions_select_owner on public.coin_transactions for select to authenticated
+  using (public.kentro_owns_username(username));
+
+-- NOT VALID preserves existing historical rows. New writes must satisfy all
+-- ledger invariants; old anomalies can be reviewed and reconciled separately.
+do $$ begin
+  if not exists(select 1 from pg_constraint where conname='kentro_wallet_balance_safe' and conrelid='public.coin_wallets'::regclass) then
+    alter table public.coin_wallets add constraint kentro_wallet_balance_safe
+      check (balance >= 0 and balance <= 9007199254740991 and balance=trunc(balance)) not valid;
+  end if;
+  if not exists(select 1 from pg_constraint where conname='kentro_transaction_amount_safe' and conrelid='public.coin_transactions'::regclass) then
+    alter table public.coin_transactions add constraint kentro_transaction_amount_safe
+      check (amount >= 0 and amount <= 9007199254740991 and amount=trunc(amount)
+        and "balanceAfter">=0 and "balanceAfter"<=9007199254740991 and "balanceAfter"=trunc("balanceAfter")
+        and direction in ('debit','credit')) not valid;
+  end if;
+end $$;
+
+
+-- 20261014_wallet_transactions.sql
+-- Apply AFTER 20261014_security_authorization.sql. No historical ledger rewrite.
+
+create table if not exists public.kentro_match_settlements (
+  match_id text primary key, result jsonb not null, settled_at timestamptz not null default now()
+);
+alter table public.kentro_match_settlements enable row level security;
+revoke all on public.kentro_match_settlements from public,anon,authenticated;
+
+create or replace function public.kentro_settle_match_pot(
+  p_match_id text, p_white text, p_black text, p_fee numeric, p_winner text, p_draw boolean, p_rake numeric
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_result jsonb; v_pot numeric; v_rake numeric; v_user text; v_paid numeric;
+begin
+  if p_match_id is null or length(p_match_id)>160 or p_fee is null or p_fee<=0 or p_fee<>trunc(p_fee)
+    or p_fee>4503599627370495 or p_rake is null or p_rake<0 or p_rake>1
+    or p_white is null or p_black is null or p_white=p_black
+    or (not p_draw and p_winner not in (p_white,p_black)) or p_draw is null
+  then raise exception 'Invalid match settlement'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('kentro-settlement:'||p_match_id,0));
+  select result into v_result from public.kentro_match_settlements where match_id=p_match_id;
+  if found then return v_result; end if;
+  -- The server may only distribute money actually escrowed for this match.
+  foreach v_user in array array[p_white,p_black] loop
+    select coalesce(sum(amount),0) into v_paid from public.coin_transactions
+      where username=v_user and "refId"=p_match_id and type='match_entry' and direction='debit';
+    if v_paid<>p_fee then raise exception 'Match pot has no matching escrow'; end if;
+  end loop;
+  -- Lock all participating wallet rows in a consistent order across payouts.
+  perform 1 from public.coin_wallets where username in (p_white,p_black,'kentro_house') order by username for update;
+  if p_draw then
+    perform public.credit_wallet(p_white,p_fee,'refund',p_match_id);
+    perform public.credit_wallet(p_black,p_fee,'refund',p_match_id);
+    v_result:=jsonb_build_object('ok',true,'payout',p_fee*2,'rake',0);
+  else
+    v_pot:=p_fee*2; v_rake:=floor(v_pot*p_rake);
+    if v_pot-v_rake>0 then perform public.credit_wallet(p_winner,v_pot-v_rake,'match_prize',p_match_id); end if;
+    if v_rake>0 then perform public.credit_wallet('kentro_house',v_rake,'rake','rake:'||p_match_id); end if;
+    v_result:=jsonb_build_object('ok',true,'payout',v_pot-v_rake,'rake',v_rake);
+  end if;
+  insert into public.kentro_match_settlements(match_id,result) values(p_match_id,v_result);
+  return v_result;
+end $$;
+
+create or replace function public.kentro_unlock_ai(p_owner uuid,p_username text,p_level integer,p_cost numeric)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_profile public.profiles%rowtype; v_debit record;
+begin
+  if p_level is null or p_level<2 or p_level>8 or p_cost is null or p_cost<0 or p_cost<>trunc(p_cost) then raise exception 'Invalid unlock'; end if;
+  select * into v_profile from public.profiles where "usernameLower"=p_username and "ownerId"=p_owner for update;
+  if not found then raise exception 'Profile ownership mismatch'; end if;
+  if v_profile."maxUnlockedKenLevel">=p_level then
+    return jsonb_build_object('ok',true,'alreadyUnlocked',true,'maxUnlockedKenLevel',v_profile."maxUnlockedKenLevel");
+  end if;
+  if p_cost>0 then
+    select * into v_debit from public.debit_wallet(p_username,p_cost,'ai_unlock',p_level::text);
+    if not v_debit.ok then return jsonb_build_object('ok',false,'balance',v_debit.balance); end if;
+  end if;
+  update public.profiles set "maxUnlockedKenLevel"=p_level where "usernameLower"=p_username;
+  return jsonb_build_object('ok',true,'balance',(select balance from public.coin_wallets where username=p_username),'maxUnlockedKenLevel',p_level);
+end $$;
+
+create or replace function public.kentro_create_withdrawal(
+ p_owner uuid,p_username text,p_coins numeric,p_naira numeric,p_account_name text,p_account_number text,p_bank text
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_debit record; v_id uuid:=gen_random_uuid();
+begin
+  if not exists(select 1 from public.profiles where "ownerId"=p_owner and "usernameLower"=p_username)
+    or p_coins is null or p_coins<=0 or p_coins<>trunc(p_coins) or p_naira is null or p_naira<0 or p_naira<>trunc(p_naira)
+    or length(trim(p_account_name)) not between 1 and 120 or p_account_number !~ '^[0-9]{10}$'
+  then raise exception 'Invalid withdrawal'; end if;
+  select * into v_debit from public.debit_wallet(p_username,p_coins,'withdrawal',v_id::text);
+  if not v_debit.ok then return jsonb_build_object('ok',false,'balance',v_debit.balance); end if;
+  insert into public.withdrawal_requests(id,username,"ownerId",coins,"nairaAmount","accountName","accountNumber","bankName",status,"submittedAt")
+    values(v_id,p_username,p_owner,p_coins,p_naira,trim(p_account_name),p_account_number,p_bank,'pending',(extract(epoch from now())*1000)::bigint);
+  return jsonb_build_object('ok',true,'requestId',v_id,'balance',v_debit.balance,'nairaAmount',p_naira);
+end $$;
+
+create or replace function public.kentro_resolve_withdrawal(p_id uuid,p_approve boolean,p_admin text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_request public.withdrawal_requests%rowtype; v_balance numeric;
+begin
+ select * into v_request from public.withdrawal_requests where id=p_id for update;
+ if not found then return jsonb_build_object('ok',false,'error','not_found'); end if;
+ if v_request.status<>'pending' then return jsonb_build_object('ok',false,'error','already_resolved'); end if;
+ if p_approve is null then raise exception 'Explicit approval required'; end if;
+ if not p_approve then v_balance:=public.credit_wallet(v_request.username,v_request.coins,'refund',p_id::text); end if;
+ update public.withdrawal_requests set status=case when p_approve then 'paid' else 'rejected' end,
+   "resolvedBy"=p_admin,"resolvedAt"=(extract(epoch from now())*1000)::bigint where id=p_id;
+ return jsonb_build_object('ok',true,'username',v_request.username,'coins',v_request.coins,'balance',v_balance);
+end $$;
+
+create or replace function public.kentro_resolve_purchase(p_id uuid,p_approve boolean,p_admin text,p_coins numeric)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_request public.purchase_requests%rowtype; v_username text; v_balance numeric;
+begin
+ select * into v_request from public.purchase_requests where id=p_id for update;
+ if not found then return jsonb_build_object('ok',false,'error','not_found'); end if;
+ if v_request.status<>'pending' then return jsonb_build_object('ok',false,'error','already_resolved'); end if;
+ if p_approve is null then raise exception 'Explicit approval required'; end if;
+ select "usernameLower" into v_username from public.profiles where "ownerId"=v_request."ownerId";
+ if v_username is null then raise exception 'Purchase owner has no canonical profile'; end if;
+ if p_approve then v_balance:=public.credit_wallet(v_username,p_coins,'purchase_credit',p_id::text); end if;
+ update public.purchase_requests set status=case when p_approve then 'approved' else 'rejected' end,
+   "resolvedBy"=p_admin,"resolvedAt"=(extract(epoch from now())*1000)::bigint,
+   "coinsCredited"=case when p_approve then p_coins else null end where id=p_id;
+ return jsonb_build_object('ok',true,'username',v_username,'coins',p_coins,'balance',v_balance);
+end $$;
+
+create or replace function public.kentro_tournament_chat(p_tournament text,p_message text,p_reply text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_profile public.profiles%rowtype; v_message jsonb; v_chat jsonb;
+begin
+ select * into v_profile from public.profiles where "ownerId"=auth.uid();
+ if not found or v_profile.banned or v_profile."suspendedUntil">(extract(epoch from now())*1000)::bigint
+   or length(trim(p_message)) not between 1 and 2000 then raise exception 'Invalid chat message' using errcode='42501'; end if;
+ v_message:=jsonb_build_object('id',gen_random_uuid(),'sender',v_profile.username,'message',trim(p_message),
+  'timestamp',(extract(epoch from now())*1000)::bigint,'isAnnouncement',false,'replyTo',p_reply,'reactions','{}'::jsonb);
+ update public.tournaments set chat=chat||v_message where id=p_tournament returning chat into v_chat;
+ if not found then raise exception 'Tournament not found'; end if;
+ return v_chat;
+end $$;
+
+revoke all on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_unlock_ai(uuid,text,integer,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text) from public,anon,authenticated;
+revoke all on function public.kentro_resolve_withdrawal(uuid,boolean,text) from public,anon,authenticated;
+revoke all on function public.kentro_resolve_purchase(uuid,boolean,text,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_tournament_chat(text,text,text) from public,anon;
+grant execute on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) to service_role;
+grant execute on function public.kentro_unlock_ai(uuid,text,integer,numeric) to service_role;
+grant execute on function public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text) to service_role;
+grant execute on function public.kentro_resolve_withdrawal(uuid,boolean,text) to service_role;
+grant execute on function public.kentro_resolve_purchase(uuid,boolean,text,numeric) to service_role;
+grant execute on function public.kentro_tournament_chat(text,text,text) to authenticated;
+
+
+-- 20261015_account_email_privacy.sql
+-- Browser username lookup must not disclose account email addresses.
+-- The Node auth facade uses the existing function with service-role access.
+
+revoke all on function public.resolve_username_to_email(text) from public, anon, authenticated;
+grant execute on function public.resolve_username_to_email(text) to service_role;
+
+
+-- 20261015_authoritative_ratings.sql
+-- Server-owned online results only. No historical ratings are recalculated.
+
+alter table public.profiles add column if not exists "statsVersion" bigint not null default 0;
+create table if not exists public.kentro_rated_matches (
+  game_id text primary key, white_owner uuid not null, black_owner uuid not null,
+  result jsonb not null, applied_at timestamptz not null default now()
+);
+alter table public.kentro_rated_matches enable row level security;
+revoke all on public.kentro_rated_matches from public,anon,authenticated;
+
+-- Moderation/admin rating changes must invalidate a concurrent rating snapshot.
+create or replace function public.kentro_profile_stats_version()
+returns trigger language plpgsql security invoker set search_path='' as $$ begin
+  if row(new.elo,new.rd,new.vol,new.wins,new.losses,new.draws,new."gamesCount",new."totalPlayTime",new."averageDuration")
+    is distinct from row(old.elo,old.rd,old.vol,old.wins,old.losses,old.draws,old."gamesCount",old."totalPlayTime",old."averageDuration")
+  then new."statsVersion":=old."statsVersion"+1; end if;
+  return new;
+end $$;
+drop trigger if exists kentro_profile_stats_version on public.profiles;
+create trigger kentro_profile_stats_version before update on public.profiles
+  for each row execute function public.kentro_profile_stats_version();
+
+create or replace function public.kentro_apply_rated_result(
+  p_game_id text,p_white_owner uuid,p_black_owner uuid,
+  p_white_version bigint,p_black_version bigint,p_winner text,p_after jsonb
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+ v_game public.completed_games%rowtype; v_white public.profiles%rowtype; v_black public.profiles%rowtype;
+ v_result jsonb; v_duration numeric; v_rating jsonb; v_color text; v_owner uuid;
+begin
+ if p_game_id is null or p_white_owner is null or p_black_owner is null or p_white_owner=p_black_owner
+   or p_white_version is null or p_black_version is null
+   or p_winner is null or p_winner not in ('W','B','Draw') then raise exception 'Invalid rated participants'; end if;
+ perform pg_advisory_xact_lock(hashtextextended('kentro-rating:'||p_game_id,0));
+ select result into v_result from public.kentro_rated_matches
+   where game_id=p_game_id and white_owner=p_white_owner and black_owner=p_black_owner;
+ if found then return v_result; end if;
+ select * into v_game from public.completed_games where "gameId"=p_game_id;
+ if not found or v_game."playMode"<>'Multiplayer' or v_game.winner is distinct from p_winner
+   or not (v_game."participantUserIds" ? p_white_owner::text and v_game."participantUserIds" ? p_black_owner::text)
+ then raise exception 'No authoritative online result for these participants'; end if;
+ -- Consistent row order prevents overlapping games from deadlocking.
+ perform 1 from public.profiles where "ownerId" in (p_white_owner,p_black_owner) order by "usernameLower" for update;
+ select * into strict v_white from public.profiles where "ownerId"=p_white_owner;
+ select * into strict v_black from public.profiles where "ownerId"=p_black_owner;
+ if v_white."usernameLower"<>lower(trim(v_game."whitePlayer"))
+   or v_black."usernameLower"<>lower(trim(v_game."blackPlayer"))
+   or v_white."usernameLower"='kentro_house' or v_black."usernameLower"='kentro_house'
+ then raise exception 'Rated profile identity mismatch'; end if;
+ if v_white."statsVersion"<>p_white_version or v_black."statsVersion"<>p_black_version
+ then return jsonb_build_object('ok',false,'retry',true); end if;
+ foreach v_color in array array['white','black'] loop
+   v_rating:=p_after->v_color;
+   if v_rating is null or jsonb_typeof(v_rating->'rating') is distinct from 'number'
+     or jsonb_typeof(v_rating->'rd') is distinct from 'number' or jsonb_typeof(v_rating->'vol') is distinct from 'number'
+     or not ((v_rating->>'rating')::numeric between 100 and 1000000)
+     or not ((v_rating->>'rd')::numeric>0 and (v_rating->>'rd')::numeric<=10000)
+     or not ((v_rating->>'vol')::numeric>0 and (v_rating->>'vol')::numeric<10)
+   then raise exception 'Invalid Glicko result'; end if;
+ end loop;
+ v_duration:=greatest(1,least(604800,coalesce((v_game."moveEvaluations"->'__kentroGameRecord'->>'durationSeconds')::numeric,1)));
+ update public.profiles set
+   elo=round((p_after->'white'->>'rating')::numeric),rd=(p_after->'white'->>'rd')::numeric,vol=(p_after->'white'->>'vol')::numeric,
+   wins=wins+case when p_winner='W' then 1 else 0 end,
+   losses=losses+case when p_winner='B' then 1 else 0 end,
+   draws=draws+case when p_winner='Draw' then 1 else 0 end,
+   "gamesCount"="gamesCount"+1,"totalPlayTime"="totalPlayTime"+v_duration,
+   "averageDuration"=round(("totalPlayTime"+v_duration)/("gamesCount"+1))
+ where "usernameLower"=v_white."usernameLower" returning * into v_white;
+ update public.profiles set
+   elo=round((p_after->'black'->>'rating')::numeric),rd=(p_after->'black'->>'rd')::numeric,vol=(p_after->'black'->>'vol')::numeric,
+   wins=wins+case when p_winner='B' then 1 else 0 end,
+   losses=losses+case when p_winner='W' then 1 else 0 end,
+   draws=draws+case when p_winner='Draw' then 1 else 0 end,
+   "gamesCount"="gamesCount"+1,"totalPlayTime"="totalPlayTime"+v_duration,
+   "averageDuration"=round(("totalPlayTime"+v_duration)/("gamesCount"+1))
+ where "usernameLower"=v_black."usernameLower" returning * into v_black;
+ v_result:=jsonb_build_object('ok',true,'white',jsonb_build_object('username',v_white.username,'rating',v_white.elo,'rd',v_white.rd,'vol',v_white.vol),
+   'black',jsonb_build_object('username',v_black.username,'rating',v_black.elo,'rd',v_black.rd,'vol',v_black.vol));
+ insert into public.kentro_rated_matches(game_id,white_owner,black_owner,result) values(p_game_id,p_white_owner,p_black_owner,v_result);
+ return v_result;
+end $$;
+revoke all on function public.kentro_apply_rated_result(text,uuid,uuid,bigint,bigint,text,jsonb) from public,anon,authenticated;
+grant execute on function public.kentro_apply_rated_result(text,uuid,uuid,bigint,bigint,text,jsonb) to service_role;
+
+
+-- 20261015_tournament_privacy.sql
+-- Apply after authorization/wallet/rating migrations. Keeps existing rows,
+-- entrants and invitation codes. New invitation grants bind immutable UIDs.
+
+-- Supabase installations can have broad default table grants. Narrow the
+-- notification UPDATE privilege before granting the sole mutable column.
+revoke update on public.kentro_notifications from public,anon,authenticated;
+grant update(read_at) on public.kentro_notifications to authenticated;
+create table if not exists public.kentro_tournament_invites (
+  tournament_id text not null references public.tournaments(id) on delete cascade,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  redeemed_at timestamptz not null default now(),
+  primary key(tournament_id,owner_id)
+);
+alter table public.kentro_tournament_invites enable row level security;
+revoke all on public.kentro_tournament_invites from public,anon,authenticated;
+
+create or replace function public.kentro_can_view_tournament(p_id text,p_visibility text,p_players jsonb)
+returns boolean language sql stable security definer set search_path='' as $$
+  select lower(coalesce(p_visibility,'public'))<>'private' or
+    exists(select 1 from public.profiles p where p."ownerId"=auth.uid()
+      and not p.banned and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint)
+      and p."usernameLower"<>'kentro_house'
+      and (public.is_tournament_admin(auth.uid())
+        or exists(select 1 from jsonb_array_elements(coalesce(p_players,'[]')) player
+          where lower(player->>'username')=p."usernameLower")
+        or exists(select 1 from public.kentro_tournament_invites i where i.tournament_id=p_id and i.owner_id=auth.uid())));
+$$;
+revoke all on function public.kentro_can_view_tournament(text,text,jsonb) from public;
+grant execute on function public.kentro_can_view_tournament(text,text,jsonb) to anon,authenticated;
+drop policy if exists tournaments_select_all on public.tournaments;
+drop policy if exists tournaments_select_visible on public.tournaments;
+create policy tournaments_select_visible on public.tournaments for select
+  using (public.kentro_can_view_tournament(id,visibility,players));
+
+create or replace function public.kentro_redeem_tournament_invite(p_owner uuid,p_code text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_tour public.tournaments%rowtype;
+begin
+  if p_owner is null or p_code is null or length(p_code) not between 4 and 64
+    or not exists(select 1 from public.profiles p where p."ownerId"=p_owner
+      and p."usernameLower"<>'kentro_house' and not p.banned
+      and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint))
+  then return jsonb_build_object('ok',false,'error','not_found'); end if;
+  -- Duplicate historical codes fail closed rather than disclosing an arbitrary row.
+  if (select count(*) from public.tournaments where lower(visibility)='private' and upper("inviteCode")=upper(trim(p_code)))<>1
+  then return jsonb_build_object('ok',false,'error','not_found'); end if;
+  select * into v_tour from public.tournaments where lower(visibility)='private' and upper("inviteCode")=upper(trim(p_code)) for update;
+  if v_tour.status not in ('registration','upcoming','active','open') or v_tour.status is null
+  then return jsonb_build_object('ok',false,'error','not_open'); end if;
+  insert into public.kentro_tournament_invites(tournament_id,owner_id) values(v_tour.id,p_owner) on conflict do nothing;
+  return jsonb_build_object('ok',true,'tournament',to_jsonb(v_tour));
+end $$;
+revoke all on function public.kentro_redeem_tournament_invite(uuid,text) from public,anon,authenticated;
+grant execute on function public.kentro_redeem_tournament_invite(uuid,text) to service_role;
+
+create or replace function public.tournament_entry(
+  p_tournament_id text,p_username text,p_entry_fee numeric,p_player jsonb,p_log_line text
+) returns table("ok" boolean,"errorReason" text,"balance" numeric,"players" jsonb)
+language plpgsql security definer set search_path='' as $$
+declare v_tour public.tournaments%rowtype; v_profile public.profiles%rowtype; v_balance numeric;
+begin
+  if p_entry_fee is null or p_entry_fee<0 or p_entry_fee>9007199254740991 or p_entry_fee<>trunc(p_entry_fee)
+    or p_username is null or jsonb_typeof(p_player) is distinct from 'object'
+  then raise exception 'Invalid tournament entry'; end if;
+  select * into v_profile from public.profiles where "usernameLower"=lower(trim(p_username));
+  if not found or v_profile.banned or v_profile."usernameLower"='kentro_house'
+    or v_profile."suspendedUntil">(extract(epoch from now())*1000)::bigint
+  then return query select false,'not_allowed',null::numeric,null::jsonb; return; end if;
+  select * into v_tour from public.tournaments where id=p_tournament_id for update;
+  if not found then return query select false,'not_found',null::numeric,null::jsonb; return; end if;
+  if lower(v_tour.visibility)='private' and not exists(select 1 from public.kentro_tournament_invites
+      where tournament_id=p_tournament_id and owner_id=v_profile."ownerId")
+    and not public.is_tournament_admin(v_profile."ownerId")
+  then return query select false,'not_allowed',null::numeric,null::jsonb; return; end if;
+  if v_tour.status is distinct from 'registration' then return query select false,'not_open',null::numeric,null::jsonb; return; end if;
+  if exists(select 1 from jsonb_array_elements(v_tour.players) player where lower(player->>'username')=v_profile."usernameLower")
+  then return query select false,'already_registered',null::numeric,v_tour.players; return; end if;
+  if v_tour."maxPlayers" is not null and jsonb_array_length(v_tour.players)>=v_tour."maxPlayers"
+  then return query select false,'full',null::numeric,null::jsonb; return; end if;
+  if p_entry_fee>0 then
+    select d.ok,d.balance into ok,v_balance from public.debit_wallet(v_profile."usernameLower",p_entry_fee,'tournament_entry',p_tournament_id) d;
+    if not ok then return query select false,'insufficient_funds',v_balance,null::jsonb; return; end if;
+  else select coalesce(w.balance,0) into v_balance from public.coin_wallets w where w.username=v_profile."usernameLower"; end if;
+  update public.tournaments set players=v_tour.players||jsonb_build_array(p_player||jsonb_build_object('username',v_profile.username)),
+    logs=v_tour.logs||jsonb_build_array(left(coalesce(p_log_line,v_profile.username||' joined the tournament.'),500)),
+    "prizePool"=v_tour."prizePool"+p_entry_fee where id=p_tournament_id returning tournaments.players into players;
+  return query select true,null::text,coalesce(v_balance,0),players;
+end $$;
+revoke all on function public.tournament_entry(text,text,numeric,jsonb,text) from public,anon,authenticated;
+grant execute on function public.tournament_entry(text,text,numeric,jsonb,text) to service_role;
+
+create or replace function public.kentro_tournament_chat(p_tournament text,p_message text,p_reply text default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_profile public.profiles%rowtype; v_tour public.tournaments%rowtype; v_chat jsonb;
+begin
+  select * into v_profile from public.profiles where "ownerId"=auth.uid();
+  if not found or v_profile.banned or v_profile."usernameLower"='kentro_house' or v_profile."suspendedUntil">(extract(epoch from now())*1000)::bigint
+    or p_message is null or length(trim(p_message)) not between 1 and 2000
+    or (p_reply is not null and length(p_reply)>160)
+  then raise exception 'Invalid chat message' using errcode='42501'; end if;
+  select * into v_tour from public.tournaments where id=p_tournament for update;
+  if not found or not public.kentro_can_view_tournament(v_tour.id,v_tour.visibility,v_tour.players)
+  then raise exception 'Tournament unavailable' using errcode='42501'; end if;
+  update public.tournaments set chat=chat||jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),
+    'sender',v_profile.username,'message',trim(p_message),'timestamp',(extract(epoch from now())*1000)::bigint,
+    'isAnnouncement',false,'replyTo',p_reply,'reactions','{}'::jsonb)) where id=p_tournament returning chat into v_chat;
+  return v_chat;
+end $$;
+revoke all on function public.kentro_tournament_chat(text,text,text) from public,anon;
+grant execute on function public.kentro_tournament_chat(text,text,text) to authenticated;
+
+
+-- 20261016_groups_and_tournament_runtime.sql
+-- Additive runtime state; apply after the authorization and privacy migrations.
+
+alter table public.tournaments add column if not exists "engineVersion" bigint not null default 0;
+alter table public.tournaments add column if not exists "engineState" jsonb not null default '{}'::jsonb;
+create or replace function public.kentro_tournament_version() returns trigger language plpgsql set search_path='' as $$ begin new."engineVersion":=old."engineVersion"+1; return new; end $$;
+drop trigger if exists kentro_tournament_version on public.tournaments;
+create trigger kentro_tournament_version before update on public.tournaments for each row execute function public.kentro_tournament_version();
+create or replace function public.kentro_commit_tournament(p_id text,p_version bigint,p_next jsonb)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v public.tournaments%rowtype;
+begin
+  if jsonb_typeof(p_next)<>'object' or p_next->>'status' not in ('registration','active','completed')
+    or jsonb_typeof(p_next->'players')<>'array' or jsonb_typeof(p_next->'matches')<>'array'
+    or jsonb_array_length(p_next->'players')>64 or jsonb_array_length(p_next->'matches')>20000
+  then raise exception 'Invalid runtime state'; end if;
+  update public.tournaments set status=p_next->>'status',players=p_next->'players',matches=p_next->'matches',
+    "currentRound"=(p_next->>'currentRound')::integer,"maxRounds"=(p_next->>'maxRounds')::integer,
+    logs=p_next->'logs',"engineState"=p_next->'engineState'
+  where id=p_id and "engineVersion"=p_version returning * into v;
+  if not found then return null; end if;
+  return to_jsonb(v);
+end $$;
+revoke all on function public.kentro_commit_tournament(text,bigint,jsonb) from public,anon,authenticated;
+grant execute on function public.kentro_commit_tournament(text,bigint,jsonb) to service_role;
+
+create table if not exists public.kentro_groups (
+  id uuid primary key default gen_random_uuid(), name text not null check(length(name) between 1 and 80),
+  description text not null default '' check(length(description)<=1000), icon text not null default '👥' check(length(icon)<=32),
+  owner_id uuid not null references auth.users(id), created_at timestamptz not null default now()
+);
+create table if not exists public.kentro_group_members (
+  group_id uuid not null references public.kentro_groups(id) on delete cascade,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  role text not null check(role in ('owner','admin','member')), status text not null check(status in ('invited','active')),
+  primary key(group_id,owner_id)
+);
+create table if not exists public.kentro_group_messages (
+  id uuid primary key default gen_random_uuid(), group_id uuid not null references public.kentro_groups(id) on delete cascade,
+  sender_id uuid not null references auth.users(id), text text not null check(length(text) between 1 and 200000),
+  created_at timestamptz not null default now(), deleted boolean not null default false
+);
+alter table public.kentro_group_messages add column if not exists reactions jsonb not null default '{}'::jsonb;
+create index if not exists kentro_group_message_order on public.kentro_group_messages(group_id,created_at desc,id);
+create index if not exists kentro_group_sender_rate on public.kentro_group_messages(sender_id,created_at desc);
+alter table public.kentro_groups enable row level security;
+alter table public.kentro_group_members enable row level security;
+alter table public.kentro_group_messages enable row level security;
+revoke all on public.kentro_groups,public.kentro_group_members,public.kentro_group_messages from public,anon,authenticated;
+grant select on public.kentro_groups,public.kentro_group_members,public.kentro_group_messages to authenticated;
+
+create or replace function public.kentro_in_group(p_group uuid,p_active boolean default true)
+returns boolean language sql stable security definer set search_path='' as $$
+ select public.kentro_account_active() and exists(select 1 from public.kentro_group_members m where m.group_id=p_group and m.owner_id=auth.uid() and (not p_active or m.status='active'));
+$$;
+revoke all on function public.kentro_in_group(uuid,boolean) from public;
+grant execute on function public.kentro_in_group(uuid,boolean) to authenticated;
+drop policy if exists kentro_group_read on public.kentro_groups;
+create policy kentro_group_read on public.kentro_groups for select to authenticated using(public.kentro_in_group(id,false));
+drop policy if exists kentro_member_read on public.kentro_group_members;
+create policy kentro_member_read on public.kentro_group_members for select to authenticated using(public.kentro_in_group(group_id) or owner_id=auth.uid() and public.kentro_account_active());
+drop policy if exists kentro_group_message_read on public.kentro_group_messages;
+create policy kentro_group_message_read on public.kentro_group_messages for select to authenticated using(public.kentro_in_group(group_id));
+
+create or replace function public.kentro_group_view(p_group uuid)
+returns jsonb language sql stable security definer set search_path='' as $$
+ select jsonb_build_object('id',g.id,'name',g.name,'description',g.description,'icon',g.icon,
+   'createdBy',(select p.username from public.profiles p where p."ownerId"=g.owner_id),
+   'createdAt',(extract(epoch from g.created_at)*1000)::bigint,
+   'invited',exists(select 1 from public.kentro_group_members where group_id=g.id and owner_id=auth.uid() and status='invited'),
+   'admins',coalesce((select jsonb_agg(p.username order by p.username) from public.kentro_group_members m join public.profiles p on p."ownerId"=m.owner_id where m.group_id=g.id and m.role in ('owner','admin') and m.status='active'),'[]'),
+   'members',coalesce((select jsonb_agg(p.username order by p.username) from public.kentro_group_members m join public.profiles p on p."ownerId"=m.owner_id where m.group_id=g.id and m.status='active'),'[]'))
+ from public.kentro_groups g where g.id=p_group and public.kentro_in_group(g.id,false);
+$$;
+revoke all on function public.kentro_group_view(uuid) from public;
+grant execute on function public.kentro_group_view(uuid) to authenticated;
+create or replace function public.kentro_group_list() returns jsonb language sql stable security definer set search_path='' as $$
+ select coalesce(jsonb_agg(public.kentro_group_view(g.id) order by g.created_at desc),'[]') from public.kentro_groups g where public.kentro_in_group(g.id,false);
+$$;
+revoke all on function public.kentro_group_list() from public;
+grant execute on function public.kentro_group_list() to authenticated;
+
+create or replace function public.kentro_group_action(p_group uuid,p_action text,p_data jsonb default '{}'::jsonb)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_uid uuid:=auth.uid(); v_group public.kentro_groups%rowtype; v_me public.kentro_group_members%rowtype;
+ v_target uuid; v_role text; v_id uuid; v_name text; v_emoji text; v_reactors jsonb; v_message public.kentro_group_messages%rowtype;
+begin
+ if not public.kentro_account_active() or jsonb_typeof(p_data)<>'object' then raise exception 'Not authorized' using errcode='42501'; end if;
+ if p_action='create' then
+  perform 1 from public.profiles where "ownerId"=v_uid for update;
+  if length(trim(coalesce(p_data->>'name',''))) not between 1 and 80 or length(coalesce(p_data->>'description',''))>1000 or length(coalesce(p_data->>'icon','👥'))>32 then raise exception 'Invalid group'; end if;
+  
+  v_id:=coalesce(p_group,gen_random_uuid());
+  select * into v_group from public.kentro_groups where id=v_id;
+  if found then
+   if v_group.owner_id<>v_uid or v_group.name<>trim(p_data->>'name') or v_group.description<>coalesce(p_data->>'description','') or v_group.icon<>coalesce(p_data->>'icon','👥') then raise exception 'Group identity conflict' using errcode='42501'; end if;
+   return public.kentro_group_view(v_id);
+  end if;
+  if (select count(*) from public.kentro_groups where owner_id=v_uid)>=20 then raise exception 'Group limit reached'; end if;
+  insert into public.kentro_groups(id,name,description,icon,owner_id) values(v_id,trim(p_data->>'name'),coalesce(p_data->>'description',''),coalesce(p_data->>'icon','👥'),v_uid) returning * into v_group;
+  insert into public.kentro_group_members values(v_group.id,v_uid,'owner','active');
+  return public.kentro_group_view(v_group.id);
+ end if;
+ select * into v_group from public.kentro_groups where id=p_group for update;
+ if not found then raise exception 'Group unavailable' using errcode='42501'; end if;
+ select * into v_me from public.kentro_group_members where group_id=p_group and owner_id=v_uid;
+ if not found then raise exception 'Not a group member' using errcode='42501'; end if;
+ if p_action='accept' and v_me.status in ('invited','active') then
+  update public.kentro_group_members set status='active' where group_id=p_group and owner_id=v_uid;
+ elsif p_action in ('leave','decline') then
+  if v_me.role='owner' then raise exception 'Transfer ownership or delete the group first'; end if;
+  delete from public.kentro_group_members where group_id=p_group and owner_id=v_uid; return jsonb_build_object('ok',true);
+ elsif v_me.status<>'active' then raise exception 'Accept the invitation first' using errcode='42501';
+ elsif p_action='send' then
+  perform 1 from public.profiles where "ownerId"=v_uid for update;
+  v_id:=coalesce((p_data->>'id')::uuid,gen_random_uuid());
+  if length(coalesce(p_data->>'text','')) not between 1 and 200000 then raise exception 'Invalid message'; end if;
+  if not exists(select 1 from public.kentro_group_messages where id=v_id) and (select count(*) from public.kentro_group_messages where sender_id=v_uid and created_at>now()-interval '1 minute')>=30 then raise exception 'Message rate limit reached'; end if;
+  insert into public.kentro_group_messages(id,group_id,sender_id,text) values(v_id,p_group,v_uid,p_data->>'text') on conflict(id) do nothing;
+  select * into v_message from public.kentro_group_messages where id=v_id and group_id=p_group and sender_id=v_uid and text=p_data->>'text';
+  if not found then raise exception 'Message identity conflict' using errcode='42501'; end if;
+  return to_jsonb(v_message);
+ elsif p_action='react' then
+  v_emoji:=p_data->>'emoji';
+  if length(coalesce(v_emoji,'')) not between 1 and 16 then raise exception 'Invalid reaction'; end if;
+  select username into v_name from public.profiles where "ownerId"=v_uid;
+  select * into v_message from public.kentro_group_messages where id=(p_data->>'id')::uuid and group_id=p_group and not deleted for update;
+  if not found then raise exception 'Message unavailable'; end if;
+  if not (v_message.reactions ? v_emoji) and (select count(*) from jsonb_object_keys(v_message.reactions))>=32 then raise exception 'Reaction limit reached'; end if;
+  v_reactors:=coalesce(v_message.reactions->v_emoji,'[]');
+  if v_reactors ? v_name then
+   select coalesce(jsonb_agg(value),'[]') into v_reactors from jsonb_array_elements(v_reactors) where value<>to_jsonb(v_name);
+  else v_reactors:=v_reactors||to_jsonb(v_name); end if;
+  update public.kentro_group_messages set reactions=jsonb_set(reactions,array[v_emoji],v_reactors) where id=v_message.id;
+  return jsonb_build_object('ok',true);
+ elsif p_action='delete_message' then
+  update public.kentro_group_messages set text='This message was deleted',deleted=true where id=(p_data->>'id')::uuid and group_id=p_group and (sender_id=v_uid or v_me.role in ('owner','admin'));
+  if not found then raise exception 'Not authorized' using errcode='42501'; end if; return jsonb_build_object('ok',true);
+ elsif p_action='update' and v_me.role in ('owner','admin') then
+  update public.kentro_groups set name=coalesce(p_data->>'name',name),description=coalesce(p_data->>'description',description),icon=coalesce(p_data->>'icon',icon) where id=p_group;
+ elsif p_action='delete' and v_me.role='owner' then
+  delete from public.kentro_groups where id=p_group; return jsonb_build_object('ok',true);
+ elsif p_action in ('invite','remove','promote','demote','transfer') and v_me.role in ('owner','admin') then
+  select "ownerId" into v_target from public.profiles where "usernameLower"=lower(trim(p_data->>'username')) and not banned and ("suspendedUntil" is null or "suspendedUntil"<=(extract(epoch from now())*1000)::bigint);
+  if v_target is null then raise exception 'Account unavailable'; end if;
+  select role into v_role from public.kentro_group_members where group_id=p_group and owner_id=v_target;
+  if p_action='invite' then
+   if (select count(*) from public.kentro_group_members where group_id=p_group)>=100 then raise exception 'Group is full'; end if;
+   insert into public.kentro_group_members values(p_group,v_target,'member','invited') on conflict do nothing;
+  elsif v_target=v_group.owner_id then raise exception 'Owner cannot be removed or demoted';
+  elsif p_action='remove' and (v_role='member' or v_me.role='owner') then delete from public.kentro_group_members where group_id=p_group and owner_id=v_target;
+  elsif v_me.role='owner' and p_action in ('promote','demote','transfer') then
+   if not exists(select 1 from public.kentro_group_members where group_id=p_group and owner_id=v_target and status='active') then raise exception 'Target is not an active member'; end if;
+   update public.kentro_group_members set role=case p_action when 'promote' then 'admin' when 'demote' then 'member' else 'owner' end where group_id=p_group and owner_id=v_target;
+   if p_action='transfer' then
+    update public.kentro_groups set owner_id=v_target where id=p_group;
+    update public.kentro_group_members set role='admin' where group_id=p_group and owner_id=v_uid;
+   end if;
+  else raise exception 'Not authorized' using errcode='42501'; end if;
+ else raise exception 'Not authorized' using errcode='42501'; end if;
+ return public.kentro_group_view(p_group);
+end $$;
+revoke all on function public.kentro_group_action(uuid,text,jsonb) from public;
+grant execute on function public.kentro_group_action(uuid,text,jsonb) to authenticated;
+create or replace function public.kentro_group_feed(p_group uuid) returns jsonb language sql stable security definer set search_path='' as $$
+ select coalesce(jsonb_agg(to_jsonb(feed) order by feed.created_at,feed.id),'[]') from (
+  select m.id,m.group_id,m.text,m.created_at,m.deleted,m.reactions,p.username as sender
+  from public.kentro_group_messages m join public.profiles p on p."ownerId"=m.sender_id
+  where m.group_id=p_group and public.kentro_in_group(p_group) order by m.created_at desc,m.id desc limit 100
+ ) feed;
+$$;
+revoke all on function public.kentro_group_feed(uuid) from public;
+grant execute on function public.kentro_group_feed(uuid) to authenticated;
+-- Realtime is optional; polling remains the fallback. Never publish secret room snapshots.
+do $$ declare v_table text; begin
+ if exists(select 1 from pg_publication where pubname='supabase_realtime') then
+  foreach v_table in array array['kentro_groups','kentro_group_members','kentro_group_messages'] loop
+   if not exists(select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=v_table) then
+    execute format('alter publication supabase_realtime add table public.%I',v_table);
+   end if;
+  end loop;
+ end if;
+end $$;
+-- Canonical single or team champions share the net prize atomically. The
+-- administrator confirms payment; no browser can select another beneficiary.
+create or replace function public.kentro_pay_completed_tournament(p_id text,p_rake numeric)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v public.tournaments%rowtype; v_champions text[]; v_pool numeric; v_payout bigint; v_house bigint; v_share bigint; v_amount bigint; v_extra integer; v_name text; v_paid jsonb:='{}';
+begin
+ select * into v from public.tournaments where id=p_id for update;
+ if not found then return jsonb_build_object('ok',false,'errorReason','not_found'); end if;
+ if v."prizePaid" then return jsonb_build_object('ok',false,'errorReason','already_paid'); end if;
+ if v.status<>'completed' or jsonb_typeof(v."engineState"->'champions') is distinct from 'array' or jsonb_array_length(v."engineState"->'champions') not between 1 and 64 then return jsonb_build_object('ok',false,'errorReason','not_completed'); end if;
+ if p_rake is null or p_rake<0 or p_rake>1 then raise exception 'Invalid rake'; end if;
+ select array_agg(distinct lower(value) order by lower(value)) into v_champions from jsonb_array_elements_text(v."engineState"->'champions');
+ v_pool:=v."prizePool";
+ if v_pool is null or v_pool<0 or v_pool<>trunc(v_pool) or v_pool>9007199254740991 then raise exception 'Invalid pool'; end if;
+ if v_pool>coalesce((select sum(amount) from public.coin_transactions where type='tournament_entry' and direction='debit' and "refId"=p_id),0) then raise exception 'Pool exceeds verified entry funding'; end if;
+ v_payout:=floor(v_pool*(1-p_rake));v_house:=v_pool-v_payout;
+ v_share:=v_payout/array_length(v_champions,1);v_extra:=v_payout-v_share*array_length(v_champions,1);
+ foreach v_name in array v_champions loop
+  if not exists(select 1 from public.profiles p where p."usernameLower"=v_name and not p.banned and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint))
+   or not exists(select 1 from jsonb_array_elements(v.players) player where lower(player->>'username')=v_name)
+   or (v_pool>0 and not exists(select 1 from public.coin_transactions c where c.username=v_name and c.type='tournament_entry' and c."refId"=p_id and c.amount>0 and c.direction='debit')) then raise exception 'Champion eligibility requires reconciliation'; end if;
+  v_amount:=v_share; if v_extra>0 then v_amount:=v_amount+1; end if;
+  if v_amount>0 then perform public.credit_wallet(v_name,v_amount,'tournament_prize',p_id); end if;
+  v_paid:=v_paid||jsonb_build_object(v_name,v_amount);v_extra:=greatest(0,v_extra-1);
+ end loop;
+ if v_house>0 then perform public.credit_wallet('kentro_house',v_house,'rake',p_id); end if;
+ update public.tournaments set "prizePaid"=true where id=p_id;
+ return jsonb_build_object('ok',true,'payout',v_payout,'rake',v_house,'beneficiaries',v_paid);
+end $$;
+revoke all on function public.kentro_pay_completed_tournament(text,numeric) from public,anon,authenticated;
+grant execute on function public.kentro_pay_completed_tournament(text,numeric) to service_role;
+
+
+-- 20261017_ken_verified_progression.sql
+-- Already installed on hosted draught.com on 17 Oct 2026.
+-- This local copy documents the production schema, for new environments.
+
+create table if not exists public.kentro_ken_victory_claims (
+ owner_id uuid not null references auth.users(id) on delete cascade,
+ game_id uuid not null,
+ beaten_level integer not null check (beaten_level between 1 and 7),
+ claimed_at timestamptz not null default now(),
+ primary key(owner_id,game_id)
+);
+alter table public.kentro_ken_victory_claims enable row level security;
+revoke all on public.kentro_ken_victory_claims from public,anon,authenticated;
+create or replace function public.kentro_claim_ken_victory(p_owner uuid,p_game_id uuid,p_level integer)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_profile public.profiles%rowtype; v_previous integer; v_inserted uuid;
+begin
+ if p_owner is null or p_game_id is null or p_level is null or p_level not between 1 and 7 then raise exception 'Invalid Ken victory claim'; end if;
+ select * into v_profile from public.profiles where "ownerId"=p_owner for update;
+ if not found then return jsonb_build_object('ok',false,'error','profile_not_found'); end if;
+ if v_profile.banned or (v_profile."suspendedUntil" is not null and v_profile."suspendedUntil">(extract(epoch from now())*1000)::bigint) then return jsonb_build_object('ok',false,'error','account_unavailable'); end if;
+ select beaten_level into v_previous from public.kentro_ken_victory_claims where owner_id=p_owner and game_id=p_game_id;
+ if found then
+  if v_previous<>p_level then return jsonb_build_object('ok',false,'error','game_already_claimed_for_another_level'); end if;
+  return jsonb_build_object('ok',true,'alreadyClaimed',true,'maxUnlockedKenLevel',greatest(3,v_profile."maxUnlockedKenLevel"));
+ end if;
+ if p_level>greatest(3,v_profile."maxUnlockedKenLevel") then return jsonb_build_object('ok',false,'error','win_current_level_before_advancing'); end if;
+ insert into public.kentro_ken_victory_claims(owner_id,game_id,beaten_level) values(p_owner,p_game_id,p_level) on conflict do nothing returning game_id into v_inserted;
+ if v_inserted is null then return jsonb_build_object('ok',true,'alreadyClaimed',true,'maxUnlockedKenLevel',greatest(3,v_profile."maxUnlockedKenLevel")); end if;
+ update public.profiles set "maxUnlockedKenLevel"=greatest(3,"maxUnlockedKenLevel",p_level+1) where "ownerId"=p_owner;
+ return jsonb_build_object('ok',true,'alreadyClaimed',false,'maxUnlockedKenLevel',greatest(3,v_profile."maxUnlockedKenLevel",p_level+1));
+end $$;
+revoke all on function public.kentro_claim_ken_victory(uuid,uuid,integer) from public,anon,authenticated;
+grant execute on function public.kentro_claim_ken_victory(uuid,uuid,integer) to service_role;
+create or replace function public.kentro_lock_ken_entitlement()
+returns trigger language plpgsql security invoker set search_path='' as $$
+begin
+ if tg_op='UPDATE' and current_user in ('anon','authenticated') and new."maxUnlockedKenLevel" is distinct from old."maxUnlockedKenLevel"
+ then raise exception 'Ken level access is server-managed' using errcode='42501'; end if;
+ if tg_op='INSERT' and current_user in ('anon','authenticated') and new."maxUnlockedKenLevel">3
+ then raise exception 'Ken level access is server-managed' using errcode='42501'; end if;
+ return new;
+end $$;
+drop trigger if exists kentro_lock_ken_entitlement_trigger on public.profiles;
+create trigger kentro_lock_ken_entitlement_trigger before insert or update on public.profiles for each row execute function public.kentro_lock_ken_entitlement();
+revoke all on function public.kentro_lock_ken_entitlement() from public,anon,authenticated;
+
+
+-- 20261017_restrict_privileged_rpc_execute.sql
+-- Narrow the remaining privileged RPC grants without changing application rows.
+-- This migration is NOT applied to production by packaging this source.
+-- Rehearse in staging and verify that Auth signup triggers and tournament
+-- policies still work before authorizing a live rollout.
+
+-- Trigger functions must not be directly callable via /rest/v1/rpc.
+-- PostgreSQL executes them as triggers without granting public RPC EXECUTE.
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+revoke execute on function public.tournaments_money_guard() from public, anon, authenticated;
+-- Ordinary clients need the admin helper for RLS policy evaluation, but
+-- anonymous users have no reason to query privileged administrative status.
+revoke execute on function public.is_tournament_admin(uuid) from public, anon;
+grant execute on function public.is_tournament_admin(uuid) to authenticated;
+-- Username-to-email must be usable ONLY by Kentro's trusted Node auth facade.
+revoke execute on function public.resolve_username_to_email(text) from public, anon, authenticated;
+grant execute on function public.resolve_username_to_email(text) to service_role;
+
+
+-- 20261017_zz_coin_safety.sql
+-- Financial safety upgrade for the staged Kentro wallet RPCs.
+-- Rehearse on an isolated database before production. Does not touch balances.
+-- Prerequisites: 20261014_wallet_transactions.sql and schema.sql.
+
+-- One immutable debit receipt per paid room, preventing double entry-fees
+-- when a client reconnects or the server retries the same game start.
+create table if not exists public.kentro_match_charges (
+  match_id text primary key,
+  white_username text not null,
+  black_username text not null,
+  fee numeric not null check (fee > 0 and fee = trunc(fee) and fee <= 4503599627370495),
+  charged_at timestamptz not null default now(),
+  check (white_username <> black_username)
+);
+alter table public.kentro_match_charges enable row level security;
+revoke all on public.kentro_match_charges from public, anon, authenticated;
+
+create or replace function public.kentro_charge_match_pot(
+  p_match_id text, p_white text, p_black text, p_fee numeric
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_receipt public.kentro_match_charges%rowtype; v_charge record;
+begin
+  if p_match_id is null or length(trim(p_match_id)) not between 1 and 160
+     or p_white is null or length(trim(p_white)) < 1
+     or p_black is null or length(trim(p_black)) < 1
+     or p_white <> lower(trim(p_white)) or p_black <> lower(trim(p_black))
+     or p_white = p_black or p_fee is null or p_fee <= 0
+     or p_fee <> trunc(p_fee) or p_fee > 4503599627370495
+  then raise exception 'Invalid match charge'; end if;
+  -- Serialize charging against refunds/settlements of the SAME match ID.
+  -- A refunded receipt can never be recycled to finance a new match.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-settlement:' || p_match_id, 0));
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-charge:' || p_match_id, 0));
+  -- A cancellation tombstone also closes an ID that was never charged.
+  -- This check MUST precede the receipt lookup: HTTP delivery can reorder
+  -- cancellation and the delayed original charge.
+  if exists(select 1 from public.kentro_match_settlements where match_id=p_match_id) then
+    raise exception 'Match payment already settled; a new game must use a new ID';
+  end if;
+  select * into v_receipt from public.kentro_match_charges where match_id=p_match_id;
+  if found then
+    if v_receipt.white_username <> p_white or v_receipt.black_username <> p_black or v_receipt.fee <> p_fee then
+      raise exception 'Conflicting payment retry for an existing game';
+    end if;
+    return jsonb_build_object('ok', true, 'alreadyCharged', true);
+  end if;
+  -- Never attach a new receipt to an old match's ledger or debit it again.
+  if exists(select 1 from public.coin_transactions where "refId" in (p_match_id,'rake:'||p_match_id)
+    and type in ('match_entry','match_prize','refund','rake')) then
+    raise exception 'Legacy match reference requires reconciliation before reuse';
+  end if;
+  select * into v_charge from public.debit_multiple_wallets(
+    array[p_white,p_black],p_fee,'match_entry',p_match_id
+  );
+  if not coalesce(v_charge.ok,false) then
+    return jsonb_build_object('ok',false,'insufficientUsers',coalesce(v_charge."insufficientUsers",array[]::text[]));
+  end if;
+  insert into public.kentro_match_charges(match_id,white_username,black_username,fee)
+    values(p_match_id,p_white,p_black,p_fee);
+  return jsonb_build_object('ok', true, 'alreadyCharged', false);
+end $$;
+
+-- Require the corresponding debits before an idempotent payout. Legacy
+-- in-flight matches charged before this migration retain the old ledger
+-- verification in kentro_settle_match_pot, but new matches use the receipt.
+create or replace function public.kentro_settle_match_pot(
+  p_match_id text, p_white text, p_black text, p_fee numeric, p_winner text, p_draw boolean, p_rake numeric
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_result jsonb; v_pot numeric; v_rake numeric; v_user text; v_paid numeric;
+        v_receipt public.kentro_match_charges%rowtype;
+begin
+  if p_match_id is null or length(trim(p_match_id)) not between 1 and 160
+    or p_fee is null or p_fee<=0 or p_fee<>trunc(p_fee)
+    or p_fee>4503599627370495 or p_rake is null or p_rake<0 or p_rake>1
+    or p_white is null or p_black is null or p_white=p_black
+    or p_draw is null or (not p_draw and (p_winner is null or p_winner not in (p_white,p_black)))
+  then raise exception 'Invalid match settlement'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-settlement:'||p_match_id,0));
+  select result into v_result from public.kentro_match_settlements where match_id=p_match_id;
+  if found then return v_result; end if;
+  select * into v_receipt from public.kentro_match_charges where match_id=p_match_id;
+  if found then
+    if v_receipt.white_username<>p_white or v_receipt.black_username<>p_black or v_receipt.fee<>p_fee then
+      raise exception 'Settlement does not match the paid match receipt';
+    end if;
+  end if;
+  -- A missing receipt is not permission to pay a historical result again.
+  if exists(select 1 from public.coin_transactions
+    where "refId" in (p_match_id,'rake:'||p_match_id)
+      and direction='credit' and type in ('match_prize','refund','rake')) then
+    raise exception 'Existing match payout or refund requires reconciliation';
+  end if;
+  if (select count(*) from public.coin_transactions
+      where "refId"=p_match_id and type='match_entry' and direction='debit') <> 2 then
+    raise exception 'Match requires exactly one entry debit per player';
+  end if;
+  foreach v_user in array array[p_white,p_black] loop
+    select coalesce(sum(amount),0) into v_paid from public.coin_transactions
+      where username=v_user and "refId"=p_match_id and type='match_entry' and direction='debit';
+    if v_paid<>p_fee then raise exception 'Match pot has no matching escrow'; end if;
+  end loop;
+  perform 1 from public.coin_wallets where username in (p_white,p_black,'kentro_house') order by username for update;
+  if p_draw then
+    perform public.credit_wallet(p_white,p_fee,'refund',p_match_id);
+    perform public.credit_wallet(p_black,p_fee,'refund',p_match_id);
+    v_result:=jsonb_build_object('ok',true,'payout',p_fee*2,'rake',0);
+  else
+    v_pot:=p_fee*2; v_rake:=floor(v_pot*p_rake);
+    if v_pot-v_rake>0 then perform public.credit_wallet(p_winner,v_pot-v_rake,'match_prize',p_match_id); end if;
+    if v_rake>0 then perform public.credit_wallet('kentro_house',v_rake,'rake','rake:'||p_match_id); end if;
+    v_result:=jsonb_build_object('ok',true,'payout',v_pot-v_rake,'rake',v_rake);
+  end if;
+  insert into public.kentro_match_settlements(match_id,result) values(p_match_id,v_result);
+  return v_result;
+end $$;
+
+-- If the charge response is lost or a player disconnects before the game
+-- starts, check the durable charge receipt and refund only if it exists.
+-- Concurrency with the initial charge and other settlement attempts is
+-- serialized by the per-match advisory lock. A repeated call is idempotent.
+create or replace function public.kentro_refund_unstarted_match(
+  p_match_id text, p_white text, p_black text, p_fee numeric
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_receipt public.kentro_match_charges%rowtype; v_result jsonb;
+begin
+  if p_match_id is null or length(trim(p_match_id)) not between 1 and 160
+    or p_white is null or p_black is null or p_white=p_black
+    or p_fee is null or p_fee<=0 or p_fee<>trunc(p_fee) or p_fee>4503599627370495
+  then raise exception 'Invalid unstarted-match refund'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-settlement:' || p_match_id,0));
+  if exists(select 1 from public.kentro_match_settlements where match_id=p_match_id) then
+    return jsonb_build_object('ok',true,'alreadySettled',true);
+  end if;
+  select * into v_receipt from public.kentro_match_charges where match_id=p_match_id;
+  if not found then
+    if exists(select 1 from public.coin_transactions where "refId" in (p_match_id,'rake:'||p_match_id)
+      and type in ('match_entry','match_prize','refund','rake')) then
+      raise exception 'Legacy match reference requires reconciliation before refund';
+    end if;
+    v_result:=jsonb_build_object('ok',true,'notCharged',true,'cancelled',true);
+    insert into public.kentro_match_settlements(match_id,result) values(p_match_id,v_result);
+    return v_result;
+  end if;
+  if v_receipt.white_username<>p_white or v_receipt.black_username<>p_black or v_receipt.fee<>p_fee then
+    raise exception 'Unstarted-match refund does not match paid receipt';
+  end if;
+  if exists(select 1 from public.kentro_match_settlements where match_id=p_match_id) then
+    return jsonb_build_object('ok',true,'alreadySettled',true);
+  end if;
+  v_result:=public.kentro_settle_match_pot(p_match_id,p_white,p_black,p_fee,null,true,0);
+  return v_result || jsonb_build_object('refunded',true);
+end $$;
+
+-- Only privileged Node processes may run the health contract. The check
+-- verifies BOTH money RPCs and money tables before opening any paid route.
+create or replace function public.kentro_coin_readiness() returns jsonb
+language plpgsql security invoker set search_path = '' as $$
+declare v_ok boolean; v_signature text; v_function regprocedure; v_issues jsonb:='[]'::jsonb;
+begin
+  select (
+    -- A finance-ready schema must also prevent browsers from changing their
+    -- own paid Ken entitlements or forging authoritative game results.
+    -- This ensures merely installing wallet RPCs never bypasses the earlier
+    -- authorization migration.
+    pg_catalog.to_regclass('public.kentro_security_policy_backup') is not null and
+    exists(select 1 from pg_catalog.pg_trigger t
+           join pg_catalog.pg_class c on c.oid=t.tgrelid
+           join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+           where n.nspname='public' and c.relname='profiles'
+             and t.tgname='kentro_profile_guard' and t.tgenabled <> 'D'
+             and not t.tgisinternal) and
+    pg_catalog.to_regclass('public.coin_wallets') is not null and
+    pg_catalog.to_regclass('public.coin_transactions') is not null and
+    pg_catalog.to_regclass('public.kentro_match_charges') is not null and
+    pg_catalog.to_regclass('public.kentro_match_settlements') is not null and
+    -- Legacy broad policies permit users to manipulate tournament money
+    -- and fabricate official game outcomes. Paid features must remain OFF
+    -- until these are replaced with restricted authorization rules.
+    not exists(select 1 from pg_catalog.pg_policies
+      where schemaname='public' and tablename='tournaments'
+        and policyname in ('tournaments_write_authenticated',
+          'tournaments_update_authenticated', 'tournaments_delete_authenticated')) and
+    not exists(select 1 from pg_catalog.pg_policies
+      where schemaname='public' and tablename='completed_games'
+        and policyname='completed_games_write_authenticated') and
+    pg_catalog.to_regclass('public.purchase_requests') is not null and
+    pg_catalog.to_regclass('public.withdrawal_requests') is not null and
+    pg_catalog.to_regprocedure('public.kentro_charge_match_pot(text,text,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_refund_unstarted_match(text,text,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_unlock_ai(uuid,text,integer,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_resolve_withdrawal(uuid,boolean,text)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_resolve_purchase(uuid,boolean,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.tournament_entry(text,text,numeric,jsonb,text)') is not null and
+    pg_catalog.to_regprocedure('public.refund_tournament_entries(text)') is not null and
+    pg_catalog.to_regprocedure('public.pay_tournament_prize(text,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.debit_wallet(text,numeric,text,text)') is not null and
+    pg_catalog.to_regprocedure('public.credit_wallet(text,numeric,text,text)') is not null and
+    pg_catalog.to_regprocedure('public.debit_multiple_wallets(text[],numeric,text,text)') is not null and
+    -- Existence alone is not sufficient: the backend role must be able to
+    -- execute these functions or coin requests will fail after activation.
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_charge_match_pot(text,text,text,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_refund_unstarted_match(text,text,text,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_unlock_ai(uuid,text,integer,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_resolve_withdrawal(uuid,boolean,text)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_resolve_purchase(uuid,boolean,text,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.tournament_entry(text,text,numeric,jsonb,text)', 'EXECUTE') and
+    -- Privileged transaction entry points must never be exposed to browsers.
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_unlock_ai(uuid,text,integer,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_unlock_ai(uuid,text,integer,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_charge_match_pot(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_charge_match_pot(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_refund_unstarted_match(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_refund_unstarted_match(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_resolve_purchase(uuid,boolean,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_resolve_purchase(uuid,boolean,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_resolve_withdrawal(uuid,boolean,text)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_resolve_withdrawal(uuid,boolean,text)', 'EXECUTE') and
+    (select count(*) = 6 and bool_and(c.relrowsecurity)
+     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public' and c.relname in
+       ('coin_wallets','coin_transactions','kentro_match_charges',
+        'kentro_match_settlements','purchase_requests','withdrawal_requests')
+       and c.relkind = 'r')
+  ) into v_ok;
+  -- Check the complete privileged finance surface, including legacy helpers
+  -- and the tournament runtime used by this source release. Never rely only
+  -- on function names or on CREATE FUNCTION's default PUBLIC privilege.
+  foreach v_signature in array array[
+    'public.debit_wallet(text,numeric,text,text)',
+    'public.credit_wallet(text,numeric,text,text)',
+    'public.debit_multiple_wallets(text[],numeric,text,text)',
+    'public.tournament_entry(text,text,numeric,jsonb,text)',
+    'public.refund_tournament_entries(text)',
+    'public.pay_tournament_prize(text,text,numeric)',
+    'public.kentro_commit_tournament(text,bigint,jsonb)',
+    'public.kentro_pay_completed_tournament(text,numeric)',
+    'public.kentro_claim_ken_victory(uuid,uuid,integer)',
+    'public.kentro_coin_readiness()'
+  ] loop
+    v_function:=pg_catalog.to_regprocedure(v_signature);
+    if v_function is null then
+      v_ok:=false; v_issues:=v_issues||jsonb_build_array('MISSING_RPC '||v_signature);
+    elsif not pg_catalog.has_function_privilege('service_role',v_function,'EXECUTE')
+      or pg_catalog.has_function_privilege('anon',v_function,'EXECUTE')
+      or pg_catalog.has_function_privilege('authenticated',v_function,'EXECUTE') then
+      v_ok:=false; v_issues:=v_issues||jsonb_build_array('UNSAFE_RPC_PRIVILEGES '||v_signature);
+    end if;
+  end loop;
+  if (select count(*) from information_schema.columns where table_schema='public'
+      and table_name='tournaments' and column_name in ('engineState','engineVersion'))<>2 then
+    v_ok:=false; v_issues:=v_issues||jsonb_build_array('MISSING_TOURNAMENT_RUNTIME_COLUMNS');
+  end if;
+  return jsonb_build_object('ready',coalesce(v_ok,false),'issues',v_issues);
+end $$;
+revoke all on function public.kentro_charge_match_pot(text,text,text,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_refund_unstarted_match(text,text,text,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_coin_readiness() from public,anon,authenticated;
+grant execute on function public.kentro_charge_match_pot(text,text,text,numeric) to service_role;
+grant execute on function public.kentro_refund_unstarted_match(text,text,text,numeric) to service_role;
+grant execute on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) to service_role;
+grant execute on function public.kentro_coin_readiness() to service_role;
+
+
+-- manual_live_finance_20261017.sql
+-- KENTRO DRAUGHTS / LIVE FINANCE INSTALLER
+-- 2026-10-17; designed for the existing draught.com schema only.
+-- Do NOT run schema.sql or reset_all_data.sql against a live project.
+-- Zero DELETE/TRUNCATE statements; preserves 34+ wallet rows and ledger.
+-- Take an independent database backup in the Supabase dashboard first.
+-- Existing payout anomalies remain untouched for manual reconciliation.
+
+SET LOCAL lock_timeout = '8s';
+SET LOCAL statement_timeout = '90s';
+DO $$ BEGIN
+ IF to_regclass('public.profiles') IS NULL OR
+    to_regclass('public.coin_wallets') IS NULL OR
+    to_regclass('public.coin_transactions') IS NULL OR
+    to_regclass('public.purchase_requests') IS NULL OR
+    to_regclass('public.withdrawal_requests') IS NULL OR
+    to_regclass('public.tournaments') IS NULL
+ THEN RAISE EXCEPTION 'Not a supported installed Kentro database'; END IF;
+ IF to_regprocedure('public.debit_wallet(text,numeric,text,text)') IS NULL OR
+    to_regprocedure('public.credit_wallet(text,numeric,text,text)') IS NULL OR
+    to_regprocedure('public.debit_multiple_wallets(text[],numeric,text,text)') IS NULL
+ THEN RAISE EXCEPTION 'Core wallet RPCs missing; inspect existing schema first'; END IF;
+END $$;
+
+-- Live-compatible, narrowly scoped security prerequisite.
+-- Neither this stage nor the next stage edits any existing wallet balances.
+create table if not exists public.kentro_security_policy_backup (
+  migration text not null, table_name text not null, policy_name text not null,
+  ddl text not null, primary key(migration,table_name,policy_name)
+);
+alter table public.kentro_security_policy_backup enable row level security;
+revoke all on public.kentro_security_policy_backup from public,anon,authenticated;
+insert into public.kentro_security_policy_backup(migration,table_name,policy_name,ddl)
+select 'kentro_live_finance_20261017',tablename,policyname,
+ format('CREATE POLICY %I ON public.%I AS %s FOR %s TO %s%s%s;',policyname,tablename,permissive,cmd,
+ array_to_string(roles,', '),
+ case when qual is null then '' else ' USING ('||qual||')' end,
+ case when with_check is null then '' else ' WITH CHECK ('||with_check||')' end)
+from pg_policies where schemaname='public' and tablename in
+('profiles','completed_games','tournaments','coin_wallets','coin_transactions','purchase_requests','withdrawal_requests')
+on conflict do nothing;
+
+create or replace function public.kentro_profile_guard()
+returns trigger language plpgsql security invoker set search_path='' as $$
+begin
+  if new."usernameLower"='kentro_house' and (tg_op='INSERT' or new."ownerId" is distinct from old."ownerId")
+  then raise exception 'Reserved system identity' using errcode='42501'; end if;
+  if current_user in ('anon','authenticated') then
+    if tg_op='INSERT' then
+      perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-profile:'||auth.uid()::text,0));
+      if exists(select 1 from public.profiles p where p."ownerId"=auth.uid())
+        or new."ownerId" is distinct from auth.uid()
+        or new."usernameLower"<>lower(trim(new."username"))
+        or new.banned or new."bannedAt" is not null or new."bannedBy" is not null
+        or new."suspendedUntil" is not null or new."suspendedBy" is not null
+        or new."maxUnlockedKenLevel">3
+        or new.elo<>1500 or new.wins<>0 or new.losses<>0
+        or new.draws<>0 or new."gamesCount"<>0
+        or new."totalPlayTime"<>0 or new."averageDuration"<>0
+        or new.rd is not null or new.vol is not null
+      then raise exception 'Invalid profile creation' using errcode='42501'; end if;
+      new."createdAt":=(extract(epoch from now())*1000)::bigint;
+    elsif (to_jsonb(new)-array['avatarUrl','bio','statusQuote']) is distinct from
+          (to_jsonb(old)-array['avatarUrl','bio','statusQuote'])
+    then raise exception 'Protected profile fields are server-managed' using errcode='42501';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists kentro_profile_guard on public.profiles;
+create trigger kentro_profile_guard before insert or update on public.profiles
+ for each row execute function public.kentro_profile_guard();
+revoke all on function public.kentro_profile_guard() from public,anon,authenticated;
+
+-- A duplicate historical owner aborts this transaction for operator review;
+-- it is never automatically merged or assigned to a different wallet.
+create unique index if not exists kentro_profiles_owner_unique
+ on public.profiles("ownerId") where "ownerId" is not null;
+
+-- Remove precisely identified legacy broad permissions for money-sensitive
+-- tournament writes and official match results; do not touch other policies.
+drop policy if exists tournaments_write_authenticated on public.tournaments;
+drop policy if exists tournaments_update_authenticated on public.tournaments;
+drop policy if exists tournaments_delete_authenticated on public.tournaments;
+drop policy if exists completed_games_write_authenticated on public.completed_games;
+
+drop policy if exists tournaments_admin_insert on public.tournaments;
+create policy tournaments_admin_insert on public.tournaments
+ for insert to authenticated with check (public.is_tournament_admin((select auth.uid())));
+drop policy if exists tournaments_admin_update on public.tournaments;
+create policy tournaments_admin_update on public.tournaments
+ for update to authenticated using (public.is_tournament_admin((select auth.uid())))
+ with check (public.is_tournament_admin((select auth.uid())));
+drop policy if exists tournaments_admin_delete on public.tournaments;
+create policy tournaments_admin_delete on public.tournaments
+ for delete to authenticated using (public.is_tournament_admin((select auth.uid())));
+
+-- An ordinary user may save public practice matches, but never official rated
+-- PvP or tournament results. Such records are written by the server role.
+drop policy if exists completed_games_insert_own_practice on public.completed_games;
+create policy completed_games_insert_own_practice on public.completed_games
+ for insert to authenticated with check (
+  "playMode" in ('Human_vs_AI','AI_vs_Human','Training','Analysis','Local','Position_Editor')
+  and exists(select 1 from public.profiles p where p."ownerId"=(select auth.uid())
+    and (p."usernameLower"=lower("whitePlayer") or p."usernameLower"=lower("blackPlayer")))
+ );
+
+-- Prevent fraudulent pending purchase requests from starting as approved.
+drop policy if exists purchase_requests_insert_own on public.purchase_requests;
+drop policy if exists purchase_requests_insert_own_pending on public.purchase_requests;
+create policy purchase_requests_insert_own_pending on public.purchase_requests
+ for insert to authenticated with check (
+  "ownerId"=(select auth.uid()) and status='pending'
+  and "resolvedAt" is null and "resolvedBy" is null and "coinsCredited" is null
+  and exists(select 1 from public.profiles p
+    where p."ownerId"=(select auth.uid()) and p."usernameLower"=lower(username))
+ );
+
+-- Canonical tournament entry and private invitation checks.
+create table if not exists public.kentro_tournament_invites (
+  tournament_id text not null references public.tournaments(id) on delete cascade,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  redeemed_at timestamptz not null default now(),
+  primary key(tournament_id,owner_id)
+);
+alter table public.kentro_tournament_invites enable row level security;
+revoke all on public.kentro_tournament_invites from public,anon,authenticated;
+
+create or replace function public.kentro_can_view_tournament(p_id text,p_visibility text,p_players jsonb)
+returns boolean language sql stable security definer set search_path='' as $$
+  select lower(coalesce(p_visibility,'public'))<>'private' or
+    exists(select 1 from public.profiles p where p."ownerId"=auth.uid()
+      and not p.banned and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint)
+      and p."usernameLower"<>'kentro_house'
+      and (public.is_tournament_admin(auth.uid())
+        or exists(select 1 from jsonb_array_elements(coalesce(p_players,'[]')) player
+          where lower(player->>'username')=p."usernameLower")
+        or exists(select 1 from public.kentro_tournament_invites i where i.tournament_id=p_id and i.owner_id=auth.uid())));
+$$;
+revoke all on function public.kentro_can_view_tournament(text,text,jsonb) from public;
+grant execute on function public.kentro_can_view_tournament(text,text,jsonb) to anon,authenticated;
+drop policy if exists tournaments_select_all on public.tournaments;
+drop policy if exists tournaments_select_visible on public.tournaments;
+create policy tournaments_select_visible on public.tournaments for select
+  using (public.kentro_can_view_tournament(id,visibility,players));
+
+create or replace function public.kentro_redeem_tournament_invite(p_owner uuid,p_code text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_tour public.tournaments%rowtype;
+begin
+  if p_owner is null or p_code is null or length(p_code) not between 4 and 64
+    or not exists(select 1 from public.profiles p where p."ownerId"=p_owner
+      and p."usernameLower"<>'kentro_house' and not p.banned
+      and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint))
+  then return jsonb_build_object('ok',false,'error','not_found'); end if;
+  -- Duplicate historical codes fail closed rather than disclosing an arbitrary row.
+  if (select count(*) from public.tournaments where lower(visibility)='private' and upper("inviteCode")=upper(trim(p_code)))<>1
+  then return jsonb_build_object('ok',false,'error','not_found'); end if;
+  select * into v_tour from public.tournaments where lower(visibility)='private' and upper("inviteCode")=upper(trim(p_code)) for update;
+  if v_tour.status not in ('registration','upcoming','active','open') or v_tour.status is null
+  then return jsonb_build_object('ok',false,'error','not_open'); end if;
+  insert into public.kentro_tournament_invites(tournament_id,owner_id) values(v_tour.id,p_owner) on conflict do nothing;
+  return jsonb_build_object('ok',true,'tournament',to_jsonb(v_tour));
+end $$;
+revoke all on function public.kentro_redeem_tournament_invite(uuid,text) from public,anon,authenticated;
+grant execute on function public.kentro_redeem_tournament_invite(uuid,text) to service_role;
+
+create or replace function public.tournament_entry(
+  p_tournament_id text,p_username text,p_entry_fee numeric,p_player jsonb,p_log_line text
+) returns table("ok" boolean,"errorReason" text,"balance" numeric,"players" jsonb)
+language plpgsql security definer set search_path='' as $$
+declare v_tour public.tournaments%rowtype; v_profile public.profiles%rowtype; v_balance numeric;
+begin
+  if p_entry_fee is null or p_entry_fee<0 or p_entry_fee>9007199254740991 or p_entry_fee<>trunc(p_entry_fee)
+    or p_username is null or jsonb_typeof(p_player) is distinct from 'object'
+  then raise exception 'Invalid tournament entry'; end if;
+  select * into v_profile from public.profiles where "usernameLower"=lower(trim(p_username));
+  if not found or v_profile.banned or v_profile."usernameLower"='kentro_house'
+    or v_profile."suspendedUntil">(extract(epoch from now())*1000)::bigint
+  then return query select false,'not_allowed',null::numeric,null::jsonb; return; end if;
+  select * into v_tour from public.tournaments where id=p_tournament_id for update;
+  if not found then return query select false,'not_found',null::numeric,null::jsonb; return; end if;
+  if lower(v_tour.visibility)='private' and not exists(select 1 from public.kentro_tournament_invites
+      where tournament_id=p_tournament_id and owner_id=v_profile."ownerId")
+    and not public.is_tournament_admin(v_profile."ownerId")
+  then return query select false,'not_allowed',null::numeric,null::jsonb; return; end if;
+  if v_tour.status is distinct from 'registration' then return query select false,'not_open',null::numeric,null::jsonb; return; end if;
+  if exists(select 1 from jsonb_array_elements(v_tour.players) player where lower(player->>'username')=v_profile."usernameLower")
+  then return query select false,'already_registered',null::numeric,v_tour.players; return; end if;
+  if v_tour."maxPlayers" is not null and jsonb_array_length(v_tour.players)>=v_tour."maxPlayers"
+  then return query select false,'full',null::numeric,null::jsonb; return; end if;
+  if p_entry_fee>0 then
+    select d.ok,d.balance into ok,v_balance from public.debit_wallet(v_profile."usernameLower",p_entry_fee,'tournament_entry',p_tournament_id) d;
+    if not ok then return query select false,'insufficient_funds',v_balance,null::jsonb; return; end if;
+  else select coalesce(w.balance,0) into v_balance from public.coin_wallets w where w.username=v_profile."usernameLower"; end if;
+  update public.tournaments set players=v_tour.players||jsonb_build_array(p_player||jsonb_build_object('username',v_profile.username)),
+    logs=v_tour.logs||jsonb_build_array(left(coalesce(p_log_line,v_profile.username||' joined the tournament.'),500)),
+    "prizePool"=v_tour."prizePool"+p_entry_fee where id=p_tournament_id returning tournaments.players into players;
+  return query select true,null::text,coalesce(v_balance,0),players;
+end $$;
+revoke all on function public.tournament_entry(text,text,numeric,jsonb,text) from public,anon,authenticated;
+grant execute on function public.tournament_entry(text,text,numeric,jsonb,text) to service_role;
+
+
+-- Minimal tournament runtime required by the matching finance endpoints.
+alter table public.tournaments add column if not exists "engineVersion" bigint not null default 0;
+alter table public.tournaments add column if not exists "engineState" jsonb not null default '{}'::jsonb;
+create or replace function public.kentro_tournament_version() returns trigger language plpgsql set search_path='' as $$ begin new."engineVersion":=old."engineVersion"+1; return new; end $$;
+drop trigger if exists kentro_tournament_version on public.tournaments;
+create trigger kentro_tournament_version before update on public.tournaments for each row execute function public.kentro_tournament_version();
+create or replace function public.kentro_commit_tournament(p_id text,p_version bigint,p_next jsonb)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v public.tournaments%rowtype;
+begin
+  if jsonb_typeof(p_next)<>'object' or p_next->>'status' not in ('registration','active','completed')
+    or jsonb_typeof(p_next->'players')<>'array' or jsonb_typeof(p_next->'matches')<>'array'
+    or jsonb_array_length(p_next->'players')>64 or jsonb_array_length(p_next->'matches')>20000
+  then raise exception 'Invalid runtime state'; end if;
+  update public.tournaments set status=p_next->>'status',players=p_next->'players',matches=p_next->'matches',
+    "currentRound"=(p_next->>'currentRound')::integer,"maxRounds"=(p_next->>'maxRounds')::integer,
+    logs=p_next->'logs',"engineState"=p_next->'engineState'
+  where id=p_id and "engineVersion"=p_version returning * into v;
+  if not found then return null; end if;
+  return to_jsonb(v);
+end $$;
+revoke all on function public.kentro_commit_tournament(text,bigint,jsonb) from public,anon,authenticated;
+grant execute on function public.kentro_commit_tournament(text,bigint,jsonb) to service_role;
+
+-- Canonical single or team champions share the net prize atomically. The
+-- administrator confirms payment; no browser can select another beneficiary.
+create or replace function public.kentro_pay_completed_tournament(p_id text,p_rake numeric)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v public.tournaments%rowtype; v_champions text[]; v_pool numeric; v_payout bigint; v_house bigint; v_share bigint; v_amount bigint; v_extra integer; v_name text; v_paid jsonb:='{}';
+begin
+ select * into v from public.tournaments where id=p_id for update;
+ if not found then return jsonb_build_object('ok',false,'errorReason','not_found'); end if;
+ if v."prizePaid" then return jsonb_build_object('ok',false,'errorReason','already_paid'); end if;
+ if v.status<>'completed' or jsonb_typeof(v."engineState"->'champions') is distinct from 'array' or jsonb_array_length(v."engineState"->'champions') not between 1 and 64 then return jsonb_build_object('ok',false,'errorReason','not_completed'); end if;
+ if p_rake is null or p_rake<0 or p_rake>1 then raise exception 'Invalid rake'; end if;
+ select array_agg(distinct lower(value) order by lower(value)) into v_champions from jsonb_array_elements_text(v."engineState"->'champions');
+ v_pool:=v."prizePool";
+ if v_pool is null or v_pool<0 or v_pool<>trunc(v_pool) or v_pool>9007199254740991 then raise exception 'Invalid pool'; end if;
+ if v_pool>coalesce((select sum(amount) from public.coin_transactions where type='tournament_entry' and direction='debit' and "refId"=p_id),0) then raise exception 'Pool exceeds verified entry funding'; end if;
+ v_payout:=floor(v_pool*(1-p_rake));v_house:=v_pool-v_payout;
+ v_share:=v_payout/array_length(v_champions,1);v_extra:=v_payout-v_share*array_length(v_champions,1);
+ foreach v_name in array v_champions loop
+  if not exists(select 1 from public.profiles p where p."usernameLower"=v_name and not p.banned and (p."suspendedUntil" is null or p."suspendedUntil"<=(extract(epoch from now())*1000)::bigint))
+   or not exists(select 1 from jsonb_array_elements(v.players) player where lower(player->>'username')=v_name)
+   or (v_pool>0 and not exists(select 1 from public.coin_transactions c where c.username=v_name and c.type='tournament_entry' and c."refId"=p_id and c.amount>0 and c.direction='debit')) then raise exception 'Champion eligibility requires reconciliation'; end if;
+  v_amount:=v_share; if v_extra>0 then v_amount:=v_amount+1; end if;
+  if v_amount>0 then perform public.credit_wallet(v_name,v_amount,'tournament_prize',p_id); end if;
+  v_paid:=v_paid||jsonb_build_object(v_name,v_amount);v_extra:=greatest(0,v_extra-1);
+ end loop;
+ if v_house>0 then perform public.credit_wallet('kentro_house',v_house,'rake',p_id); end if;
+ update public.tournaments set "prizePaid"=true where id=p_id;
+ return jsonb_build_object('ok',true,'payout',v_payout,'rake',v_house,'beneficiaries',v_paid);
+end $$;
+revoke all on function public.kentro_pay_completed_tournament(text,numeric) from public,anon,authenticated;
+grant execute on function public.kentro_pay_completed_tournament(text,numeric) to service_role;
+
+-- VERIFIED WALLET OPERATIONS
+-- Apply AFTER 20261014_security_authorization.sql. No historical ledger rewrite.
+
+create table if not exists public.kentro_match_settlements (
+  match_id text primary key, result jsonb not null, settled_at timestamptz not null default now()
+);
+alter table public.kentro_match_settlements enable row level security;
+revoke all on public.kentro_match_settlements from public,anon,authenticated;
+
+create or replace function public.kentro_settle_match_pot(
+  p_match_id text, p_white text, p_black text, p_fee numeric, p_winner text, p_draw boolean, p_rake numeric
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_result jsonb; v_pot numeric; v_rake numeric; v_user text; v_paid numeric;
+begin
+  if p_match_id is null or length(p_match_id)>160 or p_fee is null or p_fee<=0 or p_fee<>trunc(p_fee)
+    or p_fee>4503599627370495 or p_rake is null or p_rake<0 or p_rake>1
+    or p_white is null or p_black is null or p_white=p_black
+    or (not p_draw and p_winner not in (p_white,p_black)) or p_draw is null
+  then raise exception 'Invalid match settlement'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('kentro-settlement:'||p_match_id,0));
+  select result into v_result from public.kentro_match_settlements where match_id=p_match_id;
+  if found then return v_result; end if;
+  -- The server may only distribute money actually escrowed for this match.
+  -- A missing receipt is not permission to pay a historical result again.
+  if exists(select 1 from public.coin_transactions
+    where "refId" in (p_match_id,'rake:'||p_match_id)
+      and direction='credit' and type in ('match_prize','refund','rake')) then
+    raise exception 'Existing match payout or refund requires reconciliation';
+  end if;
+  if (select count(*) from public.coin_transactions
+      where "refId"=p_match_id and type='match_entry' and direction='debit') <> 2 then
+    raise exception 'Match requires exactly one entry debit per player';
+  end if;
+  foreach v_user in array array[p_white,p_black] loop
+    select coalesce(sum(amount),0) into v_paid from public.coin_transactions
+      where username=v_user and "refId"=p_match_id and type='match_entry' and direction='debit';
+    if v_paid<>p_fee then raise exception 'Match pot has no matching escrow'; end if;
+  end loop;
+  -- Lock all participating wallet rows in a consistent order across payouts.
+  perform 1 from public.coin_wallets where username in (p_white,p_black,'kentro_house') order by username for update;
+  if p_draw then
+    perform public.credit_wallet(p_white,p_fee,'refund',p_match_id);
+    perform public.credit_wallet(p_black,p_fee,'refund',p_match_id);
+    v_result:=jsonb_build_object('ok',true,'payout',p_fee*2,'rake',0);
+  else
+    v_pot:=p_fee*2; v_rake:=floor(v_pot*p_rake);
+    if v_pot-v_rake>0 then perform public.credit_wallet(p_winner,v_pot-v_rake,'match_prize',p_match_id); end if;
+    if v_rake>0 then perform public.credit_wallet('kentro_house',v_rake,'rake','rake:'||p_match_id); end if;
+    v_result:=jsonb_build_object('ok',true,'payout',v_pot-v_rake,'rake',v_rake);
+  end if;
+  insert into public.kentro_match_settlements(match_id,result) values(p_match_id,v_result);
+  return v_result;
+end $$;
+
+create or replace function public.kentro_unlock_ai(p_owner uuid,p_username text,p_level integer,p_cost numeric)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_profile public.profiles%rowtype; v_debit record;
+begin
+  if p_level is null or p_level<2 or p_level>8 or p_cost is null or p_cost<0 or p_cost<>trunc(p_cost) then raise exception 'Invalid unlock'; end if;
+  select * into v_profile from public.profiles where "usernameLower"=p_username and "ownerId"=p_owner for update;
+  if not found then raise exception 'Profile ownership mismatch'; end if;
+  if v_profile."maxUnlockedKenLevel">=p_level then
+    return jsonb_build_object('ok',true,'alreadyUnlocked',true,'maxUnlockedKenLevel',v_profile."maxUnlockedKenLevel");
+  end if;
+  if p_cost>0 then
+    select * into v_debit from public.debit_wallet(p_username,p_cost,'ai_unlock',p_level::text);
+    if not v_debit.ok then return jsonb_build_object('ok',false,'balance',v_debit.balance); end if;
+  end if;
+  update public.profiles set "maxUnlockedKenLevel"=p_level where "usernameLower"=p_username;
+  return jsonb_build_object('ok',true,'balance',(select balance from public.coin_wallets where username=p_username),'maxUnlockedKenLevel',p_level);
+end $$;
+
+create or replace function public.kentro_create_withdrawal(
+ p_owner uuid,p_username text,p_coins numeric,p_naira numeric,p_account_name text,p_account_number text,p_bank text
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_debit record; v_id uuid:=gen_random_uuid();
+begin
+  if not exists(select 1 from public.profiles where "ownerId"=p_owner and "usernameLower"=p_username)
+    or p_coins is null or p_coins<=0 or p_coins<>trunc(p_coins) or p_naira is null or p_naira<0 or p_naira<>trunc(p_naira)
+    or length(trim(p_account_name)) not between 1 and 120 or p_account_number !~ '^[0-9]{10}$'
+  then raise exception 'Invalid withdrawal'; end if;
+  select * into v_debit from public.debit_wallet(p_username,p_coins,'withdrawal',v_id::text);
+  if not v_debit.ok then return jsonb_build_object('ok',false,'balance',v_debit.balance); end if;
+  insert into public.withdrawal_requests(id,username,"ownerId",coins,"nairaAmount","accountName","accountNumber","bankName",status,"submittedAt")
+    values(v_id,p_username,p_owner,p_coins,p_naira,trim(p_account_name),p_account_number,p_bank,'pending',(extract(epoch from now())*1000)::bigint);
+  return jsonb_build_object('ok',true,'requestId',v_id,'balance',v_debit.balance,'nairaAmount',p_naira);
+end $$;
+
+create or replace function public.kentro_resolve_withdrawal(p_id uuid,p_approve boolean,p_admin text)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_request public.withdrawal_requests%rowtype; v_balance numeric;
+begin
+ select * into v_request from public.withdrawal_requests where id=p_id for update;
+ if not found then return jsonb_build_object('ok',false,'error','not_found'); end if;
+ if v_request.status<>'pending' then return jsonb_build_object('ok',false,'error','already_resolved'); end if;
+ if p_approve is null then raise exception 'Explicit approval required'; end if;
+ if not p_approve then v_balance:=public.credit_wallet(v_request.username,v_request.coins,'refund',p_id::text); end if;
+ update public.withdrawal_requests set status=case when p_approve then 'paid' else 'rejected' end,
+   "resolvedBy"=p_admin,"resolvedAt"=(extract(epoch from now())*1000)::bigint where id=p_id;
+ return jsonb_build_object('ok',true,'username',v_request.username,'coins',v_request.coins,'balance',v_balance);
+end $$;
+
+create or replace function public.kentro_resolve_purchase(p_id uuid,p_approve boolean,p_admin text,p_coins numeric)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_request public.purchase_requests%rowtype; v_username text; v_balance numeric;
+begin
+ select * into v_request from public.purchase_requests where id=p_id for update;
+ if not found then return jsonb_build_object('ok',false,'error','not_found'); end if;
+ if v_request.status<>'pending' then return jsonb_build_object('ok',false,'error','already_resolved'); end if;
+ if p_approve is null then raise exception 'Explicit approval required'; end if;
+ select "usernameLower" into v_username from public.profiles where "ownerId"=v_request."ownerId";
+ if v_username is null then raise exception 'Purchase owner has no canonical profile'; end if;
+ if p_approve then v_balance:=public.credit_wallet(v_username,p_coins,'purchase_credit',p_id::text); end if;
+ update public.purchase_requests set status=case when p_approve then 'approved' else 'rejected' end,
+   "resolvedBy"=p_admin,"resolvedAt"=(extract(epoch from now())*1000)::bigint,
+   "coinsCredited"=case when p_approve then p_coins else null end where id=p_id;
+ return jsonb_build_object('ok',true,'username',v_username,'coins',p_coins,'balance',v_balance);
+end $$;
+
+-- Tournament chat is intentionally excluded from this financial installer.
+
+
+revoke all on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_unlock_ai(uuid,text,integer,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text) from public,anon,authenticated;
+revoke all on function public.kentro_resolve_withdrawal(uuid,boolean,text) from public,anon,authenticated;
+revoke all on function public.kentro_resolve_purchase(uuid,boolean,text,numeric) from public,anon,authenticated;
+grant execute on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) to service_role;
+grant execute on function public.kentro_unlock_ai(uuid,text,integer,numeric) to service_role;
+grant execute on function public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text) to service_role;
+grant execute on function public.kentro_resolve_withdrawal(uuid,boolean,text) to service_role;
+grant execute on function public.kentro_resolve_purchase(uuid,boolean,text,numeric) to service_role;
+
+-- IDEMPOTENT CHARGING / SETTLEMENT / READINESS
+-- Financial safety upgrade for the staged Kentro wallet RPCs.
+-- Rehearse on an isolated database before production. Does not touch balances.
+-- Prerequisites: 20261014_wallet_transactions.sql and schema.sql.
+
+-- One immutable debit receipt per paid room, preventing double entry-fees
+-- when a client reconnects or the server retries the same game start.
+create table if not exists public.kentro_match_charges (
+  match_id text primary key,
+  white_username text not null,
+  black_username text not null,
+  fee numeric not null check (fee > 0 and fee = trunc(fee) and fee <= 4503599627370495),
+  charged_at timestamptz not null default now(),
+  check (white_username <> black_username)
+);
+alter table public.kentro_match_charges enable row level security;
+revoke all on public.kentro_match_charges from public, anon, authenticated;
+
+create or replace function public.kentro_charge_match_pot(
+  p_match_id text, p_white text, p_black text, p_fee numeric
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_receipt public.kentro_match_charges%rowtype; v_charge record;
+begin
+  if p_match_id is null or length(trim(p_match_id)) not between 1 and 160
+     or p_white is null or length(trim(p_white)) < 1
+     or p_black is null or length(trim(p_black)) < 1
+     or p_white <> lower(trim(p_white)) or p_black <> lower(trim(p_black))
+     or p_white = p_black or p_fee is null or p_fee <= 0
+     or p_fee <> trunc(p_fee) or p_fee > 4503599627370495
+  then raise exception 'Invalid match charge'; end if;
+  -- Serialize charging against refunds/settlements of the SAME match ID.
+  -- A refunded receipt can never be recycled to finance a new match.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-settlement:' || p_match_id, 0));
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-charge:' || p_match_id, 0));
+  -- A cancellation tombstone also closes an ID that was never charged.
+  -- This check MUST precede the receipt lookup: HTTP delivery can reorder
+  -- cancellation and the delayed original charge.
+  if exists(select 1 from public.kentro_match_settlements where match_id=p_match_id) then
+    raise exception 'Match payment already settled; a new game must use a new ID';
+  end if;
+  select * into v_receipt from public.kentro_match_charges where match_id=p_match_id;
+  if found then
+    if v_receipt.white_username <> p_white or v_receipt.black_username <> p_black or v_receipt.fee <> p_fee then
+      raise exception 'Conflicting payment retry for an existing game';
+    end if;
+    return jsonb_build_object('ok', true, 'alreadyCharged', true);
+  end if;
+  -- Never attach a new receipt to an old match's ledger or debit it again.
+  if exists(select 1 from public.coin_transactions where "refId" in (p_match_id,'rake:'||p_match_id)
+    and type in ('match_entry','match_prize','refund','rake')) then
+    raise exception 'Legacy match reference requires reconciliation before reuse';
+  end if;
+  select * into v_charge from public.debit_multiple_wallets(
+    array[p_white,p_black],p_fee,'match_entry',p_match_id
+  );
+  if not coalesce(v_charge.ok,false) then
+    return jsonb_build_object('ok',false,'insufficientUsers',coalesce(v_charge."insufficientUsers",array[]::text[]));
+  end if;
+  insert into public.kentro_match_charges(match_id,white_username,black_username,fee)
+    values(p_match_id,p_white,p_black,p_fee);
+  return jsonb_build_object('ok', true, 'alreadyCharged', false);
+end $$;
+
+-- Require the corresponding debits before an idempotent payout. Legacy
+-- in-flight matches charged before this migration retain the old ledger
+-- verification in kentro_settle_match_pot, but new matches use the receipt.
+create or replace function public.kentro_settle_match_pot(
+  p_match_id text, p_white text, p_black text, p_fee numeric, p_winner text, p_draw boolean, p_rake numeric
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_result jsonb; v_pot numeric; v_rake numeric; v_user text; v_paid numeric;
+        v_receipt public.kentro_match_charges%rowtype;
+begin
+  if p_match_id is null or length(trim(p_match_id)) not between 1 and 160
+    or p_fee is null or p_fee<=0 or p_fee<>trunc(p_fee)
+    or p_fee>4503599627370495 or p_rake is null or p_rake<0 or p_rake>1
+    or p_white is null or p_black is null or p_white=p_black
+    or p_draw is null or (not p_draw and (p_winner is null or p_winner not in (p_white,p_black)))
+  then raise exception 'Invalid match settlement'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-settlement:'||p_match_id,0));
+  select result into v_result from public.kentro_match_settlements where match_id=p_match_id;
+  if found then return v_result; end if;
+  select * into v_receipt from public.kentro_match_charges where match_id=p_match_id;
+  if found then
+    if v_receipt.white_username<>p_white or v_receipt.black_username<>p_black or v_receipt.fee<>p_fee then
+      raise exception 'Settlement does not match the paid match receipt';
+    end if;
+  end if;
+  -- A missing receipt is not permission to pay a historical result again.
+  if exists(select 1 from public.coin_transactions
+    where "refId" in (p_match_id,'rake:'||p_match_id)
+      and direction='credit' and type in ('match_prize','refund','rake')) then
+    raise exception 'Existing match payout or refund requires reconciliation';
+  end if;
+  if (select count(*) from public.coin_transactions
+      where "refId"=p_match_id and type='match_entry' and direction='debit') <> 2 then
+    raise exception 'Match requires exactly one entry debit per player';
+  end if;
+  foreach v_user in array array[p_white,p_black] loop
+    select coalesce(sum(amount),0) into v_paid from public.coin_transactions
+      where username=v_user and "refId"=p_match_id and type='match_entry' and direction='debit';
+    if v_paid<>p_fee then raise exception 'Match pot has no matching escrow'; end if;
+  end loop;
+  perform 1 from public.coin_wallets where username in (p_white,p_black,'kentro_house') order by username for update;
+  if p_draw then
+    perform public.credit_wallet(p_white,p_fee,'refund',p_match_id);
+    perform public.credit_wallet(p_black,p_fee,'refund',p_match_id);
+    v_result:=jsonb_build_object('ok',true,'payout',p_fee*2,'rake',0);
+  else
+    v_pot:=p_fee*2; v_rake:=floor(v_pot*p_rake);
+    if v_pot-v_rake>0 then perform public.credit_wallet(p_winner,v_pot-v_rake,'match_prize',p_match_id); end if;
+    if v_rake>0 then perform public.credit_wallet('kentro_house',v_rake,'rake','rake:'||p_match_id); end if;
+    v_result:=jsonb_build_object('ok',true,'payout',v_pot-v_rake,'rake',v_rake);
+  end if;
+  insert into public.kentro_match_settlements(match_id,result) values(p_match_id,v_result);
+  return v_result;
+end $$;
+
+-- If the charge response is lost or a player disconnects before the game
+-- starts, check the durable charge receipt and refund only if it exists.
+-- Concurrency with the initial charge and other settlement attempts is
+-- serialized by the per-match advisory lock. A repeated call is idempotent.
+create or replace function public.kentro_refund_unstarted_match(
+  p_match_id text, p_white text, p_black text, p_fee numeric
+) returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_receipt public.kentro_match_charges%rowtype; v_result jsonb;
+begin
+  if p_match_id is null or length(trim(p_match_id)) not between 1 and 160
+    or p_white is null or p_black is null or p_white=p_black
+    or p_fee is null or p_fee<=0 or p_fee<>trunc(p_fee) or p_fee>4503599627370495
+  then raise exception 'Invalid unstarted-match refund'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kentro-settlement:' || p_match_id,0));
+  if exists(select 1 from public.kentro_match_settlements where match_id=p_match_id) then
+    return jsonb_build_object('ok',true,'alreadySettled',true);
+  end if;
+  select * into v_receipt from public.kentro_match_charges where match_id=p_match_id;
+  if not found then
+    if exists(select 1 from public.coin_transactions where "refId" in (p_match_id,'rake:'||p_match_id)
+      and type in ('match_entry','match_prize','refund','rake')) then
+      raise exception 'Legacy match reference requires reconciliation before refund';
+    end if;
+    v_result:=jsonb_build_object('ok',true,'notCharged',true,'cancelled',true);
+    insert into public.kentro_match_settlements(match_id,result) values(p_match_id,v_result);
+    return v_result;
+  end if;
+  if v_receipt.white_username<>p_white or v_receipt.black_username<>p_black or v_receipt.fee<>p_fee then
+    raise exception 'Unstarted-match refund does not match paid receipt';
+  end if;
+  if exists(select 1 from public.kentro_match_settlements where match_id=p_match_id) then
+    return jsonb_build_object('ok',true,'alreadySettled',true);
+  end if;
+  v_result:=public.kentro_settle_match_pot(p_match_id,p_white,p_black,p_fee,null,true,0);
+  return v_result || jsonb_build_object('refunded',true);
+end $$;
+
+-- Only privileged Node processes may run the health contract. The check
+-- verifies BOTH money RPCs and money tables before opening any paid route.
+create or replace function public.kentro_coin_readiness() returns jsonb
+language plpgsql security invoker set search_path = '' as $$
+declare v_ok boolean; v_signature text; v_function regprocedure; v_issues jsonb:='[]'::jsonb;
+begin
+  select (
+    -- A finance-ready schema must also prevent browsers from changing their
+    -- own paid Ken entitlements or forging authoritative game results.
+    -- This ensures merely installing wallet RPCs never bypasses the earlier
+    -- authorization migration.
+    pg_catalog.to_regclass('public.kentro_security_policy_backup') is not null and
+    exists(select 1 from pg_catalog.pg_trigger t
+           join pg_catalog.pg_class c on c.oid=t.tgrelid
+           join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+           where n.nspname='public' and c.relname='profiles'
+             and t.tgname='kentro_profile_guard' and t.tgenabled <> 'D'
+             and not t.tgisinternal) and
+    pg_catalog.to_regclass('public.coin_wallets') is not null and
+    pg_catalog.to_regclass('public.coin_transactions') is not null and
+    pg_catalog.to_regclass('public.kentro_match_charges') is not null and
+    pg_catalog.to_regclass('public.kentro_match_settlements') is not null and
+    -- Legacy broad policies permit users to manipulate tournament money
+    -- and fabricate official game outcomes. Paid features must remain OFF
+    -- until these are replaced with restricted authorization rules.
+    not exists(select 1 from pg_catalog.pg_policies
+      where schemaname='public' and tablename='tournaments'
+        and policyname in ('tournaments_write_authenticated',
+          'tournaments_update_authenticated', 'tournaments_delete_authenticated')) and
+    not exists(select 1 from pg_catalog.pg_policies
+      where schemaname='public' and tablename='completed_games'
+        and policyname='completed_games_write_authenticated') and
+    pg_catalog.to_regclass('public.purchase_requests') is not null and
+    pg_catalog.to_regclass('public.withdrawal_requests') is not null and
+    pg_catalog.to_regprocedure('public.kentro_charge_match_pot(text,text,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_refund_unstarted_match(text,text,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_unlock_ai(uuid,text,integer,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_resolve_withdrawal(uuid,boolean,text)') is not null and
+    pg_catalog.to_regprocedure('public.kentro_resolve_purchase(uuid,boolean,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.tournament_entry(text,text,numeric,jsonb,text)') is not null and
+    pg_catalog.to_regprocedure('public.refund_tournament_entries(text)') is not null and
+    pg_catalog.to_regprocedure('public.pay_tournament_prize(text,text,numeric)') is not null and
+    pg_catalog.to_regprocedure('public.debit_wallet(text,numeric,text,text)') is not null and
+    pg_catalog.to_regprocedure('public.credit_wallet(text,numeric,text,text)') is not null and
+    pg_catalog.to_regprocedure('public.debit_multiple_wallets(text[],numeric,text,text)') is not null and
+    -- Existence alone is not sufficient: the backend role must be able to
+    -- execute these functions or coin requests will fail after activation.
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_charge_match_pot(text,text,text,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_refund_unstarted_match(text,text,text,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_unlock_ai(uuid,text,integer,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_resolve_withdrawal(uuid,boolean,text)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.kentro_resolve_purchase(uuid,boolean,text,numeric)', 'EXECUTE') and
+    pg_catalog.has_function_privilege('service_role', 'public.tournament_entry(text,text,numeric,jsonb,text)', 'EXECUTE') and
+    -- Privileged transaction entry points must never be exposed to browsers.
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_unlock_ai(uuid,text,integer,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_unlock_ai(uuid,text,integer,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_charge_match_pot(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_charge_match_pot(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_refund_unstarted_match(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_refund_unstarted_match(text,text,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_create_withdrawal(uuid,text,numeric,numeric,text,text,text)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_resolve_purchase(uuid,boolean,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_resolve_purchase(uuid,boolean,text,numeric)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('anon', 'public.kentro_resolve_withdrawal(uuid,boolean,text)', 'EXECUTE') and
+    not pg_catalog.has_function_privilege('authenticated', 'public.kentro_resolve_withdrawal(uuid,boolean,text)', 'EXECUTE') and
+    (select count(*) = 6 and bool_and(c.relrowsecurity)
+     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public' and c.relname in
+       ('coin_wallets','coin_transactions','kentro_match_charges',
+        'kentro_match_settlements','purchase_requests','withdrawal_requests')
+       and c.relkind = 'r')
+  ) into v_ok;
+  -- Check the complete privileged finance surface, including legacy helpers
+  -- and the tournament runtime used by this source release. Never rely only
+  -- on function names or on CREATE FUNCTION's default PUBLIC privilege.
+  foreach v_signature in array array[
+    'public.debit_wallet(text,numeric,text,text)',
+    'public.credit_wallet(text,numeric,text,text)',
+    'public.debit_multiple_wallets(text[],numeric,text,text)',
+    'public.tournament_entry(text,text,numeric,jsonb,text)',
+    'public.refund_tournament_entries(text)',
+    'public.pay_tournament_prize(text,text,numeric)',
+    'public.kentro_commit_tournament(text,bigint,jsonb)',
+    'public.kentro_pay_completed_tournament(text,numeric)',
+    'public.kentro_claim_ken_victory(uuid,uuid,integer)',
+    'public.kentro_coin_readiness()'
+  ] loop
+    v_function:=pg_catalog.to_regprocedure(v_signature);
+    if v_function is null then
+      v_ok:=false; v_issues:=v_issues||jsonb_build_array('MISSING_RPC '||v_signature);
+    elsif not pg_catalog.has_function_privilege('service_role',v_function,'EXECUTE')
+      or pg_catalog.has_function_privilege('anon',v_function,'EXECUTE')
+      or pg_catalog.has_function_privilege('authenticated',v_function,'EXECUTE') then
+      v_ok:=false; v_issues:=v_issues||jsonb_build_array('UNSAFE_RPC_PRIVILEGES '||v_signature);
+    end if;
+  end loop;
+  if (select count(*) from information_schema.columns where table_schema='public'
+      and table_name='tournaments' and column_name in ('engineState','engineVersion'))<>2 then
+    v_ok:=false; v_issues:=v_issues||jsonb_build_array('MISSING_TOURNAMENT_RUNTIME_COLUMNS');
+  end if;
+  return jsonb_build_object('ready',coalesce(v_ok,false),'issues',v_issues);
+end $$;
+revoke all on function public.kentro_charge_match_pot(text,text,text,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_refund_unstarted_match(text,text,text,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) from public,anon,authenticated;
+revoke all on function public.kentro_coin_readiness() from public,anon,authenticated;
+grant execute on function public.kentro_charge_match_pot(text,text,text,numeric) to service_role;
+grant execute on function public.kentro_refund_unstarted_match(text,text,text,numeric) to service_role;
+grant execute on function public.kentro_settle_match_pot(text,text,text,numeric,text,boolean,numeric) to service_role;
+grant execute on function public.kentro_coin_readiness() to service_role;
+
+-- Check every minimum prerequisite before the transaction commits.
+DO $$ DECLARE r jsonb; BEGIN
+ IF to_regprocedure('public.kentro_coin_readiness()') is null THEN
+   RAISE EXCEPTION 'Coin readiness function missing'; END IF;
+ SELECT public.kentro_coin_readiness() INTO r;
+ IF COALESCE((r->>'ready')::boolean,false) IS NOT TRUE THEN
+   RAISE EXCEPTION 'Coin readiness did not pass, rolling back the entire upgrade: %',r;
+ END IF;
+ IF has_function_privilege('anon','public.kentro_charge_match_pot(text,text,text,numeric)','EXECUTE')
+   OR has_function_privilege('authenticated','public.kentro_charge_match_pot(text,text,text,numeric)','EXECUTE')
+ THEN RAISE EXCEPTION 'Charge RPC exposed to users'; END IF;
+END $$;
+
+
+DO $$ BEGIN IF (public.kentro_coin_readiness()->>'ready')::boolean IS DISTINCT FROM true THEN RAISE EXCEPTION 'Final financial readiness failed'; END IF; END $$;
+COMMIT;
