@@ -1,0 +1,47 @@
+name: Finance native PostgreSQL rehearsal
+on:
+  push:
+    branches: [codex-finance-native-validation-20261018]
+permissions:
+  contents: read
+jobs:
+  finance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['17', '18']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-bookworm
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: finance-validation
+    env:
+      AUDIT_PG_URL: postgresql://postgres@127.0.0.1:55432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: finance-validation/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Native atomicity, permissions, idempotency and parallel financial races
+        run: |
+          set -o pipefail
+          node scripts/audit/finance-rehearsal.mjs | tee native-postgres-${{ matrix.postgres }}.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-finance-postgres-${{ matrix.postgres }}
+          path: finance-validation/native-postgres-*.log
+          retention-days: 14
