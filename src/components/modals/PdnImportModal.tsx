@@ -30,11 +30,12 @@ export function PdnImportModal({ open, onClose, pdnImportText, setPdnImportText,
     >
       <div className="flex flex-col gap-4 pb-1">
         <p className="text-xs text-slate-400">
-          Paste a move list in "from-to" notation. Captures use "x": e.g.{" "}
+          Paste a Kentro PDN export (including its custom position), or a move list in "from-to" notation. Captures use "x": e.g.{" "}
           <span className="text-slate-300 font-mono">32-28 19-23 37-32 23x32</span>. Move numbers like "1." are optional and ignored.
         </p>
 
         <textarea
+          aria-label="Game moves or exported PDN"
           value={pdnImportText}
           onChange={(e) => setPdnImportText(e.target.value)}
           rows={6}
@@ -43,7 +44,7 @@ export function PdnImportModal({ open, onClose, pdnImportText, setPdnImportText,
         />
 
         {pdnImportError && (
-          <p className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+          <p role="alert" className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
             {pdnImportError}
           </p>
         )}

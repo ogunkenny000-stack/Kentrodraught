@@ -35,8 +35,8 @@ export function AnalysisSetupModal({ open, onClose, onAnalyzePastGames, onBlankB
           className="flex flex-col items-center justify-center p-4 rounded-xl border border-slate-800 bg-slate-800/50 hover:bg-slate-800 text-slate-300 transition cursor-pointer"
         >
           <Layout className="w-6 h-6 mb-2" />
-          <span className="font-bold text-sm">Blank Analysis Board</span>
-          <span className="text-[10px] text-slate-500 mt-1">Explore positions freely</span>
+          <span className="font-bold text-sm">Explore a New Position</span>
+          <span className="text-[10px] text-slate-500 mt-1">Start from the opening, then explore or edit</span>
         </button>
 
         <button

@@ -2,7 +2,7 @@
 
 Target: pwovowlyylceuzontdhg (the original project used by https://kentrodraught.ai.studio). This package replaces the earlier new-project ZIP for a key-preserving rollout.
 
-Keep SUPABASE_URL, SUPABASE_SECRET_KEY, VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY unchanged in hosting. These assets were rebuilt using the original configured public URL/key. Set KENTRO_COINS_ENABLED=1, VITE_KENTRO_COINS_ENABLED=1, SKIP_DB_MIGRATION=1 and APP_URL=https://kentrodraught.ai.studio. No secret values are included in this ZIP. Source code and draughts rules are unchanged from the uploaded app.
+Keep SUPABASE_URL, SUPABASE_SECRET_KEY, VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY unchanged in hosting. These assets were rebuilt using the original configured public URL/key. Set KENTRO_COINS_ENABLED=1, VITE_KENTRO_COINS_ENABLED=1, SKIP_DB_MIGRATION=1 and APP_URL=https://kentrodraught.ai.studio. No secret values are included in this ZIP. This version adds offline Ken and analysis-board fixes. Draughts rules and financial safeguards are preserved. See docs/OFFLINE_KEN.md and docs/ANALYSIS_BOARD.md.
 
 Required order: deploy this updated backend/frontend first. Its financial readiness gate has been tested against the original database: it disables money routes until required database safeguards are installed. Verify the deployed assets/backend and disabled money state before upgrading the live database. Reconcile the snapshot against current data, then apply compatible reviewed migrations with the original account/wallet/ledger data preserved, and restart/redeploy so the startup readiness check can enable money. The original database upgrade has NOT been performed by preparing this ZIP.
 

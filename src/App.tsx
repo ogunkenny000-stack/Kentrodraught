@@ -36,7 +36,6 @@ import { EvaluationBar } from "./components/EvaluationBar";
 import { BestMoveArrow } from "./components/BestMoveArrow";
 import { OpeningExplorer } from "./components/OpeningExplorer";
 import { ChessClock } from "./components/ChessClock";
-import { EnginePanel } from "./components/EnginePanel";
 import { MenuSidebar } from "./components/MenuSidebar";
 import { HomeLobby } from "./components/HomeLobby";
 const ProfilePage = lazy(() => import("./components/ProfilePage").then(m => ({ default: m.ProfilePage })));
@@ -50,7 +49,7 @@ import {
   playVictorySound, playDefeatSound, playDrawSound, playWarningAlertSound,
   startVoiceRingtone, startVoiceRingback,
 } from "./lib/audio";
-import { PositionEval, evaluatePosition, classifyMove, analyzeMoveHistory } from "./lib/analysis";
+import { analyzeMoveHistory } from "./lib/analysis";
 import {
   QUALITY_BADGE_CLASSES, QUALITY_BADGE_ABBREV, OPAY_PAYMENT_DETAILS,
   KenDifficulty, MIN_MATCH_WAGER, MAX_MATCH_WAGER,
@@ -88,7 +87,11 @@ const AnalysisLabModal = lazy(() => import("./components/modals/AnalysisLabModal
 const PuzzlesPane = lazy(() => import("./components/panels/PuzzlesPane").then(m => ({ default: m.PuzzlesPane })));
 import { ModalShell } from "./components/ui/ModalShell";
 import { markPuzzleSolved } from "./lib/puzzles";
-import { getKenMove, analyzeKen, EngineUnavailableError, SupersededError } from "./lib/kenEngine";
+import { parseAnalysisPdn, parseAnalysisPosition } from "./lib/analysisPresentation";
+import { offlineKenMove } from "./engine/offlineKen";
+import { usePositionAnalysis } from "./lib/usePositionAnalysis";
+import { replayForAnalysis } from "./lib/analysisReplay";
+import { getKenMove, analyzeKen, EngineUnavailableError } from "./lib/kenEngine";
 import { primeAvatar } from "./lib/avatarCache";
 import { AdminProfileProvider } from "./lib/adminProfileContext";
 import { KentroSplashScreen } from "./components/splash/KentroSplashScreen";
@@ -363,13 +366,6 @@ export default function App() {
   const [puzzleError, setPuzzleError] = useState<string | null>(null);
 
   // --- Live C++ Engine evaluation states ---
-  const [engineEval, setEngineEval] = useState<EngineEval>({
-    score: 0,
-    depth: 0,
-    pv: "",
-    isThinking: false
-  });
-
   // --- AI Game Review Analysis States ---
   const [moveEvaluations, setMoveEvaluations] = useState<Record<number, MoveEvalResult>>({});
   const [isReviewing, setIsReviewing] = useState<boolean>(false);
@@ -394,115 +390,31 @@ export default function App() {
 
   // --- Continuous background analysis (runs WHILE the game is being played,
   // not just after it ends) ---
-  // positionEvalCacheRef: each board position is evaluated by the engine at
-  // most once, ever, for the lifetime of the current game -- position i's
-  // "after this move" eval IS position i+1's "before next move" eval (same
-  // board, same side to move), so caching by position index halves the
-  // engine calls versus evaluating before/after separately per move.
-  const positionEvalCacheRef = useRef<Map<number, PositionEval>>(new Map());
-  const analyzedIndexesRef = useRef<Set<number>>(new Set());
-  const liveAnalysisRunningRef = useRef<boolean>(false);
-  const liveAnalysisPendingRef = useRef<boolean>(false);
-  const lastMoveCountForAnalysisRef = useRef<number>(0);
-
-  const runLiveAnalysis = async () => {
-    if (liveAnalysisRunningRef.current) {
-      liveAnalysisPendingRef.current = true;
-      return;
-    }
-    liveAnalysisRunningRef.current = true;
-    try {
-      do {
-        liveAnalysisPendingRef.current = false;
-        if (playModeRef.current !== "Analysis" && playModeRef.current !== "Training") break;
-        const historySnapshot = moveHistoryRef.current;
-        if (historySnapshot.length === 0) break;
-
-        let b = createInitialBoard();
-        const boardsList: Board[] = [b];
-        for (let i = 0; i < historySnapshot.length; i++) {
-          b = applyMove(b, historySnapshot[i]).board;
-          boardsList.push(b);
-        }
-
-        for (let i = 0; i < historySnapshot.length; i++) {
-          if (analyzedIndexesRef.current.has(i)) continue;
-          // A newer move may have arrived (or the game may have been reset)
-          // while we were mid-loop -- re-check against the live ref rather
-          // than the snapshot so we never analyze a move from a game that's
-          // no longer the active one.
-          if (moveHistoryRef.current.length < historySnapshot.length) break;
-
-          const mover: "W" | "B" = i % 2 === 0 ? "W" : "B";
-          const opponent: "W" | "B" = mover === "W" ? "B" : "W";
-
-          let before = positionEvalCacheRef.current.get(i);
-          if (!before) {
-            before = await evaluatePosition(boardsList[i], mover, 0.25);
-            positionEvalCacheRef.current.set(i, before);
-          }
-          let after = positionEvalCacheRef.current.get(i + 1);
-          if (!after) {
-            after = await evaluatePosition(boardsList[i + 1], opponent, 0.25);
-            positionEvalCacheRef.current.set(i + 1, after);
-          }
-
-          const result = classifyMove(boardsList[i], mover, historySnapshot[i], before, after);
-          const finalResult: MoveEvalResult = { ...result, index: i };
-          analyzedIndexesRef.current.add(i);
-          setMoveEvaluations((prev) => (prev[i] ? prev : { ...prev, [i]: finalResult }));
-
-          // Only surface the "Last Move Evaluation" bubble for the most
-          // recent move, not ones we're catching up on in the background.
-          if (i === historySnapshot.length - 1) {
-            setLastAnalysisEval({
-              quality: finalResult.quality,
-              comment: finalResult.comment,
-              delta: before.score + after.score,
-            });
-          }
-        }
-      } while (liveAnalysisPendingRef.current);
-    } catch (err) {
-      console.error("Live background analysis error:", err);
-    } finally {
-      liveAnalysisRunningRef.current = false;
-    }
-  };
-
-  const moveHistoryRef = useRef<Move[]>([]);
+  const [reviewRevision, setReviewRevision] = useState(0);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const reviewStartKey = boardToScanFen(initialPositionRef.current.board, initialPositionRef.current.turn);
+  // Every task owns its cancellation signal. Switching games, editing the root
+  // or leaving Analysis stops both CPU work and stale state updates.
   useEffect(() => {
-    moveHistoryRef.current = moveHistory;
-
-    // A shorter history than last time means a new game started (or a
-    // different saved game was loaded) -- cached position evals no longer
-    // correspond to this game, so start fresh.
-    if (moveHistory.length < lastMoveCountForAnalysisRef.current) {
-      positionEvalCacheRef.current.clear();
-      analyzedIndexesRef.current.clear();
+    if ((playMode !== "Analysis" && playMode !== "Training") || !moveHistory.length) {
+      setIsReviewing(false); setReviewProgress(0); setReviewError(null); return;
     }
-    lastMoveCountForAnalysisRef.current = moveHistory.length;
-
-    // If a saved game was loaded with its own moveEvaluations already
-    // present, mark those indexes as done so we don't needlessly re-query
-    // the engine for moves already analyzed.
-    Object.keys(moveEvaluations).forEach((k) => analyzedIndexesRef.current.add(Number(k)));
-
-    // Spec: analysis "will be working while the player is playing, even if
-    // no one is playing analysis will continue in the background" -- this
-    // fires on every new move, for every play mode, not just after the game
-    // ends, so by the time a game finishes most (often all) of it is
-    // already analyzed and the post-game "Analyse" view opens instantly.
-    // Continuous move-grading is an ANALYSIS BOARD feature only. Games
-    // against the AI, online matches, tournaments and puzzles are plain
-    // games: no engine grades, coach bubbles or badges while playing.
-    // (Finished games still get their one-off background review saved to
-    // the database at game end, so the Analysis board can review them.)
-    if (moveHistory.length > 0 && (playModeRef.current === "Analysis" || playModeRef.current === "Training")) {
-      runLiveAnalysis();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moveHistory.length]);
+    const controller = new AbortController();
+    setIsReviewing(true); setReviewProgress(0); setReviewError(null);
+    setMoveEvaluations({}); setLastAnalysisEval(null);
+    const timer = setTimeout(() => {
+      const start = scanFenToBoard(reviewStartKey);
+      analyzeMoveHistory(moveHistory, pct => { if (!controller.signal.aborted) setReviewProgress(pct); },
+        start.board, start.turn, controller.signal, result => {
+          if (!controller.signal.aborted) setMoveEvaluations(previous => ({ ...previous, [result.index]: result }));
+        }).then(() => {
+          if (!controller.signal.aborted) setReviewProgress(100);
+        }).catch(error => {
+          if (!controller.signal.aborted) setReviewError(error instanceof Error ? error.message : "Review unavailable. Try again.");
+        }).finally(() => { if (!controller.signal.aborted) setIsReviewing(false); });
+    }, 500);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [moveHistory, reviewStartKey, playMode, reviewRevision]);
 
   // --- VS Computer & Analysis Interactive States ---
   const [showComputerConfigModal, setShowComputerConfigModal] = useState<boolean>(false);
@@ -596,6 +508,9 @@ export default function App() {
   // --- Modals and Alerts ---
   const [isThinking, setIsThinking] = useState<boolean>(false);
   const aiRequestGenerationRef = useRef(0);
+  const practiceRequestRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { practiceRequestRef.current?.abort(); practiceRequestRef.current = null; },
+    [board, playMode, historyViewIndex, analysisPlayVsAI, analysisPlayerColor, analysisAILevel]);
   const [statusMessage, setStatusMessage] = useState<string>("White to play");
   const [promotedToast, setPromotedToast] = useState<string | null>(null);
   const [showRules, setShowRules] = useState<boolean>(false);
@@ -1055,6 +970,7 @@ export default function App() {
 
   // --- Check game over states to update stats & play sounds ---
   useEffect(() => {
+    if (playMode === "Analysis" || playMode === "Training" || playMode === "Editor") return;
     // We only record if a game is active, not yet recorded, and no modal is currently shown
     if (gameRecorded || gameOverInfo || !gameStartTime || isSpectating) return;
 
@@ -1205,7 +1121,7 @@ export default function App() {
     if (outcome) {
       setGameRecorded(true);
       const durationSeconds = Math.round((Date.now() - gameStartTime) / 1000);
-      const isAIGame = playMode === "Human_vs_AI" || playMode === "AI_vs_Human" || playMode === "AI_vs_AI" || playMode === "Analysis" || playMode === "Training";
+      const isAIGame = playMode === "Human_vs_AI" || playMode === "AI_vs_Human" || playMode === "AI_vs_AI";
       const isMultiplayer = playMode === "Multiplayer";
 
       setGameOverInfo({
@@ -1260,15 +1176,13 @@ export default function App() {
         } else if (playMode === "AI_vs_AI") {
           whiteName = `Ken Level ${kenLevelId} (White)`;
           blackName = `Ken Level ${kenLevelId} (Black)`;
-        } else if (playMode === "Training" || playMode === "Analysis") {
-          whiteName = analysisPlayerColor === "W" ? (username || "You") : (analysisPlayVsAI ? `Ken Level ${analysisAILevel}` : "Black Player");
-          blackName = analysisPlayerColor === "B" ? (username || "You") : (analysisPlayVsAI ? `Ken Level ${analysisAILevel}` : "White Player");
+
         } else {
           whiteName = "White Player";
           blackName = "Black Player";
         }
 
-        const playsWhite = playMode === "AI_vs_Human" ? false : (playMode === "Training" || playMode === "Analysis") ? analysisPlayerColor === "W" : true;
+        const playsWhite = playMode !== "AI_vs_Human";
         const winnerName = outcome === "draw" ? "Draw" : (outcome === "win") === playsWhite ? "White" : "Black";
 
         const completedGameData = {
@@ -1299,11 +1213,6 @@ export default function App() {
                 body: JSON.stringify({ gameId }),
               })
                 .then((res) => res.json())
-                .then((data) => {
-                  if (data && data.moveEvaluations) {
-                    setMoveEvaluations(data.moveEvaluations);
-                  }
-                })
                 .catch((e) => console.error("Server-side background analysis call error:", e));
             }
           } catch (err: unknown) {
@@ -2171,14 +2080,14 @@ export default function App() {
   useEffect(() => { setCaptureWalk([]); }, [selectedSq, turn, moveHistory.length, activePuzzleId, playMode]);
 
   // Stats calculation
-  const getPieceCounts = () => {
+  const getPieceCounts = (position: Board) => {
     let whitePieces = 0;
     let whiteKings = 0;
     let blackPieces = 0;
     let blackKings = 0;
 
     for (let sq = 1; sq <= 50; sq++) {
-      const pc = board[sq];
+      const pc = position[sq];
       if (pc === "w") whitePieces++;
       if (pc === "W") {
         whitePieces++;
@@ -2193,7 +2102,6 @@ export default function App() {
     return { whitePieces, whiteKings, blackPieces, blackKings };
   };
 
-  const stats = getPieceCounts();
 
   // --- Clocks ---
   // Multiplayer: the server's ClockState snapshot (room.clock, contract §4).
@@ -2211,7 +2119,7 @@ export default function App() {
     const winner = color === "W" ? "Black" : "White";
     setStatusMessage(`${loser} flagged! ${winner} wins on time. ⏰`);
   }, []);
-  const localClockArmed = playMode !== "Multiplayer" && !isEditorMode && !activePuzzleId && !gameOverInfo;
+  const localClockArmed = !["Multiplayer", "Analysis", "Training"].includes(playMode) && !isEditorMode && !activePuzzleId && !gameOverInfo;
   useClockDeadline(localClockArmed ? localClock : null, localClockArmed ? handleLocalFlag : null);
 
   // A finished local game stops its clock where it is.
@@ -2221,7 +2129,7 @@ export default function App() {
   }, [gameOverInfo, playMode]);
 
   // Get active rendering board (current play vs historical review state)
-  const renderBoard = (() => {
+  const renderBoard = useMemo(() => {
     if (historyViewIndex !== null) {
       let tempBoard = { ...initialPositionRef.current.board };
       for (let i = 0; i <= historyViewIndex; i++) {
@@ -2230,41 +2138,19 @@ export default function App() {
       return tempBoard;
     }
     return board;
-  })();
+  }, [board, moveHistory, historyViewIndex, reviewStartKey]);
 
   const turnAfterMoves = (count: number): "W" | "B" => count % 2 === 0 ? initialPositionRef.current.turn : (initialPositionRef.current.turn === "W" ? "B" : "W");
+  const stats = getPieceCounts(renderBoard);
   const activeTurn = historyViewIndex !== null ? turnAfterMoves(historyViewIndex + 1) : turn;
 
-  // --- Real-time debounced calculation of position analysis ---
-  useEffect(() => {
-    // Live engine evaluation belongs to the Analysis board ONLY -- a game
-    // against the AI (or anywhere else in the app) is a plain game with no
-    // engine assistance running underneath it.
-    const isAnalysisActive = playMode === "Analysis" || playMode === "Training";
-    if (!isAnalysisActive || isThinking) return;
-
-    const debounceCalc = setTimeout(async () => {
-      setEngineEval((prev) => ({ ...prev, isThinking: true }));
-      try {
-        // High-performance analysis with automatic fallback
-        const data = await analyzeKen(renderBoard, activeTurn, 800, "live-eval");
-        setEngineEval({
-          score: data.score || 0,
-          depth: data.depth || 0,
-          pv: data.pv || "",
-          isThinking: false
-        });
-      } catch (err: any) {
-        // If superseded by a newer position, don't clear the thinking indicator
-        if (err instanceof SupersededError || err?.name === "SupersededError") {
-          return;
-        }
-        setEngineEval((prev) => ({ ...prev, isThinking: false }));
-      }
-    }, 200);
-
-    return () => clearTimeout(debounceCalc);
-  }, [renderBoard, activeTurn, playMode, isThinking]);
+  const [analysisTimeMs, setAnalysisTimeMs] = useState(1500);
+  const analysisEnd = useMemo(() => checkGameEnd(historyViewIndex === null ? moveHistory : moveHistory.slice(0, historyViewIndex + 1),
+    initialPositionRef.current.board, initialPositionRef.current.turn), [moveHistory, historyViewIndex, reviewStartKey]);
+  const terminalAnalysis = analysisEnd.isOver && Object.values(renderBoard).some(Boolean);
+  const { evaluation: positionEvaluation, retry: retryAnalysis } = usePositionAnalysis(renderBoard, activeTurn,
+    (playMode === "Analysis" || playMode === "Training") && !isThinking && !isReviewing && !terminalAnalysis, analysisTimeMs);
+  const engineEval: EngineEval = terminalAnalysis ? { score: analysisEnd.isDraw ? 0 : analysisEnd.winner === activeTurn ? 10000 : -10000, depth: 0, pv: "", turn: activeTurn, ready: true, isThinking: false, terminal: { isDraw: analysisEnd.isDraw, reason: analysisEnd.reason } } : positionEvaluation;
 
   // Handle computer move trigger
   useEffect(() => {
@@ -2354,7 +2240,13 @@ export default function App() {
       } else if ((playMode === "Analysis" || playMode === "Training") && analysisPlayVsAI) {
         currentKenLevelId = analysisAILevel;
       }
-      const data = await getKenMove(board, turn, currentKenLevelId, (playMode === "Human_vs_AI" || playMode === "AI_vs_Human") ? kenProgressionGameIdRef.current : undefined);
+      const localPractice = playMode === "Analysis" || playMode === "Training";
+      const level = KEN_LEVELS.find(level => level.id === currentKenLevelId) ?? KEN_LEVELS[0];
+      const practiceController = new AbortController();
+      if (localPractice) practiceRequestRef.current = practiceController;
+      const data = localPractice
+        ? await offlineKenMove(board, turn, level.moveTimeMs / 1000, level.depth, level.pst, practiceController.signal)
+        : await getKenMove(board, turn, currentKenLevelId, (playMode === "Human_vs_AI" || playMode === "AI_vs_Human") ? kenProgressionGameIdRef.current : undefined);
       // Navigation or a fresh game invalidates the position this request used.
       if (generation !== aiRequestGenerationRef.current) return;
       if (data && data.move) {
@@ -2383,6 +2275,7 @@ export default function App() {
       }
     } catch (e: any) {
       if (generation !== aiRequestGenerationRef.current) return;
+      if (e?.name === "AbortError") return;
       console.error("C++ engine move execution error:", e);
       setStatusMessage(`C++ Engine error: ${e?.message || "Engine unavailable"}`);
     } finally {
@@ -3541,9 +3434,13 @@ export default function App() {
   };
 
   const handleLoadSavedGame = (savedGame: any) => {
-    initialPositionRef.current = { board: savedGame.initialBoard || createInitialBoard(), turn: savedGame.initialTurn === "B" ? "B" : "W" };
-    let tempBoard = { ...initialPositionRef.current.board };
+    const start = { board: savedGame.initialBoard || createInitialBoard(), turn: savedGame.initialTurn === "B" ? "B" as const : "W" as const };
     const loadedMoves: Move[] = savedGame.moveHistory || [];
+    let replay;
+    try { replay = replayForAnalysis(loadedMoves, start.board, start.turn); }
+    catch (error) { setStatusMessage(error instanceof Error ? error.message : "Invalid saved game"); return; }
+    initialPositionRef.current = start;
+    const tempBoard = replay.boards[replay.boards.length - 1];
     const loadedEvals: Record<number, MoveEvalResult> = savedGame.moveEvaluations || {};
 
     setBoard(tempBoard);
@@ -3556,20 +3453,7 @@ export default function App() {
     setStatusMessage(`Loaded saved game: ${savedGame.whitePlayer} vs ${savedGame.blackPlayer}`);
     playClickSound(muted);
 
-    // Past games often aren't fully analyzed yet (the automatic background
-    // review only runs once, right after the game first ends) -- fill in the
-    // gap here so every loaded game is reviewable move-by-move, the same way
-    // a freshly-finished game or a PDN import already is. Uses loadedMoves
-    // directly rather than the runAIGameReview()/moveHistory state helper,
-    // since that state hasn't committed yet at this point in the function.
-    if (loadedMoves.length > 0 && Object.keys(loadedEvals).length < loadedMoves.length && !isReviewing) {
-      setIsReviewing(true);
-      setReviewProgress(0);
-      analyzeMoveHistory(loadedMoves, setReviewProgress, initialPositionRef.current.board, initialPositionRef.current.turn)
-        .then((evals) => setMoveEvaluations(evals))
-        .catch((err) => console.error("AI Game Review failed:", err))
-        .finally(() => { setIsReviewing(false); setReviewProgress(100); });
-    }
+
   };
 
   // Home -> "Analyse" on a past game: jump straight onto the Analysis
@@ -3742,9 +3626,20 @@ export default function App() {
     }
   };
 
+  const loadAnalysisPosition = (position: Board, firstTurn: "W" | "B") => {
+    aiRequestGenerationRef.current += 1; setIsThinking(false);
+    const normalized = parseAnalysisPosition(boardToScanFen(position, firstTurn));
+    initialPositionRef.current = { board: { ...normalized.board }, turn: normalized.turn };
+    setBoard(normalized.board); setTurn(normalized.turn); setMoveHistory([]); setMoveEvaluations({});
+    setHistoryViewIndex(null); setSelectedSq(null); setCaptureWalk([]); setLastAnalysisEval(null);
+    setGameOverInfo(null); setAnalysisPlayVsAI(false); setLocalClock(null); setActivePuzzleId(null);
+    setPlayMode("Analysis"); setStatusMessage(`${firstTurn === "W" ? "White" : "Black"} to move. Explore this position.`);
+  };
+
   // Navigation across history logs
   const handleHistoryNavigate = (index: number) => {
-    if (index < 0 || index >= moveHistory.length) return;
+    if (!Number.isInteger(index) || index < -1 || index >= moveHistory.length) return;
+    aiRequestGenerationRef.current += 1; setIsThinking(false);
     setHistoryViewIndex(index);
     playClickSound(muted);
   };
@@ -3915,8 +3810,10 @@ export default function App() {
   const handlePdnImport = async () => {
     setPdnImportError(null);
     let parsedMoves: Move[];
+    let imported: ReturnType<typeof parseAnalysisPdn>;
     try {
-      parsedMoves = parsePdnMoveList(pdnImportText);
+      imported = parseAnalysisPdn(pdnImportText);
+      parsedMoves = imported.moves;
     } catch (err) {
       setPdnImportError(err instanceof Error ? err.message : "Couldn't parse that move list.");
       return;
@@ -3927,9 +3824,9 @@ export default function App() {
     }
 
     setPlayMode("Analysis");
-    setBoard(createInitialBoard());
-    initialPositionRef.current = { board: createInitialBoard(), turn: "W" };
-    setTurn(parsedMoves.length % 2 === 0 ? "W" : "B");
+    setBoard(imported.board);
+    initialPositionRef.current = { board: imported.initialBoard, turn: imported.initialTurn };
+    setTurn(imported.turn);
     setMoveHistory(parsedMoves);
     setHistoryViewIndex(null);
     setMoveEvaluations({});
@@ -3939,34 +3836,11 @@ export default function App() {
     setStatusMessage(`Imported ${parsedMoves.length} moves. Running AI Game Review...`);
     playClickSound(muted);
 
-    setIsReviewing(true);
-    setReviewProgress(0);
-    try {
-      const evals = await analyzeMoveHistory(parsedMoves, setReviewProgress);
-      setMoveEvaluations(evals);
-    } catch (err) {
-      console.error("PDN import analysis failed:", err);
-    } finally {
-      setIsReviewing(false);
-      setReviewProgress(100);
-    }
   };
 
-  // Run full AI Game Review
-  const runAIGameReview = async () => {
-    if (moveHistory.length === 0 || isReviewing) return;
-    setIsReviewing(true);
-    setReviewProgress(0);
-
-    try {
-      const evals = await analyzeMoveHistory(moveHistory, setReviewProgress, initialPositionRef.current.board, initialPositionRef.current.turn);
-      setMoveEvaluations(evals);
-    } catch (err) {
-      console.error("AI Game Review failed:", err);
-    } finally {
-      setIsReviewing(false);
-      setReviewProgress(100);
-    }
+  const runAIGameReview = () => {
+    if (!moveHistory.length || isReviewing) return;
+    setReviewRevision(n => n + 1);
   };
 
   const selectedDestSquares = (() => {
@@ -4170,7 +4044,14 @@ export default function App() {
       onResetHistoryView={handleResetHistoryView}
       lastAnalysisEval={lastAnalysisEval}
       renderBoard={renderBoard}
-      activeTurn={turn}
+      activeTurn={activeTurn}
+      initialBoard={initialPositionRef.current.board}
+      initialTurn={initialPositionRef.current.turn}
+      analysisTimeMs={analysisTimeMs}
+      onAnalysisTimeChange={setAnalysisTimeMs}
+      onRetryAnalysis={retryAnalysis}
+      reviewError={reviewError}
+      onEditPosition={() => { aiRequestGenerationRef.current += 1; setIsThinking(false); setBoard(renderBoard); setEditorTurn(activeTurn); setPlayMode("Editor"); }}
       analysisPlayVsAI={analysisPlayVsAI}
       setAnalysisPlayVsAI={setAnalysisPlayVsAI}
       analysisPlayerColor={analysisPlayerColor}
@@ -4178,12 +4059,7 @@ export default function App() {
       analysisAILevel={analysisAILevel}
       setAnalysisAILevel={setAnalysisAILevel}
       setBoard={setBoard}
-      onLoadPosition={(position, firstTurn) => {
-        initialPositionRef.current = { board: { ...position }, turn: firstTurn };
-        setBoard(position);
-        setTurn(firstTurn);
-        setGameOverInfo(null);
-      }}
+      onLoadPosition={loadAnalysisPosition}
       setMoveHistory={setMoveHistory}
       setMoveEvaluations={setMoveEvaluations}
       setTurn={setTurn}
@@ -4623,7 +4499,7 @@ export default function App() {
       )}
 
       {/* Visual Reconnecting Status Indicator with Failed Attempt Counter and Fast-Resume Status */}
-      {!sessionNotice && connectionStatus !== "connected" && username && (
+      {!sessionNotice && connectionStatus !== "connected" && username && !["Analysis", "Training", "Editor"].includes(playMode) && (
         <div className="shrink-0 bg-gradient-to-r from-amber-950/90 via-slate-900/95 to-amber-950/90 border-b border-amber-500/40 px-3.5 py-2 flex items-center justify-between gap-2.5 z-40 shadow-lg shadow-black/40 backdrop-blur-md">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="relative flex h-3 w-3 shrink-0">
@@ -4990,6 +4866,13 @@ export default function App() {
               boardScale={boardScale}
               focusMode={focusMode}
               setFocusMode={setFocusMode}
+              activeTurn={activeTurn}
+              initialBoard={initialPositionRef.current.board}
+              initialTurn={initialPositionRef.current.turn}
+              onAnalyzePosition={() => {
+                try { loadAnalysisPosition(board, editorTurn); }
+                catch (error) { setStatusMessage(error instanceof Error ? error.message : "Invalid position"); }
+              }}
               engineEval={engineEval}
               isFlipped={isFlipped}
               setIsFlipped={setIsFlipped}
@@ -5444,7 +5327,7 @@ export default function App() {
           setHistoryViewIndex(null);
           setMoveEvaluations({});
           setShowAnalysisModal(false);
-          setStatusMessage("Blank Analysis Board. Make moves to explore!");
+          setStatusMessage("Analysis ready. Make moves, load a study, or open Setup to edit the board.");
           playClickSound(muted);
         }}
         onImportPdn={() => {
@@ -5606,10 +5489,15 @@ export default function App() {
         onHistoryNavigate={(idx) => handleHistoryNavigate(idx)}
         onContinueFromHistory={handleContinueFromHistory}
         engineEval={engineEval}
+        analysisTimeMs={analysisTimeMs}
+        onAnalysisTimeChange={setAnalysisTimeMs}
+        onRetryAnalysis={retryAnalysis}
         moveEvaluations={moveEvaluations}
         whiteName={whitePlayerName}
         blackName={blackPlayerName}
-        activeTurn={turn}
+        activeTurn={activeTurn}
+        initialTurn={initialPositionRef.current.turn}
+        onLoadPosition={loadAnalysisPosition}
         renderBoard={renderBoard}
         isReviewing={isReviewing}
         reviewProgress={reviewProgress}

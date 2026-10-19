@@ -33,6 +33,9 @@ EMSCRIPTEN_KEEPALIVE const char * ken_search(const char * fen, double seconds, i
   if (previous != pst) { G_TT.clear(); previous = pst; }
   Pos pos = pos_from_hub(fen);
   Search_Input si;
+  // A forced move still needs a real evaluation. Move-only search can return
+  // the internal "unknown score" sentinel without searching that position.
+  si.move = false;
   si.book = false; si.input = false; si.time = seconds;
   si.depth = depth > 0 ? Depth(depth) : Depth_Max;
   Search_Output so; search(so, Node(pos), si);

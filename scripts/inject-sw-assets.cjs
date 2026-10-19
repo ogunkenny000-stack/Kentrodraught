@@ -51,6 +51,8 @@ if (offlineKen) {
     precacheSet.add(uri);
   }
 }
+const analysisLab = fs.readdirSync(assetsDir).find(name => /^AnalysisLabModal-[\w-]+\.js$/.test(name));
+if (analysisLab) addStaticImports(`/assets/${analysisLab}`);
 const precache = [...precacheSet].sort();
 if (!precache.some((uri) => uri.endsWith(".js"))) {
   throw new Error("[inject-sw-assets] Could not identify the entry JavaScript bundle in index.html.");

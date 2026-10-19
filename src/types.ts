@@ -18,6 +18,11 @@ export interface EngineEval {
   depth: number;
   pv: string;
   isThinking: boolean;
+  /** Evaluation belongs to this side-to-move and only to the displayed position. */
+  turn?: "W" | "B";
+  ready?: boolean;
+  error?: string;
+  terminal?: { isDraw: boolean; reason: string };
   knps?: number;
   nodes?: number;
   time?: number;

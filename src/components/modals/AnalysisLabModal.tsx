@@ -1,3 +1,5 @@
+import { AnalysisGraph as AdvantageFlowChart } from "../AnalysisGraph";
+import { evaluationLabel, whiteEvaluation, moverAt, parseAnalysisPosition } from "../../lib/analysisPresentation";
 import React, { useState } from "react";
 import {
   Sparkles, Brain, Cpu, TrendingUp, Lightbulb, LineChart, CheckCircle2,
@@ -24,6 +26,11 @@ export interface AnalysisLabModalProps {
   whiteName: string;
   blackName: string;
   activeTurn: "W" | "B";
+  initialTurn?: "W" | "B";
+  onLoadPosition?: (board: Board, turn: "W" | "B") => void;
+  analysisTimeMs?: number;
+  onAnalysisTimeChange?: (ms: number) => void;
+  onRetryAnalysis?: () => void;
   renderBoard: Board;
   isReviewing?: boolean;
   reviewProgress?: number;
@@ -69,63 +76,6 @@ function sideAccuracy(moveEvaluations: Record<number, MoveEvalResult>, parity: 0
   return Math.max(0, Math.round((100 - penalty) * 10) / 10);
 }
 
-/** Interactive evaluation advantage flow chart */
-function AdvantageFlowChart({
-  moveEvaluations,
-  count,
-  historyViewIndex,
-  onHistoryNavigate,
-}: {
-  moveEvaluations: Record<number, MoveEvalResult>;
-  count: number;
-  historyViewIndex: number | null;
-  onHistoryNavigate: (index: number) => void;
-}) {
-  if (count < 2) return null;
-  const W = 360, H = 80, MID = H / 2, CLAMP = 600;
-  const xs = (i: number) => (count === 1 ? W / 2 : (i / (count - 1)) * (W - 12) + 6);
-  const yOf = (i: number) => {
-    const ev = moveEvaluations[i];
-    if (!ev) return MID;
-    const whitePOV = i % 2 === 0 ? -ev.score : ev.score;
-    const c = Math.max(-CLAMP, Math.min(CLAMP, whitePOV));
-    return MID - (c / CLAMP) * (MID - 8);
-  };
-  const pts = Array.from({ length: count }, (_, i) => `${xs(i).toFixed(1)},${yOf(i).toFixed(1)}`);
-  const areaPts = [`${xs(0).toFixed(1)},${MID}`, ...pts, `${xs(count - 1).toFixed(1)},${MID}`].join(" ");
-
-  return (
-    <div className="flex flex-col gap-1.5 bg-slate-950/80 p-3 rounded-2xl border border-slate-900 shadow-inner">
-      <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold uppercase tracking-wider">
-        <span className="flex items-center gap-1.5 text-amber-400">
-          <TrendingUp className="w-4 h-4" /> Advantage Flow (White vs Black)
-        </span>
-        <span className="text-slate-500 font-mono text-[10px]">Tap point to jump</span>
-      </div>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full h-20 bg-slate-950 border border-slate-800 rounded-xl cursor-pointer hover:border-amber-500/50 transition"
-        onClick={(e) => {
-          const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-          const frac = (e.clientX - rect.left) / rect.width;
-          const idx = Math.round(frac * (count - 1));
-          onHistoryNavigate(Math.max(0, Math.min(count - 1, idx)));
-        }}
-      >
-        <polygon points={areaPts} fill="#f59e0b" opacity="0.15" />
-        <line x1="0" y1={MID} x2={W} y2={MID} stroke="#334155" strokeWidth="1" strokeDasharray="4 4" />
-        <polyline points={pts.join(" ")} fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinejoin="round" />
-        {historyViewIndex !== null && moveEvaluations[historyViewIndex] && (
-          <g>
-            <line x1={xs(historyViewIndex)} y1="0" x2={xs(historyViewIndex)} y2={H} stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="2 2" />
-            <circle cx={xs(historyViewIndex)} cy={yOf(historyViewIndex)} r="5" fill="#f59e0b" stroke="#0b0e17" strokeWidth="2" />
-          </g>
-        )}
-      </svg>
-    </div>
-  );
-}
-
 export function AnalysisLabModal({
   open,
   onClose,
@@ -140,6 +90,11 @@ export function AnalysisLabModal({
   whiteName,
   blackName,
   activeTurn,
+  initialTurn = "W",
+  onLoadPosition,
+  analysisTimeMs = 1500,
+  onAnalysisTimeChange,
+  onRetryAnalysis,
   renderBoard,
   isReviewing = false,
   reviewProgress = 0,
@@ -165,17 +120,17 @@ export function AnalysisLabModal({
     }
   }, [open, initialTab]);
 
-  const whiteScore = activeTurn === "W" ? engineEval.score : -engineEval.score;
-  const scoreLabel = `${whiteScore >= 0 ? "+" : ""}${(whiteScore / 100).toFixed(1)}`;
-  const pvChips = pvToNigerian(engineEval.pv);
+  const whiteScore = whiteEvaluation(engineEval, activeTurn);
+  const scoreLabel = evaluationLabel(engineEval, activeTurn);
+  const pvChips = pvToNigerian(engineEval.ready ? engineEval.pv : "");
 
-  const whiteAcc = sideAccuracy(moveEvaluations, 0);
-  const blackAcc = sideAccuracy(moveEvaluations, 1);
+  const whiteAcc = sideAccuracy(moveEvaluations, initialTurn === "W" ? 0 : 1);
+  const blackAcc = sideAccuracy(moveEvaluations, initialTurn === "W" ? 1 : 0);
 
   const tally = (parity: 0 | 1) => {
     const counts = { Brilliant: 0, Best: 0, Good: 0, Inaccuracy: 0, Mistake: 0, Blunder: 0 };
     (Object.entries(moveEvaluations) as [string, MoveEvalResult][]).forEach(([idxStr, ev]) => {
-      if (parseInt(idxStr, 10) % 2 !== parity) return;
+      if (((parseInt(idxStr, 10) + (initialTurn === "B" ? 1 : 0)) % 2) !== parity) return;
       if (ev.quality === "Brilliant") counts.Brilliant += 1;
       else if (ev.quality === "Best" || ev.quality === "Excellent" || ev.quality === "Forced") counts.Best += 1;
       else if (ev.quality === "Good") counts.Good += 1;
@@ -190,12 +145,12 @@ export function AnalysisLabModal({
 
   // Group moves into pairs: [Move 1: W, B], [Move 2: W, B]
   const movePairs: { index: number; white?: { text: string; ply: number }; black?: { text: string; ply: number } }[] = [];
-  for (let i = 0; i < moveHistoryStrings.length; i += 2) {
-    movePairs.push({
-      index: Math.floor(i / 2) + 1,
-      white: { text: moveHistoryStrings[i], ply: i },
-      black: i + 1 < moveHistoryStrings.length ? { text: moveHistoryStrings[i + 1], ply: i + 1 } : undefined,
-    });
+  for (let row = 0; row < Math.ceil((moveHistoryStrings.length + (initialTurn === "B" ? 1 : 0)) / 2); row++) {
+    const w = initialTurn === "W" ? row * 2 : row * 2 - 1;
+    const b = initialTurn === "W" ? row * 2 + 1 : row * 2;
+    movePairs.push({ index: row + 1,
+      white: w >= 0 && w < moveHistoryStrings.length ? { text: moveHistoryStrings[w], ply: w } : undefined,
+      black: b < moveHistoryStrings.length ? { text: moveHistoryStrings[b], ply: b } : undefined });
   }
 
   // Critical turning points (Blunders / Mistakes / Brilliancies)
@@ -205,27 +160,27 @@ export function AnalysisLabModal({
       ply: parseInt(idxStr, 10),
       eval: ev,
       text: moveHistoryStrings[parseInt(idxStr, 10)] || `Ply ${parseInt(idxStr, 10) + 1}`,
-      side: parseInt(idxStr, 10) % 2 === 0 ? "White" : "Black",
+      side: moverAt(parseInt(idxStr, 10), initialTurn) === "W" ? "White" : "Black",
     }));
 
-  const handleCopyCurrentFen = () => {
+  const handleCopyCurrentFen = async () => {
     try {
       const fen = boardToScanFen(renderBoard, activeTurn);
-      navigator.clipboard.writeText(fen);
+      await navigator.clipboard.writeText(fen);
       setCopiedFen(true);
       setTimeout(() => setCopiedFen(false), 2000);
       if (setStatusMessage) setStatusMessage("Position FEN copied to clipboard.");
     } catch (e) {
-      console.error(e);
+      setStatusMessage?.("Clipboard unavailable. Try the board Export option.");
     }
   };
 
   const handleLoadCustomFen = () => {
     if (!fenInput.trim() || !setBoard || !setTurn || !setMoveHistory || !setMoveEvaluations) return;
     try {
-      const res = scanFenToBoard(fenInput.trim());
-      setBoard(res.board);
-      setTurn(res.turn);
+      const res = parseAnalysisPosition(fenInput);
+      if (onLoadPosition) onLoadPosition(res.board, res.turn);
+      else { setBoard(res.board); setTurn(res.turn); }
       setMoveHistory([]);
       setMoveEvaluations({});
       if (setLastAnalysisEval) setLastAnalysisEval(null);
@@ -263,7 +218,7 @@ export function AnalysisLabModal({
               Eval: {scoreLabel}
             </span>
             <span className="text-slate-400 hidden sm:inline text-[11px]">
-              {historyViewIndex !== null ? `Ply ${historyViewIndex + 1}` : "Live Position"}
+              {historyViewIndex === -1 ? "Starting position" : historyViewIndex !== null ? `Ply ${historyViewIndex + 1}` : "Live Position"}
             </span>
           </div>
 
@@ -444,6 +399,7 @@ export function AnalysisLabModal({
 
             {/* Interactive Advantage Flow Graph */}
             <AdvantageFlowChart
+              initialTurn={initialTurn}
               moveEvaluations={moveEvaluations}
               count={moveHistoryStrings.length}
               historyViewIndex={historyViewIndex}
@@ -591,6 +547,14 @@ export function AnalysisLabModal({
         {/* TAB 3: ENGINE LINES & CALCULATION */}
         {activeTab === "engine" && (
           <div className="space-y-4">
+            {engineEval.terminal && <p role="status" className="text-xs text-amber-300">{scoreLabel}: {engineEval.terminal.reason}</p>}
+            <p className="text-xs text-slate-400">Scores use White’s perspective. Engine estimates can change with deeper search.</p>
+            <label className="flex items-center justify-between text-xs">Analysis time per position
+              <select aria-label="Analysis time per position" value={analysisTimeMs} onChange={e => onAnalysisTimeChange?.(Number(e.target.value))} className="bg-slate-900 p-2 rounded border border-slate-700">
+                <option value={1500}>Quick · 1.5 seconds</option><option value={5000}>Deeper · 5 seconds</option><option value={15000}>Deep · 15 seconds</option>
+              </select>
+            </label>
+            {engineEval.error && <p role="alert" className="text-xs text-rose-300">{engineEval.error} <button className="underline" onClick={onRetryAnalysis}>Retry analysis</button></p>}
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -598,7 +562,7 @@ export function AnalysisLabModal({
                   <span className="font-extrabold text-sm text-slate-100">Scan Nigerian Engine 3.1</span>
                 </div>
                 <span className="text-[11px] font-mono text-slate-400">
-                  Depth {engineEval.depth || 24} • Speed {engineEval.knps ? `${engineEval.knps} kn/s` : "Fast"}
+                  {engineEval.isThinking ? "Analyzing…" : engineEval.error ? "Unavailable" : engineEval.ready ? `Depth ${engineEval.depth}` : "Waiting"}
                 </span>
               </div>
 
@@ -608,7 +572,7 @@ export function AnalysisLabModal({
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {pvChips.length === 0 ? (
-                    <span className="text-slate-500 italic text-xs">Computing optimal engine line...</span>
+                    <span className="text-slate-500 italic text-xs">{engineEval.isThinking ? "Analyzing the displayed position…" : engineEval.error || "No engine continuation available."}</span>
                   ) : (
                     pvChips.map((chip, idx) => (
                       <span

@@ -37,19 +37,19 @@ export function classifyMove(
   if (isForced) {
     quality = "Forced";
     comment = playedMove.caps.length > 0 ? "This was your only legal move -- a capture was mandatory." : "This was your only legal move.";
-  } else if (moverEvalBefore >= WIN_THRESHOLD && moverEvalAfter < WIN_THRESHOLD) {
+  } else if (!isBestMove && moverEvalBefore >= WIN_THRESHOLD && moverEvalAfter < WIN_THRESHOLD) {
     quality = "Missed Win";
-    comment = "This position was winning, but the move let a decisive advantage slip away.";
+    comment = "The engine estimated a decisive advantage before this move, but its next search no longer finds that advantage.";
     missedTactic = !isBestMove;
-  } else if (delta > 150) {
+  } else if (!isBestMove && delta > 150) {
     quality = "Blunder";
     comment = "Lost a major advantage or gave away pieces.";
     missedTactic = !isBestMove;
-  } else if (delta > 75) {
+  } else if (!isBestMove && delta > 75) {
     quality = "Mistake";
     comment = "A poor move that worsens your position significantly.";
     missedTactic = !isBestMove;
-  } else if (delta > 35) {
+  } else if (!isBestMove && delta > 35) {
     quality = "Inaccuracy";
     comment = "Not the best move. Allows the opponent some counterplay.";
     missedTactic = !isBestMove;

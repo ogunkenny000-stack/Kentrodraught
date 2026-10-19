@@ -1,3 +1,4 @@
+import { whiteEvaluation, analysisPdn } from "../../lib/analysisPresentation";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -9,7 +10,7 @@ import {
 } from "lucide-react";
 import { EvaluationBar } from "../EvaluationBar";
 import { BestMoveArrow } from "../BestMoveArrow";
-import { Board, Move, Piece, ngRcToSq, boardToScanFen, hubMoveStringToNigerian } from "../../gameLogic";
+import { Board, Move, Piece, ngRcToSq, boardToScanFen, hubMoveStringToNigerian, createInitialBoard, moveToNotationString } from "../../gameLogic";
 import { PlayMode, BoardTheme, ThemeColors, EngineEval, MoveEvalResult } from "../../types";
 import { AdminTappableName } from "../../lib/adminProfileContext";
 import { Avatar } from "../ui/Avatar";
@@ -50,6 +51,10 @@ export interface GameScreenProps {
   focusMode: boolean;
   setFocusMode: (value: boolean) => void;
   engineEval: EngineEval;
+  onAnalyzePosition?: () => void;
+  activeTurn?: "W" | "B";
+  initialBoard?: Board;
+  initialTurn?: "W" | "B";
   isFlipped: boolean;
   setIsFlipped: React.Dispatch<React.SetStateAction<boolean>>;
   isEditorMode: boolean;
@@ -216,6 +221,27 @@ export function GameScreen(props: GameScreenProps) {
     return () => window.removeEventListener("keydown", close);
   }, [boardToolsOpen]);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
+  const analysisWorkspace = playMode === 'Analysis' || playMode === 'Training';
+  const analysisScreenRef = useRef<HTMLDivElement>(null);
+  const [analysisBoardSize, setAnalysisBoardSize] = useState(420);
+  useEffect(() => {
+    if (!analysisWorkspace || !analysisScreenRef.current) return;
+    const screen = analysisScreenRef.current;
+    const stage = screen.querySelector<HTMLElement>('.k-match-stage');
+    const fit = () => {
+      const children = [...screen.children].filter(el => el !== stage) as HTMLElement[];
+      const style = getComputedStyle(screen);
+      const occupied = children.reduce((height, child) => height + child.getBoundingClientRect().height, 0);
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const gaps = parseFloat(style.rowGap || '0') * Math.max(0, screen.children.length - 1);
+      setAnalysisBoardSize(Math.max(160, Math.floor(Math.min(690, screen.clientWidth - 60, screen.clientHeight - occupied - padding - gaps - 12))));
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(screen);
+    for (const child of screen.children) if (child !== stage) observer.observe(child);
+    fit();
+    return () => observer.disconnect();
+  }, [analysisWorkspace, isMobile, moveHistory.length > 0]);
 
   // High-performance pointer tracking for instant mobile tap response (<18px touch jitter tolerance)
   const pointerStartRef = useRef<{ x: number; y: number; sq: number; time: number } | null>(null);
@@ -246,7 +272,7 @@ export function GameScreen(props: GameScreenProps) {
     if (moveHistory.length === 0) return;
     if (!isAutoPlaying) {
       if (historyViewIndex === null || historyViewIndex >= moveHistory.length - 1) {
-        handleNav(0);
+        handleNav(-1);
       }
       setIsAutoPlaying(true);
     } else {
@@ -266,18 +292,12 @@ export function GameScreen(props: GameScreenProps) {
     return null;
   }, [engineEval?.pv]);
 
-  const activeArrowSquares = puzzleArrowSquares ?? (
-    (showThreatArrow || playMode === "Analysis")
-      ? (
-          historyViewIndex !== null
-            ? (
-                moveEvaluations[historyViewIndex]?.bestMoveSquares || 
-                (moveHistory[historyViewIndex] ? { from: moveHistory[historyViewIndex].from, to: moveHistory[historyViewIndex].to } : undefined)
-              )
-            : parsedPvMove
-        )
-      : undefined
-  );
+  const activeArrowSquares = puzzleArrowSquares ?? (showThreatArrow
+    ? analysisWorkspace ? parsedPvMove : historyViewIndex !== null
+      ? moveHistory[historyViewIndex] ? { from: moveHistory[historyViewIndex].from, to: moveHistory[historyViewIndex].to } : undefined
+      : parsedPvMove
+    : undefined);
+
 
   // Active last move from moveHistory (or lastMove prop or history navigation)
   const effectiveLastMove = useMemo(() => {
@@ -335,15 +355,17 @@ export function GameScreen(props: GameScreenProps) {
     if (playMode !== "Analysis" && playMode !== "Training") return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (["INPUT", "TEXTAREA", "SELECT"].includes((e.target as HTMLElement)?.tagName)) return;
+      const target = e.target as HTMLElement;
+      if (target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) || e.altKey || e.ctrlKey || e.metaKey) return;
+      if (target?.closest('button') && (e.key === ' ' || e.code === 'Space')) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         if (moveHistory.length === 0) return;
         if (historyViewIndex === null) {
-          if (moveHistory.length >= 2) handleNav(moveHistory.length - 2);
-          else handleNav(0);
-        } else if (historyViewIndex > 0) {
+          handleNav(moveHistory.length - 2);
+        } else if (historyViewIndex > -1) {
           handleNav(historyViewIndex - 1);
         }
       } else if (e.key === "ArrowRight") {
@@ -356,7 +378,7 @@ export function GameScreen(props: GameScreenProps) {
         }
       } else if (e.key === "Home" || e.key === "ArrowUp") {
         e.preventDefault();
-        if (moveHistory.length > 0) handleNav(0);
+        if (moveHistory.length > 0) handleNav(-1);
       } else if (e.key === "End" || e.key === "ArrowDown") {
         e.preventDefault();
         handleResetHistoryView();
@@ -377,7 +399,7 @@ export function GameScreen(props: GameScreenProps) {
   // Copy helper routines
   const handleCopyFen = async () => {
     try {
-      await navigator.clipboard.writeText(boardToScanFen(renderBoard, turn));
+      await navigator.clipboard.writeText(boardToScanFen(renderBoard, props.activeTurn ?? turn));
       setCopiedFen(true);
       setTimeout(() => setCopiedFen(false), 1500);
     } catch {}
@@ -385,10 +407,7 @@ export function GameScreen(props: GameScreenProps) {
 
   const handleCopyPdn = async () => {
     try {
-      const pdn = moveHistoryStrings
-        .map((mv, i) => (i % 2 === 0 ? `${Math.floor(i / 2) + 1}. ${mv}` : mv))
-        .join(" ");
-      await navigator.clipboard.writeText(pdn || "(no moves)");
+      await navigator.clipboard.writeText(analysisPdn(moveHistory.map(moveToNotationString), props.initialBoard ?? createInitialBoard(), props.initialTurn ?? "W"));
       setCopiedPdn(true);
       setTimeout(() => setCopiedPdn(false), 1500);
     } catch {}
@@ -405,7 +424,8 @@ export function GameScreen(props: GameScreenProps) {
 
   return (
     <>
-      <div className="k-match-screen flex-1 w-full h-full max-h-full flex flex-col items-center justify-between p-1 sm:p-2.5 overflow-hidden select-none relative">
+      <div ref={analysisScreenRef} style={analysisWorkspace ? { '--analysis-board-size': `${analysisBoardSize}px` } as React.CSSProperties : undefined}
+        className={`k-match-screen ${analysisWorkspace ? 'k-analysis-workspace' : ''} flex-1 w-full h-full max-h-full flex flex-col items-center justify-between p-1 sm:p-2.5 overflow-hidden select-none relative`}>
 
         {/* ========================================================================= */}
         {/* 1. TOP SUB-HEADER: CLEAN QUICK ACTIONS & STATUS */}
@@ -417,7 +437,7 @@ export function GameScreen(props: GameScreenProps) {
             onClick={() => { if(activePuzzleId && onExitPuzzles) onExitPuzzles(); else if(isSpectating && onLeaveSpectate) onLeaveSpectate(); else handleModeChange("Home"); }}
             aria-label="Leave game"
           ><ArrowLeft size={18}/><span>Back</span></button>
-          <div className="k-match-state" role="status" aria-live="polite"><span className={`k-turn-indicator ${isThinking ? "thinking" : turn === "W" ? "gold" : "black"}`}/><span>{statusMessage}</span></div>
+          <div className="k-match-state" role="status" aria-live="polite"><span className={`k-turn-indicator ${isThinking ? "thinking" : turn === "W" ? "gold" : "black"}`}/><span>{analysisWorkspace ? `${historyViewIndex === -1 ? "Starting position" : historyViewIndex === null ? "Current position" : `After move ${historyViewIndex + 1}`} · ${(props.activeTurn ?? turn) === "W" ? "White" : "Black"} to move` : statusMessage}</span></div>
           {playMode === "Multiplayer" && connectionStatus !== "connected" && <span className="k-match-reconnect">Reconnecting…</span>}
           {playMode === "Multiplayer" && connectionStatus === "connected" && typeof pingMs === "number" && <span className="k-match-ping" title={`Server latency: ${pingMs} ms`}>{pingMs > 0 ? `${pingMs} ms` : "Syncing"}</span>}
           <div className="k-match-tools-wrapper"><button type="button" className="k-match-more" aria-label="Board options" aria-expanded={boardToolsOpen} onClick={() => setBoardToolsOpen(v => !v)}><MenuIcon size={19}/><span>Options</span></button>
@@ -819,7 +839,7 @@ export function GameScreen(props: GameScreenProps) {
         <div 
           className="k-match-stage flex gap-1.5 w-full max-w-[min(98vw,680px)] aspect-square relative flex-row justify-center items-center shrink-0 my-1"
           style={
-            !isMobile && boardScale !== 100
+            !analysisWorkspace && !isMobile && boardScale !== 100
               ? {
                   transform: `scale(${boardScale / 100}) translateZ(0)`,
                   transformOrigin: "center",
@@ -829,7 +849,8 @@ export function GameScreen(props: GameScreenProps) {
         >
           {/* Live Evaluation Bar (Only in Analysis Mode or desktop) */}
           <EvaluationBar
-            score={engineEval.score}
+            score={whiteEvaluation(engineEval, turn)}
+            available={!!engineEval.ready && !engineEval.isThinking && !engineEval.error}
             isFlipped={isFlipped}
             visible={playMode === "Analysis" && !isEditorMode && !activePuzzleId}
           />
@@ -1108,7 +1129,7 @@ export function GameScreen(props: GameScreenProps) {
             </div>
             <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
               <span className="text-slate-500">Ken Engine:</span>
-              <span className="text-emerald-400 font-bold font-mono">Depth {engineEval.depth || 20}</span>
+              <span className="text-emerald-400 font-bold font-mono">{engineEval.isThinking ? "Analyzing…" : engineEval.error ? "Unavailable" : engineEval.ready ? `Depth ${engineEval.depth}` : "Waiting"}</span>
             </div>
           </div>
         ) : (
@@ -1167,7 +1188,8 @@ export function GameScreen(props: GameScreenProps) {
         {!isEditorMode ? (
           <MobileBoardDock
             playMode={playMode}
-            turn={turn}
+            initialTurn={props.initialTurn}
+            turn={props.activeTurn ?? turn}
             moveHistory={moveHistory}
             moveHistoryStrings={moveHistoryStrings}
             historyViewIndex={historyViewIndex}
@@ -1276,6 +1298,7 @@ export function GameScreen(props: GameScreenProps) {
               >
                 Play Position
               </button>
+              {props.onAnalyzePosition && <button onClick={props.onAnalyzePosition} className="py-2 bg-amber-500 text-slate-950 font-bold rounded-lg text-xs">Analyze position</button>}
             </div>
           </div>
         )}
@@ -1297,17 +1320,17 @@ export function GameScreen(props: GameScreenProps) {
           {moveHistory.length > 0 && (
             <div className="flex items-center gap-0.5 bg-slate-900/90 px-1 py-0.5 rounded-xl border border-slate-800">
               <button
-                onClick={() => handleNav(0)}
-                disabled={currentMoveIndex <= 0}
+                onClick={() => handleNav(-1)}
+                disabled={currentMoveIndex < 0}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-white disabled:opacity-20 cursor-pointer"
-                title="First Move"
+                title="Starting position"
               >
                 <SkipBack className="w-3.5 h-3.5" />
               </button>
 
               <button
-                onClick={() => handleNav(Math.max(0, currentMoveIndex - 1))}
-                disabled={currentMoveIndex <= 0}
+                onClick={() => handleNav(Math.max(-1, currentMoveIndex - 1))}
+                disabled={currentMoveIndex < 0}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-white disabled:opacity-20 cursor-pointer"
                 title="Previous Move"
               >

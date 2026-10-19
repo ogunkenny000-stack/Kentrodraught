@@ -1,3 +1,5 @@
+import { AnalysisGraph as EvalFlowGraph } from "../AnalysisGraph";
+import { analysisPdn, evaluationLabel, whiteEvaluation, moverAt, parseAnalysisPosition } from "../../lib/analysisPresentation";
 import React, { useState, useEffect, useMemo } from "react";
 import {
   Brain, Cpu, Sparkles, TrendingUp, Lightbulb, Swords, Library,
@@ -6,7 +8,7 @@ import {
   RefreshCw, Loader2, BookOpen, Settings2, Sliders, ArrowRight,
   ShieldCheck, Flame, Download, HelpCircle, Layers
 } from "lucide-react";
-import { Board, Move, createInitialBoard, boardToScanFen, scanFenToBoard, Piece } from "../../gameLogic";
+import { Board, Move, createInitialBoard, boardToScanFen, scanFenToBoard, Piece, moveToNotationString } from "../../gameLogic";
 import { EngineEval, MoveEvalResult } from "../../types";
 import { QUALITY_BADGE_CLASSES, QUALITY_BADGE_ABBREV, KEN_LEVELS } from "../../lib/constants";
 import { playPromoSound, playClickSound } from "../../lib/audio";
@@ -28,6 +30,13 @@ export interface AnalysisSidebarProps {
   lastAnalysisEval: { quality: string; comment: string; delta: number } | null;
   renderBoard: Board;
   activeTurn: "W" | "B";
+  initialBoard?: Board;
+  initialTurn?: "W" | "B";
+  analysisTimeMs?: number;
+  onAnalysisTimeChange?: (ms: number) => void;
+  onRetryAnalysis?: () => void;
+  onEditPosition?: () => void;
+  reviewError?: string | null;
   analysisPlayVsAI: boolean;
   setAnalysisPlayVsAI: React.Dispatch<React.SetStateAction<boolean>>;
   analysisPlayerColor: "W" | "B";
@@ -73,68 +82,6 @@ const pvToNigerian = (pvStr: string): string[] => {
     );
 };
 
-/** Interactive Evaluation Advantage Flow Chart */
-function EvalFlowGraph({
-  moveEvaluations,
-  count,
-  historyViewIndex,
-  onHistoryNavigate,
-}: {
-  moveEvaluations: Record<number, MoveEvalResult>;
-  count: number;
-  historyViewIndex: number | null;
-  onHistoryNavigate: (index: number) => void;
-}) {
-  if (count < 2) return null;
-  const W = 320;
-  const H = 76;
-  const MID = H / 2;
-  const CLAMP = 600;
-
-  const xs = (i: number) => (count === 1 ? W / 2 : (i / (count - 1)) * (W - 12) + 6);
-  const yOf = (i: number) => {
-    const ev = moveEvaluations[i];
-    if (!ev) return MID;
-    const whitePOV = i % 2 === 0 ? -ev.score : ev.score;
-    const c = Math.max(-CLAMP, Math.min(CLAMP, whitePOV));
-    return MID - (c / CLAMP) * (MID - 8);
-  };
-
-  const pts = Array.from({ length: count }, (_, i) => `${xs(i).toFixed(1)},${yOf(i).toFixed(1)}`);
-  const areaPts = [`${xs(0).toFixed(1)},${MID}`, ...pts, `${xs(count - 1).toFixed(1)},${MID}`].join(" ");
-
-  return (
-    <div className="flex flex-col gap-1.5 bg-slate-950 p-2.5 rounded-xl border border-slate-850">
-      <div className="flex items-center justify-between text-[9px] text-slate-400 font-extrabold uppercase tracking-wider">
-        <span className="flex items-center gap-1 text-amber-400">
-          <TrendingUp className="w-3.5 h-3.5" /> Advantage Flow
-        </span>
-        <span className="text-slate-500 font-mono">Tap point to jump (Ply 1-{count})</span>
-      </div>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full h-18 bg-slate-950/90 border border-slate-800/80 rounded-lg cursor-pointer hover:border-amber-500/40 transition shadow-inner"
-        onClick={(e) => {
-          const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-          const frac = (e.clientX - rect.left) / rect.width;
-          const idx = Math.round(frac * (count - 1));
-          onHistoryNavigate(Math.max(0, Math.min(count - 1, idx)));
-        }}
-      >
-        <polygon points={areaPts} fill="#f59e0b" opacity="0.14" />
-        <line x1="0" y1={MID} x2={W} y2={MID} stroke="#334155" strokeWidth="1" strokeDasharray="3 3" />
-        <polyline points={pts.join(" ")} fill="none" stroke="#f59e0b" strokeWidth="2.2" strokeLinejoin="round" />
-        {historyViewIndex !== null && moveEvaluations[historyViewIndex] && (
-          <g>
-            <line x1={xs(historyViewIndex)} y1="0" x2={xs(historyViewIndex)} y2={H} stroke="#f59e0b" strokeWidth="1.2" strokeDasharray="2 2" />
-            <circle cx={xs(historyViewIndex)} cy={yOf(historyViewIndex)} r="4.5" fill="#f59e0b" stroke="#090d16" strokeWidth="2" />
-          </g>
-        )}
-      </svg>
-    </div>
-  );
-}
-
 const ACCURACY_PENALTY: Record<string, number> = {
   Brilliant: 0, Best: 0, Excellent: 0, Forced: 0, Good: 2,
   Inaccuracy: 6, Mistake: 12, Blunder: 25, "Missed Win": 25,
@@ -174,26 +121,26 @@ function getTacticalCoachInsight(board: Board, turn: "W" | "B", whiteScore: numb
 
   if (Math.abs(whiteScore) >= 600) {
     const winningSide = whiteScore > 0 ? "White" : "Black";
-    title = `${winningSide} Has Forced Win (+${(Math.abs(whiteScore) / 100).toFixed(1)})`;
-    description = `${winningSide} holds an overwhelming, decisive winning line. ${pvChips[0] ? `Critical next strike: ${pvChips[0]}.` : "Look to convert with precision."}`;
+    title = `${winningSide} Has a Large Advantage`;
+    description = `${winningSide} has a large engine-estimated advantage; this is not proof of a forced win. ${pvChips[0] ? `Critical next strike: ${pvChips[0]}.` : "Look to convert with precision."}`;
     badge = "Decisive";
     tone = whiteScore > 0 ? (turn === "W" ? "success" : "warning") : (turn === "B" ? "success" : "warning");
   } else if (Math.abs(whiteScore) >= 200) {
     const winningSide = whiteScore > 0 ? "White" : "Black";
-    title = `${winningSide} Position Advantage (+${(Math.abs(whiteScore) / 100).toFixed(1)})`;
-    description = `${winningSide} commands superior board space and breakthrough paths. Top recommended sequence: ${pvChips.slice(0, 3).join(" → ") || "Keep applying pressure"}.`;
+    title = `${winningSide} Position Advantage`;
+    description = `The current search favors ${winningSide}. Candidate continuation: ${pvChips.slice(0, 3).join(" → ") || "Keep applying pressure"}.`;
     badge = "Advantage";
     tone = "success";
   } else if (kingDiff !== 0) {
     const leader = kingDiff > 0 ? "White" : "Black";
-    title = `${leader} King Domination (+${Math.abs(kingDiff)} King)`;
-    description = `Flying Kings can sweep entire diagonals in Nigerian draughts. Use high-speed sweeps to trap escaping enemy men.`;
+    title = `${leader} Has ${Math.abs(kingDiff)} More King${Math.abs(kingDiff) === 1 ? "" : "s"}`;
+    description = `Flying kings move along open diagonals. Check available captures and the opponent’s replies.`;
     badge = "King Advantage";
     tone = "success";
   } else if (matDiff !== 0) {
     const leader = matDiff > 0 ? "White" : "Black";
     title = `${leader} Material Lead (+${Math.abs(matDiff)} Pieces)`;
-    description = `${leader} is ahead in piece count. Simplify through favorable exchanges to cement victory.`;
+    description = `${leader} is ahead in piece count. Check the engine line before exchanging; material alone does not decide the result.`;
     badge = "Material Lead";
     tone = "success";
   } else if (pvChips.length > 0) {
@@ -228,8 +175,8 @@ const NIGERIAN_PRESETS = [
     fen: boardToScanFen({ 28: "w", 32: "w", 33: "w", 37: "w", 18: "b", 19: "b", 23: "b", 24: "b" }, "W"),
   },
   {
-    name: "Double Sacrifice Breakthrough",
-    desc: "Sacrifice tactic leading to unstoppable King promotion",
+    name: "Sacrifice Study",
+    desc: "Explore candidate captures and promotion paths",
     fen: boardToScanFen({ 27: "w", 31: "w", 36: "w", 16: "b", 21: "b", 26: "b" }, "W"),
   },
 ];
@@ -251,6 +198,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
   const [activeTab, setActiveTab] = useState<"engine" | "moves" | "practice" | "setup" | "archive">("engine");
   const [copiedFen, setCopiedFen] = useState(false);
   const [copiedPdn, setCopiedPdn] = useState(false);
+  const [toolError, setToolError] = useState("");
+  const initialTurn = props.initialTurn ?? "W";
   const [fenInput, setFenInput] = useState("");
   const [customBrushPiece, setCustomBrushPiece] = useState<Piece>("w");
 
@@ -277,14 +226,14 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
   }, [isPlaying, historyViewIndex, speedMs, moveHistory.length, onHistoryNavigate]);
 
   const analyzedCount = Object.keys(moveEvaluations).length;
-  const whiteAcc = calculateSideAccuracy(moveEvaluations, 0);
-  const blackAcc = calculateSideAccuracy(moveEvaluations, 1);
+  const whiteAcc = calculateSideAccuracy(moveEvaluations, initialTurn === "W" ? 0 : 1);
+  const blackAcc = calculateSideAccuracy(moveEvaluations, initialTurn === "W" ? 1 : 0);
 
-  const whiteScore = activeTurn === "W" ? engineEval.score : -engineEval.score;
-  const scoreNumber = (whiteScore / 100).toFixed(2);
-  const scoreLabel = whiteScore >= 0 ? `+${scoreNumber}` : scoreNumber;
+  const whiteScore = whiteEvaluation(engineEval, activeTurn);
+  const scoreLabel = evaluationLabel(engineEval, activeTurn);
+  const hasEvaluation = engineEval.ready && !engineEval.isThinking && !engineEval.error;
   const barPct = Math.max(4, Math.min(96, 50 + (Math.max(-600, Math.min(600, whiteScore)) / 600) * 46));
-  const pvChips = useMemo(() => pvToNigerian(engineEval.pv), [engineEval.pv]);
+  const pvChips = useMemo(() => pvToNigerian(engineEval.ready ? engineEval.pv : ""), [engineEval.pv, engineEval.ready]);
 
   const tactical = useMemo(
     () => getTacticalCoachInsight(renderBoard, activeTurn, whiteScore, pvChips),
@@ -297,25 +246,19 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
       await navigator.clipboard.writeText(fen);
       setCopiedFen(true);
       setTimeout(() => setCopiedFen(false), 1500);
-    } catch {}
+    } catch { setToolError("Clipboard unavailable. Use Export to save the game instead."); }
   };
 
   const copyPdnString = async () => {
     try {
-      const pdn = moveHistoryStrings
-        .map((mv, i) => (i % 2 === 0 ? `${Math.floor(i / 2) + 1}. ${mv}` : mv))
-        .join(" ");
-      await navigator.clipboard.writeText(pdn || "(no moves)");
+      await navigator.clipboard.writeText(analysisPdn(moveHistory.map(moveToNotationString), props.initialBoard ?? createInitialBoard(), initialTurn));
       setCopiedPdn(true);
       setTimeout(() => setCopiedPdn(false), 1500);
-    } catch {}
+    } catch { setToolError("Clipboard unavailable. Use Export to save the game instead."); }
   };
 
   const downloadPdnFile = () => {
-    const pdn = moveHistoryStrings
-      .map((mv, i) => (i % 2 === 0 ? `${Math.floor(i / 2) + 1}. ${mv}` : mv))
-      .join(" ");
-    const content = `[Event "Nigerian Draughts Analysis Session"]\n[Date "${new Date().toISOString().slice(0, 10)}"]\n[Result "*"]\n\n${pdn || "(no moves)"}\n`;
+    const content = analysisPdn(moveHistory.map(moveToNotationString), props.initialBoard ?? createInitialBoard(), initialTurn);
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -327,7 +270,10 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
 
   const handleLoadFen = (fenStr: string) => {
     try {
-      const res = scanFenToBoard(fenStr.trim());
+      const res = parseAnalysisPosition(fenStr);
+      setToolError("");
+      setIsPlaying(false);
+      setAnalysisPlayVsAI(false);
       if (props.onLoadPosition) props.onLoadPosition(res.board, res.turn);
       else { setBoard(res.board); setTurn(res.turn); }
       setMoveHistory([]);
@@ -337,8 +283,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
       setStatusMessage("Position loaded successfully!");
       playClickSound(muted);
       setFenInput("");
-    } catch {
-      alert("Invalid position. Paste the 51-character FEN copied from the board (W or B followed by 50 piece/empty markers).");
+    } catch (error) {
+      setToolError(error instanceof Error ? error.message : "Invalid position. Use W or B followed by 50 piece/empty markers.");
     }
   };
 
@@ -349,6 +295,12 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
 
   return (
     <div className="flex flex-col gap-2.5 h-full select-none text-slate-100 font-sans">
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-xs text-slate-300">
+        <p className="font-bold text-amber-300">{historyViewIndex === -1 ? "Starting position" : historyViewIndex === null ? "Current position" : `After move ${historyViewIndex + 1}`} · {activeTurn === "W" ? "White" : "Black"} to move</p>
+        <p className="mt-1">Tap a piece, then a highlighted square. Use Moves to replay, or Setup to load a position. All scores use White’s perspective.</p>
+      </div>
+      {props.reviewError && <p role="alert" className="text-xs text-rose-300 p-2">Review stopped: {props.reviewError}. Retry from Moves.</p>}
+      {toolError && <p role="alert" className="text-xs text-rose-300 p-2">{toolError}</p>}
       {/* ── Top Segment Switcher ────────────────────────────────────── */}
       <div className="grid grid-cols-5 gap-1 bg-slate-950 border border-slate-800/90 rounded-2xl p-1 shrink-0 shadow-lg">
         {[
@@ -382,6 +334,13 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
       {/* ── TAB 1: ENGINE & LIVE EVAL ──────────────────────────────── */}
       {activeTab === "engine" && (
         <div className="flex flex-col gap-2.5 overflow-y-auto pr-0.5">
+          <label className="flex justify-between items-center text-xs text-slate-300">Analysis time per position
+            <select aria-label="Analysis time per position" value={props.analysisTimeMs ?? 1500} onChange={event => props.onAnalysisTimeChange?.(Number(event.target.value))} className="rounded bg-slate-900 border border-slate-700 p-2">
+              <option value={1500}>Quick · 1.5 seconds</option><option value={5000}>Deeper · 5 seconds</option><option value={15000}>Deep · 15 seconds</option>
+            </select>
+          </label>
+          {engineEval.error && <div role="alert" className="text-xs text-rose-300 p-3 border border-rose-500/30 rounded-xl">{engineEval.error}<button className="ml-2 underline" onClick={props.onRetryAnalysis}>Retry analysis</button></div>}
+          {engineEval.terminal && <p role="status" className="text-xs text-amber-300">{scoreLabel}: {engineEval.terminal.reason}</p>}
           {/* Main Eval Display Card */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex flex-col gap-3 shadow-md">
             <div className="flex items-center justify-between">
@@ -391,7 +350,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
                 </div>
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 block font-mono">
-                    Ken Neural AI
+                    Ken Analysis Engine
                   </span>
                   <span className="text-[9px] text-slate-400 font-semibold">
                     10x10 Nigerian Draughts Engine
@@ -401,11 +360,11 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
 
               {engineEval.isThinking ? (
                 <span className="text-[9px] bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-bold animate-pulse flex items-center gap-1 font-mono">
-                  <Loader2 className="w-2.5 h-2.5 animate-spin" /> Depth {engineEval.depth || 20}
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" /> Analyzing position
                 </span>
               ) : (
                 <span className="text-[9px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold flex items-center gap-1 font-mono">
-                  <CheckCircle2 className="w-2.5 h-2.5" /> Ready (D{engineEval.depth || 20})
+                  <CheckCircle2 className="w-2.5 h-2.5" /> {engineEval.error ? "Unavailable" : engineEval.terminal ? "Position complete" : hasEvaluation ? `Depth ${engineEval.depth}` : isReviewing ? "Review running" : "Waiting"}
                 </span>
               )}
             </div>
@@ -427,11 +386,11 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
                   />
                 </div>
                 <div className="flex justify-between text-[8px] font-mono font-bold uppercase">
-                  <span className="text-amber-300">White {barPct.toFixed(0)}%</span>
+                  <span className="text-amber-300">White advantage</span>
                   <span className="text-slate-500 flex items-center gap-1">
-                    <Gauge className="w-2.5 h-2.5" /> Depth {engineEval.depth || 20}
+                    <Gauge className="w-2.5 h-2.5" /> Depth {hasEvaluation ? engineEval.depth : "—"}
                   </span>
-                  <span className="text-sky-300">Black {(100 - barPct).toFixed(0)}%</span>
+                  <span className="text-sky-300">Black advantage</span>
                 </div>
               </div>
             </div>
@@ -447,7 +406,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
               <div className="flex flex-wrap gap-1 bg-slate-950 p-2 rounded-xl border border-slate-850">
                 {pvChips.length === 0 ? (
                   <span className="text-[10px] text-slate-500 italic font-sans flex items-center gap-1.5 py-1">
-                    <Loader2 className="w-3 h-3 animate-spin text-amber-400" /> Computing best continuation...
+                    {engineEval.isThinking ? "Analyzing the displayed position…" : engineEval.error ? "No engine result available." : isReviewing ? "Game review is running. Live analysis resumes afterwards." : "No continuation available."}
                   </span>
                 ) : (
                   pvChips.map((mv, i) => (
@@ -468,7 +427,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
           </div>
 
           {/* Smart AI Tactical Coach Card */}
-          <div className={`border rounded-2xl p-3.5 flex flex-col gap-2 transition shadow-md ${
+          {hasEvaluation && !engineEval.terminal && <div className={`border rounded-2xl p-3.5 flex flex-col gap-2 transition shadow-md ${
             tactical.tone === "success"
               ? "bg-emerald-950/20 border-emerald-500/30 text-emerald-200"
               : tactical.tone === "warning"
@@ -491,6 +450,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
             </div>
           </div>
 
+          }
+          <p className="text-[10px] text-slate-400">Engine estimates are not win probabilities. A deeper search may change the suggested line.</p>
           {/* Quick Position Tools & Export */}
           <div className="grid grid-cols-3 gap-1.5">
             <button
@@ -521,6 +482,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
       {/* ── TAB 2: MOVES & GAME REVIEW ──────────────────────────────── */}
       {activeTab === "moves" && (
         <div className="flex flex-col gap-2.5 flex-grow min-h-0 bg-slate-900/80 border border-slate-800 rounded-2xl p-3.5 shrink-0 shadow-md">
+          {props.reviewError && <p role="alert" className="text-xs text-rose-300">Review stopped: {props.reviewError}. Completed grades remain available; retry the review.</p>}
+          <p className="text-[10px] text-slate-400">Quality percentages are heuristic summaries of reviewed moves, not a measured playing strength.</p>
           {/* Review Accuracy Header */}
           <div className="flex items-center justify-between shrink-0">
             <span className="text-[10px] text-slate-300 font-extrabold uppercase tracking-wide flex items-center gap-1.5">
@@ -567,6 +530,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
           {/* Flow Graph */}
           {moveHistory.length > 1 && (
             <EvalFlowGraph
+              initialTurn={initialTurn}
               moveEvaluations={moveEvaluations}
               count={moveHistory.length}
               historyViewIndex={historyViewIndex}
@@ -594,9 +558,9 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
             </div>
           ) : (
             <div className="flex-grow overflow-y-auto border border-slate-950 rounded-xl bg-slate-950 divide-y divide-slate-900/80 font-mono text-[11px]">
-              {Array.from({ length: Math.ceil(moveHistory.length / 2) }).map((_, idx) => {
-                const whiteIdx = idx * 2;
-                const blackIdx = idx * 2 + 1;
+              {Array.from({ length: Math.ceil((moveHistory.length + (initialTurn === "B" ? 1 : 0)) / 2) }).map((_, idx) => {
+                const whiteIdx = initialTurn === "W" ? idx * 2 : idx * 2 - 1;
+                const blackIdx = initialTurn === "W" ? idx * 2 + 1 : idx * 2;
                 const whiteMvStr = moveHistoryStrings[whiteIdx];
                 const blackMvStr = moveHistoryStrings[blackIdx] || "";
                 const isWhiteViewed = historyViewIndex === whiteIdx;
@@ -611,7 +575,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
                     </span>
                     <div className="flex-1 flex items-center">
                       <button
-                        onClick={() => onHistoryNavigate(whiteIdx)}
+                        onClick={() => whiteIdx >= 0 && onHistoryNavigate(whiteIdx)}
                         className={`text-left font-bold flex items-center justify-between px-2 py-0.5 rounded-lg transition w-full cursor-pointer ${
                           isWhiteViewed ? "bg-amber-500 text-slate-950 font-black" : "text-amber-100 hover:bg-slate-900"
                         }`}
@@ -652,19 +616,19 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
             <div className="flex flex-col gap-2 border-t border-slate-800 pt-2 shrink-0">
               <div className="flex items-center justify-center gap-1">
                 <button
-                  onClick={() => { setIsPlaying(false); onHistoryNavigate(0); }}
-                  disabled={historyViewIndex === 0}
+                  onClick={() => { setIsPlaying(false); onHistoryNavigate(-1); }}
+                  disabled={historyViewIndex === -1}
                   className="p-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-25 transition cursor-pointer"
-                  title="First move"
+                  title="Starting position"
                 >
                   <SkipBack className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => {
                     setIsPlaying(false);
-                    onHistoryNavigate(historyViewIndex === null ? moveHistory.length - 2 : Math.max(0, historyViewIndex - 1));
+                    onHistoryNavigate(historyViewIndex === null ? moveHistory.length - 2 : Math.max(-1, historyViewIndex - 1));
                   }}
-                  disabled={historyViewIndex === 0}
+                  disabled={historyViewIndex === -1}
                   className="p-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-25 transition cursor-pointer"
                   title="Previous move"
                 >
@@ -673,7 +637,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
                 <button
                   onClick={() => {
                     const atEnd = historyViewIndex === null || historyViewIndex >= moveHistory.length - 1;
-                    if (atEnd) onHistoryNavigate(0);
+                    if (atEnd) onHistoryNavigate(-1);
                     setIsPlaying((p) => !p);
                   }}
                   className="p-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 transition cursor-pointer shadow-md"
@@ -708,13 +672,13 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
                     onClick={() => { setIsPlaying(false); onContinueFromHistory(); }}
                     className="flex-1 py-1.5 px-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500 hover:text-slate-950 font-bold text-[11px] transition cursor-pointer"
                   >
-                    Play From This Ply
+                    Explore from here
                   </button>
                   <button
                     onClick={() => { setIsPlaying(false); onResetHistoryView(); }}
                     className="flex-1 py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[11px] transition cursor-pointer"
                   >
-                    Return to Live
+                    Return to latest
                   </button>
                 </div>
               )}
@@ -803,13 +767,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => {
-                setBoard(createInitialBoard());
-                setTurn("W");
-                setMoveHistory([]);
-                setMoveEvaluations({});
-                if (props.setHistoryViewIndex) props.setHistoryViewIndex(null);
-                setLastAnalysisEval(null);
-                setStatusMessage("Reset to starting 20v20 position.");
+                handleLoadFen(boardToScanFen(createInitialBoard(), "W"));
                 playClickSound(muted);
               }}
               className="py-2.5 px-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/40 text-slate-200 font-bold text-xs transition cursor-pointer"
@@ -818,29 +776,21 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
             </button>
             <button
               onClick={() => {
-                const emptyBoard: Board = {};
-                for (let sq = 1; sq <= 50; sq++) emptyBoard[sq] = null;
-                setBoard(emptyBoard);
-                setTurn("W");
-                setMoveHistory([]);
-                setMoveEvaluations({});
-                if (props.setHistoryViewIndex) props.setHistoryViewIndex(null);
-                setLastAnalysisEval(null);
-                setStatusMessage("Board cleared. Set up your custom position.");
+                props.onEditPosition?.();
                 playClickSound(muted);
               }}
               className="py-2.5 px-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-rose-500/40 text-rose-300 font-bold text-xs transition cursor-pointer"
             >
-              Clear Board (Blank)
+              Open board editor
             </button>
           </div>
 
           {/* Turn Toggle */}
           <div className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-850">
-            <span className="text-xs font-bold text-slate-300">Active Side to Move:</span>
+            <span className="text-xs font-bold text-slate-300">Side to move (starts a new study):</span>
             <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-800">
               <button
-                onClick={() => setTurn("W")}
+                onClick={() => handleLoadFen(boardToScanFen(renderBoard, "W"))}
                 className={`px-3 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
                   activeTurn === "W" ? "bg-amber-500 text-slate-950 font-black" : "text-slate-400"
                 }`}
@@ -848,7 +798,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
                 White
               </button>
               <button
-                onClick={() => setTurn("B")}
+                onClick={() => handleLoadFen(boardToScanFen(renderBoard, "B"))}
                 className={`px-3 py-1 rounded-md text-xs font-bold transition cursor-pointer ${
                   activeTurn === "B" ? "bg-amber-500 text-slate-950 font-black" : "text-slate-400"
                 }`}

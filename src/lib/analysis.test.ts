@@ -51,4 +51,15 @@ describe("analysis correctness", () => {
     const move = generateLegalMoves(createInitialBoard(), "W")[0];
     await expect(analyzeMoveHistory([move])).rejects.toThrow("engine unavailable");
   });
+  it('does not grade a superseded review after its engine request completes', async () => {
+    const controller = new AbortController(); controller.abort();
+    const onMove = vi.fn();
+    const move = generateLegalMoves(createInitialBoard(), 'W')[0];
+    await expect(analyzeMoveHistory([move], undefined, undefined, 'W', controller.signal, onMove)).rejects.toThrow();
+    expect(onMove).not.toHaveBeenCalled(); expect(analyzeKen).not.toHaveBeenCalled();
+  });
+  it('does not call the engine top choice a blunder because separate searches disagree', () => {
+    const board = createInitialBoard(); const move = generateLegalMoves(board, 'W')[0];
+    expect(classifyMove(board, 'W', move, { score: 500, bestMove: move }, { score: 100, bestMove: null }).quality).toBe('Best');
+  });
 });

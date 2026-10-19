@@ -19,7 +19,7 @@ export function offlineKenMove(board: Board, turn: 'W' | 'B', seconds = 5, depth
       const result = data.result;
       const parsed = typeof result?.move === 'string' && hubMoveStringToNigerian(result.move);
       const canonical = parsed && legal.find(move => movesAreEquivalent(move, parsed));
-      if (!canonical || !Number.isFinite(result.score)) { fail(new Error(data.error || 'Offline engine returned an invalid move.')); return; }
+      if (!canonical || !Number.isFinite(result.score) || Math.abs(result.score) > 10000) { fail(new Error(data.error || 'Offline engine returned an invalid evaluation.')); return; }
       cleanup();
       resolve({ move: canonical, score: result.score, depth: result.depth, nodes: result.nodes, pv: result.pv });
     };

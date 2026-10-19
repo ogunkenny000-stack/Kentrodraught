@@ -334,3 +334,16 @@ button:disabled { cursor:not-allowed; }
   .k-hero-footnote {line-height:1.4;}
   .k-destination {min-height:118px;}
 }
+.k-match-screen.k-analysis-workspace .k-match-stage {
+  width:calc(var(--analysis-board-size,420px) + 36px)!important;
+  max-width:100%!important;
+  height:var(--analysis-board-size,420px)!important;
+  aspect-ratio:auto;
+}
+.k-match-screen.k-analysis-workspace .k-match-stage>[class*="aspect-square"] {
+  width:var(--analysis-board-size,420px)!important;
+  height:var(--analysis-board-size,420px)!important;
+  flex-shrink:0;
+}
+
+.k-match-screen.k-analysis-workspace { overflow-y:auto; }

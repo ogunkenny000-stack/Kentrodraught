@@ -1,3 +1,4 @@
+import { whiteEvaluation, evaluationLabel } from "../../lib/analysisPresentation";
 import React, { useState, useEffect, useRef } from "react";
 import {
   ListOrdered, Cpu, LineChart, Info, MessageSquare, Check, Sparkles,
@@ -13,6 +14,7 @@ import { QUALITY_BADGE_CLASSES, QUALITY_BADGE_ABBREV } from "../../lib/constants
 export interface MobileBoardDockProps {
   playMode: PlayMode;
   turn: "W" | "B";
+  initialTurn?: "W" | "B";
   moveHistory: Move[];
   moveHistoryStrings: string[];
   historyViewIndex: number | null;
@@ -55,6 +57,7 @@ export interface MobileBoardDockProps {
 export function MobileBoardDock({
   playMode,
   turn,
+  initialTurn = "W",
   moveHistory,
   moveHistoryStrings,
   historyViewIndex,
@@ -105,8 +108,8 @@ export function MobileBoardDock({
     if (el) el.scrollTop = el.scrollHeight;
   }, [chatCount, activeSubView]);
 
-  const whiteScore = turn === "W" ? engineEval.score : -engineEval.score;
-  const scoreLabel = `${whiteScore >= 0 ? "+" : ""}${(whiteScore / 100).toFixed(1)}`;
+  const whiteScore = whiteEvaluation(engineEval, turn);
+  const scoreLabel = evaluationLabel(engineEval, turn);
   const currentPly = historyViewIndex !== null ? historyViewIndex : moveHistory.length > 0 ? moveHistory.length - 1 : null;
 
   // Move step controls
@@ -114,8 +117,8 @@ export function MobileBoardDock({
     if (moveHistory.length === 0) return;
     if (historyViewIndex === null) {
       if (moveHistory.length >= 2) onHistoryNavigate(moveHistory.length - 2);
-      else onHistoryNavigate(0);
-    } else if (historyViewIndex > 0) {
+      else onHistoryNavigate(-1);
+    } else if (historyViewIndex > -1) {
       onHistoryNavigate(historyViewIndex - 1);
     }
   };
@@ -130,7 +133,7 @@ export function MobileBoardDock({
   };
 
   const handleFirstMove = () => {
-    if (moveHistory.length > 0) onHistoryNavigate(0);
+    if (moveHistory.length > 0) onHistoryNavigate(-1);
   };
 
   const handleLastMove = () => {
@@ -139,12 +142,12 @@ export function MobileBoardDock({
 
   // Group moves into pairs: [Move 1: W, B], [Move 2: W, B]
   const movePairs: { index: number; white?: { text: string; ply: number }; black?: { text: string; ply: number } }[] = [];
-  for (let i = 0; i < moveHistoryStrings.length; i += 2) {
-    movePairs.push({
-      index: Math.floor(i / 2) + 1,
-      white: { text: moveHistoryStrings[i], ply: i },
-      black: i + 1 < moveHistoryStrings.length ? { text: moveHistoryStrings[i + 1], ply: i + 1 } : undefined,
-    });
+  for (let row = 0; row < Math.ceil((moveHistoryStrings.length + (initialTurn === "B" ? 1 : 0)) / 2); row++) {
+    const w = initialTurn === "W" ? row * 2 : row * 2 - 1;
+    const b = initialTurn === "W" ? row * 2 + 1 : row * 2;
+    movePairs.push({ index: row + 1,
+      white: w >= 0 && w < moveHistoryStrings.length ? { text: moveHistoryStrings[w], ply: w } : undefined,
+      black: b < moveHistoryStrings.length ? { text: moveHistoryStrings[b], ply: b } : undefined });
   }
 
   return (
@@ -167,7 +170,7 @@ export function MobileBoardDock({
 
           <span className="text-[10px] font-extrabold text-slate-300 font-sans truncate max-w-[120px] sm:max-w-[180px]">
             {historyViewIndex !== null
-              ? `Move #${historyViewIndex + 1}`
+              ? historyViewIndex === -1 ? "Starting position" : `Move #${historyViewIndex + 1}`
               : isThinking
               ? "Ken is thinking..."
               : isComputerMode
@@ -321,7 +324,7 @@ export function MobileBoardDock({
               <div className="flex items-center gap-1">
                 <button
                   onClick={handleFirstMove}
-                  disabled={moveHistory.length === 0 || historyViewIndex === 0}
+                  disabled={moveHistory.length === 0 || historyViewIndex === -1}
                   className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30 cursor-pointer"
                   title="First move"
                 >
@@ -329,7 +332,7 @@ export function MobileBoardDock({
                 </button>
                 <button
                   onClick={handleStepBack}
-                  disabled={moveHistory.length === 0 || historyViewIndex === 0}
+                  disabled={moveHistory.length === 0 || historyViewIndex === -1}
                   className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-30 cursor-pointer"
                   title="Previous move"
                 >
