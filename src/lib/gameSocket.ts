@@ -5,8 +5,8 @@
 //     are ignored so a stale socket can never clobber the live one (H1)
 //   - send(msg): queues while CONNECTING, refuses non-idempotent game
 //     actions while disconnected and reports that as a UI event (H2)
-//   - exponential backoff 1 s -> 30 s with jitter (M6)
-//   - app-level ping every 15 s, reconnect after 2 missed pongs, and a
+//   - exponential backoff 250 ms -> 5 s with jitter (M6)
+//   - app-level ping every 5 s, reconnect after 2 missed pongs, and a
 //     server-time offset refreshed from every pong (contract section 5)
 //   - session token persisted in localStorage (sessionStorage fallback) under `kd.session.<user>`
 //     and presented with every login; `session-replaced` stops reconnecting
@@ -124,6 +124,7 @@ export class GameSocket {
   private queue: object[] = [];
   private attempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pendingPings = 0;
   /** True when auto-reconnect is disabled (signed out, session replaced, name taken). */
@@ -150,8 +151,8 @@ export class GameSocket {
     this.now = opts.now ?? (() => Date.now());
     this.random = opts.random ?? Math.random;
     this.pingIntervalMs = opts.pingIntervalMs ?? CLIENT_PING_INTERVAL_MS;
-    this.minBackoffMs = opts.minBackoffMs ?? 1_000;
-    this.maxBackoffMs = opts.maxBackoffMs ?? 30_000;
+    this.minBackoffMs = opts.minBackoffMs ?? 250;
+    this.maxBackoffMs = opts.maxBackoffMs ?? 5_000;
     this.maxQueue = opts.maxQueue ?? 50;
 
     if (typeof window !== "undefined") {
@@ -376,6 +377,8 @@ export class GameSocket {
   /** Detach the current socket so its later close/error events are ignored. */
   private teardownSocket(): void {
     this.stopPing();
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
     const s = this.ws;
     this.ws = null;
     this.loggedIn = false;
@@ -414,6 +417,10 @@ export class GameSocket {
     }
     this.ws = socket;
     this.setStatus("connecting");
+    // Bound both a stalled transport handshake and a missing login response.
+    this.connectTimer = setTimeout(() => {
+      if (socket === this.ws && !this.loggedIn) this.forceReconnect();
+    }, 8000);
 
     socket.onopen = () => {
       if (socket !== this.ws) return; // superseded
@@ -497,6 +504,8 @@ export class GameSocket {
         break;
       }
       case "login-success": {
+        if (this.connectTimer) clearTimeout(this.connectTimer);
+        this.connectTimer = null;
         this.loggedIn = true;
         this.attempts = 0;
         this.setStatus("connected");

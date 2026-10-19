@@ -131,6 +131,23 @@ try {
     assert(r.ok, `${model.turn === "B" ? "White" : "Black"} played ${r.mv.from}-${r.mv.to}${r.mv.caps.length ? " (capture)" : ""}`);
   }
 
+  section("3b. Premove uses the fresh opponent board exactly once");
+  {
+    const mover = model.turn === "W" ? white : black;
+    const waiting = mover === white ? black : white;
+    const opponentMove = pickMove();
+    const nextBoard = applyMove(model.board, opponentMove).board;
+    const waitingTurn = model.turn === "W" ? "B" : "W";
+    const queued = generateLegalMoves(nextBoard, waitingTurn).find(m => m.caps.length === 0);
+    if (!queued) throw new Error("Premove fixture needs a quiet continuation");
+    await clickSquare(waiting, queued.from); await clickSquare(waiting, queued.to);
+    const relayed = await play(mover, waiting); assert(relayed.ok, "opponent move reaches the queued player");
+    await mover.waitForFunction((from,to) => !document.querySelector(`#square-${from} .kentro-royal-piece`) && !!document.querySelector(`#square-${to} .kentro-royal-piece`), {timeout:10000}, queued.from,queued.to);
+    model.board=applyMove(model.board,queued).board; model.turn=waitingTurn === "W" ? "B" : "W";
+    assert(await hasPiece(waiting,queued.to) && !await hasPiece(waiting,queued.from), "premove is identical locally and on the opponent board");
+    assert(!/move was rejected|illegal move/i.test(await waiting.evaluate(()=>document.body.innerText)), "premove causes no move rejection");
+  }
+
   section("4. Server clocks are shown and tick for the side to move");
   const c0 = await clockTexts(white);
   assert(c0.length >= 2, `clocks visible: ${c0.join(" | ")}`);

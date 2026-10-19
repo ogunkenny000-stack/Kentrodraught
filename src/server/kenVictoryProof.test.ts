@@ -22,7 +22,7 @@ function submission(winner: 'W' | 'B', level = 3) {
   return { ownerId, gameId, level, mode: winner === 'W' ? 'Human_vs_AI' : 'AI_vs_Human', moves };
 }
 describe('complete Ken victory verification', () => {
-  it.each([3, 4, 5, 6, 7])('accepts a legal server-attested level %i win for either human color', level => {
+  it.each([2, 3, 4, 5, 6, 7])('accepts a legal server-attested level %i win for either human color', level => {
     for (const winner of ['W', 'B'] as const) expect(verifyKenVictory(submission(winner, level), secret)).toEqual({ ok: true });
   });
   it('rejects fabricated wins, missing signatures, owner/game/level changes, and unfinished games', () => {

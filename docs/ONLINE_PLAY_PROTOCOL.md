@@ -105,12 +105,17 @@ Shared TypeScript types live in `src/shared/protocol.ts` (import from both
 
 ## 5. Heartbeat / time sync
 
-- Client -> `ping { t }` every 15 s; server -> `pong { t, serverNow }`.
+- Client -> `ping { t }` every 5 s; server -> `pong { t, serverNow }`.
   Client reconnects after 2 missed pongs and refreshes `offset` from each pong.
 - Server sends ws-level pings every 20 s and terminates after three missed
   heartbeats. Receiving a message or a pong marks that socket alive.
 
 ## 6. Reconnect / resync
+
+Client retries start after 250 ms and back off to at most 5 s with jitter.
+An uncompleted transport/login handshake is retried after 8 s; foreground/network
+wake events trigger recovery immediately. Non-idempotent moves are never queued
+for replay across a disconnected transport.
 
 - After a successful `login` with a token whose user has a seat in a room
   (playing or lobby) the server sends `room-rejoined` with the FULL

@@ -172,14 +172,14 @@ try {
     assert.equal(Number((await db.query("select count(*) n from kentro_match_charges where match_id='fail-charge'")).rows[0].n), 0);
     await db.exec('drop trigger rehearsal_fail on coin_transactions; drop function rehearsal_fail()');
   });
-  await check('paid AI unlock charges once, while verified Ken 3 through 8 progression is free and replay-safe', async () => {
+  await check('paid AI unlock charges once, while verified Ken 2 through 8 progression is free and replay-safe', async () => {
     let before = await balance('alice');
     const unlocked = await result('select kentro_unlock_ai($1,\'alice\',4,50) result', [ids.alice]); assert.equal(unlocked.ok, true);
     assert.equal(await balance('alice'), before - 50);
     assert.equal((await result('select kentro_unlock_ai($1,\'alice\',4,50) result', [ids.alice])).alreadyUnlocked, true);
     assert.equal(await balance('alice'), before - 50);
     before = await balance('bob'); const ledgerCount = (await db.query('select count(*) n from coin_transactions')).rows[0].n;
-    for (let level = 3; level <= 7; level++) {
+    for (let level = 2; level <= 7; level++) {
       const game = randomUUID(); const values = [ids.bob, game, level];
       assert.equal((await asRole('service_role', () => result('select kentro_claim_ken_victory($1,$2,$3) result', values))).maxUnlockedKenLevel, level + 1);
       assert.equal((await result('select kentro_claim_ken_victory($1,$2,$3) result', values)).alreadyClaimed, true);

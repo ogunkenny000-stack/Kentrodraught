@@ -115,12 +115,12 @@ describe("GameSocket", () => {
     expect(last().sent.map((m) => m.type)).toEqual(["login", "list-live-rooms"]);
   });
 
-  it("backs off exponentially from 1 s to 30 s", () => {
+  it("backs off exponentially from 250 ms to 5 s", () => {
     const { gs } = makeSocket();
     gs.connect("alice");
     last().open();
 
-    const expected = [1000, 2000, 4000, 8000, 16000, 30000, 30000];
+    const expected = [250, 500, 1000, 2000, 4000, 5000, 5000];
     for (const delay of expected) {
       const count = FakeWebSocket.instances.length;
       last().serverClose();
@@ -174,13 +174,13 @@ describe("GameSocket", () => {
     expect(events.filter((e) => e.kind === "status" && e.status === "disconnected")).toHaveLength(0);
   });
 
-  it("pings every 15 s, refreshes the offset from pongs and reconnects after 2 missed pongs", () => {
+  it("pings every 5 s, refreshes the offset from pongs and reconnects after 2 missed pongs", () => {
     const { gs, events } = makeSocket();
     gs.connect("alice");
     last().open();
     const sock = last();
 
-    vi.advanceTimersByTime(15_000);
+    vi.advanceTimersByTime(5_000);
     expect(sock.sent.filter((m) => m.type === "ping")).toHaveLength(1);
     expect(sock.sent[sock.sent.length - 1].t).toBe(Date.now());
 
@@ -189,12 +189,12 @@ describe("GameSocket", () => {
     expect(events.some((e) => e.kind === "offset" && e.offset === 5_000)).toBe(true);
 
     // Two unanswered pings, then the third tick drops the socket.
-    vi.advanceTimersByTime(15_000);
-    vi.advanceTimersByTime(15_000);
+    vi.advanceTimersByTime(5_000);
+    vi.advanceTimersByTime(5_000);
     expect(sock.sent.filter((m) => m.type === "ping")).toHaveLength(3);
     expect(gs.getStatus()).toBe("connected");
     const count = FakeWebSocket.instances.length;
-    vi.advanceTimersByTime(15_000);
+    vi.advanceTimersByTime(5_000);
     expect(gs.getStatus()).toBe("disconnected");
     expect(sock.readyState).toBe(3);
     vi.advanceTimersByTime(1000);
@@ -286,5 +286,15 @@ describe("GameSocket", () => {
     vi.advanceTimersByTime(60_000);
     expect(FakeWebSocket.instances.length).toBe(count);
     expect(gs.getUsername()).toBeNull();
+  });
+});
+
+describe("connection handshake deadlines", () => {
+  beforeEach(()=>{ FakeWebSocket.instances=[];vi.useFakeTimers(); });
+  afterEach(()=>vi.useRealTimers());
+  it.each([false,true])("retries a stalled transport/login instead of waiting indefinitely (opened=%s)", opened=>{
+    const {gs}=makeSocket();gs.connect("deadline");const first=last();if(opened)first.open(false);
+    vi.advanceTimersByTime(8000);expect(first.readyState).toBe(3);
+    vi.advanceTimersByTime(250);expect(last()).not.toBe(first);gs.disconnect();
   });
 });

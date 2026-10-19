@@ -23,6 +23,8 @@ export interface AnalysisSidebarProps {
   isReviewing: boolean;
   reviewProgress: number;
   onRunAIGameReview: () => void;
+  onCancelReview?: () => void;
+  reviewPaused?: boolean;
   historyViewIndex: number | null;
   onHistoryNavigate: (index: number) => void;
   onContinueFromHistory: () => void;
@@ -299,6 +301,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
         <p className="font-bold text-amber-300">{historyViewIndex === -1 ? "Starting position" : historyViewIndex === null ? "Current position" : `After move ${historyViewIndex + 1}`} · {activeTurn === "W" ? "White" : "Black"} to move</p>
         <p className="mt-1">Tap a piece, then a highlighted square. Use Moves to replay, or Setup to load a position. All scores use White’s perspective.</p>
       </div>
+      {isReviewing && <button type="button" onClick={props.onCancelReview} className="text-xs text-amber-300 underline p-2">Pause depth-30 review</button>}
+      {props.reviewPaused && <p role="status" className="text-xs text-slate-300 p-2">Review paused. Resume from Moves; completed positions stay cached.</p>}
       {props.reviewError && <p role="alert" className="text-xs text-rose-300 p-2">Review stopped: {props.reviewError}. Retry from Moves.</p>}
       {toolError && <p role="alert" className="text-xs text-rose-300 p-2">{toolError}</p>}
       {/* ── Top Segment Switcher ────────────────────────────────────── */}
@@ -335,8 +339,8 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
       {activeTab === "engine" && (
         <div className="flex flex-col gap-2.5 overflow-y-auto pr-0.5">
           <label className="flex justify-between items-center text-xs text-slate-300">Analysis time per position
-            <select aria-label="Analysis time per position" value={props.analysisTimeMs ?? 1500} onChange={event => props.onAnalysisTimeChange?.(Number(event.target.value))} className="rounded bg-slate-900 border border-slate-700 p-2">
-              <option value={1500}>Quick · 1.5 seconds</option><option value={5000}>Deeper · 5 seconds</option><option value={15000}>Deep · 15 seconds</option>
+            <select aria-label="Analysis time per position" value={props.analysisTimeMs ?? 0} onChange={event => props.onAnalysisTimeChange?.(Number(event.target.value))} className="rounded bg-slate-900 border border-slate-700 p-2">
+              <option value={0}>Depth 30 · full search</option><option value={1500}>Quick · 1.5 seconds</option><option value={5000}>Deeper · 5 seconds</option><option value={15000}>Deep · 15 seconds</option>
             </select>
           </label>
           {engineEval.error && <div role="alert" className="text-xs text-rose-300 p-3 border border-rose-500/30 rounded-xl">{engineEval.error}<button className="ml-2 underline" onClick={props.onRetryAnalysis}>Retry analysis</button></div>}
@@ -546,7 +550,7 @@ export function AnalysisSidebar(props: AnalysisSidebarProps) {
               className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 hover:brightness-110 disabled:opacity-50 transition cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>{isReviewing ? `Analyzing Game… ${reviewProgress}%` : "Run Full AI Game Review"}</span>
+              <span>{isReviewing ? `Depth-30 review… ${reviewProgress}%` : "Run / Resume Depth-30 Review"}</span>
             </button>
           )}
 

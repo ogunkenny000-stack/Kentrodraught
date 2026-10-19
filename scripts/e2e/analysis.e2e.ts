@@ -5,8 +5,11 @@ const browser = await launchChrome();
 const page = await browser.newPage();
 const errors: string[] = [];
 async function click(text: string) {
+  await page.waitForFunction((t:string) => [...document.querySelectorAll<HTMLButtonElement>('button')].some(b=>b.getClientRects().length && b.textContent?.trim().startsWith(t)),{},text);
   const handle = await page.evaluateHandle((t: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.getClientRects().length && b.textContent?.trim().startsWith(t)) ?? null, text);
   const element = handle.asElement(); if (!element) throw new Error(`Missing visible button: ${text}`);
+  await element.evaluate(button=>button.scrollIntoView({block:'center'}));
+  await page.waitForFunction(button=>{const r=button.getBoundingClientRect();return button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));},{},element);
   await element.asLocator().click(); await handle.dispose();
 }
 try {
@@ -16,7 +19,7 @@ try {
   const cdp = await page.createCDPSession();
   await cdp.send('Network.enable');
   await cdp.send('Network.setBlockedURLs', { urls: ['https://*', 'wss://*', 'ws://*'] });
-  page.on('pageerror', error => errors.push(String(error)));
+  page.on('pageerror', error => { if (/WebSocket closed without opened/.test(String(error)) && /\/@vite\/client/.test(String((error as Error).stack))) return; errors.push(String(error)); });
   await page.evaluateOnNewDocument(`window.__workers=[]; const OriginalWorker=window.Worker; window.Worker=class extends OriginalWorker { constructor(...args){ super(...args); const record={url:args[0],started:Date.now()}; window.__workers.push(record); this.addEventListener('message',event=>record.result=event.data); this.addEventListener('error',event=>record.error=event.message); const stop=this.terminate.bind(this); this.terminate=()=>{record.stopped=Date.now();stop();}; }};`);
   await page.evaluateOnNewDocument("localStorage.setItem('kentro_splash_seen','true');sessionStorage.setItem('kentro_splash_seen','true');");
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
@@ -25,9 +28,12 @@ try {
   await click('Explore a New Position');
   await waitForText(page, 'Analysis Workspace');
   await waitForText(page, 'Ken Analysis Engine');
+  assert(await page.$eval('[aria-label="Analysis time per position"]', e => (e as HTMLSelectElement).value === '0'), 'depth 30 is the default analysis mode');
+  await page.select('[aria-label="Analysis time per position"]', '1500');
   await page.waitForFunction(() => /Depth \d+/.test(document.body.innerText), { timeout: 30000 });
   await snapshot(page, 'analysis-01-desktop');
   await click('Setup');
+  await page.waitForSelector('#analysis-fen');
   await page.type('#analysis-fen', 'invalid'); await click('Load');
   await waitForText(page, 'Invalid SCAN FEN');
   assert(!!await page.$('#square-31'), 'invalid setup preserves the current board');
@@ -48,7 +54,7 @@ try {
   await page.select('[aria-label="Analysis time per position"]', '1500');
   const first = generateLegalMoves(createInitialBoard(), 'W')[0];
   await page.click(`#square-${first.from}`); await page.click(`#square-${first.to}`);
-  await click('Moves'); await waitForText(page, '1/1 moves graded');
+  await click('Moves'); await waitForText(page, 'Pause depth-30 review'); await click('Pause depth-30 review'); await waitForText(page, 'Review paused');
   await page.keyboard.press('Home'); await waitForText(page, 'Starting position');
   await page.keyboard.press('ArrowRight'); await waitForText(page, 'After move 1');
   await page.keyboard.press('End'); await waitForText(page, 'Current position');

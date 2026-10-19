@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { offlineKenMove } from './offlineKen';
-import { createInitialBoard } from '../gameLogic';
+import { createInitialBoard, generateLegalMoves, moveToHubString } from '../gameLogic';
 class FixtureWorker {
   static latest: FixtureWorker;
   onmessage: ((event: {data: unknown}) => void) | null = null;
@@ -35,4 +35,16 @@ describe('offline engine failure recovery', () => {
     await vi.advanceTimersByTimeAsync(65000); await assertion;
     expect(FixtureWorker.latest.terminate).toHaveBeenCalledOnce();
   });
+});
+
+it('reuses a completed depth-30 position without creating another worker', async () => {
+  vi.stubGlobal('Worker', FixtureWorker);
+  const board = createInitialBoard();
+  const first = offlineKenMove(board, 'W', 0, 30);
+  const worker = FixtureWorker.latest;
+  worker.onmessage?.({data:{result:{move:moveToHubString(generateLegalMoves(board,'W')[0]),score:0,depth:30,nodes:123,pv:'31-26'}}});
+  const completed = await first;
+  expect(await offlineKenMove(board,'W',0,30)).toEqual(completed);
+  expect(FixtureWorker.latest).toBe(worker);
+  expect(worker.postMessage).toHaveBeenCalledOnce();
 });

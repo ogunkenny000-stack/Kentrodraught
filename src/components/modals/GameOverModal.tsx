@@ -43,6 +43,8 @@ export interface GameOverModalProps {
   onGoBackToAnalysis?: () => void;
   canLevelUp?: boolean;
   onLevelUp?: () => void;
+  levelUpPending?: boolean;
+  levelUpError?: string | null;
   isUnsavedPracticeGame?: boolean;
   seriesNote?: string | null;
   hideRematch?: boolean;
@@ -84,6 +86,8 @@ export function GameOverModal({
   onGoBackToAnalysis,
   canLevelUp,
   onLevelUp,
+  levelUpPending = false,
+  levelUpError,
   isUnsavedPracticeGame,
   seriesNote,
   hideRematch = false,
@@ -370,15 +374,19 @@ export function GameOverModal({
           </div>
         )}
 
+        {resolvedCanLevelUp && levelUpError && <p role="alert" className="text-xs text-rose-300">{levelUpError}</p>}
+
         {/* Action Buttons */}
         <div className="flex flex-col gap-2 pt-1">
           {resolvedCanLevelUp && onLevelUp && (
             <button
               id="game-over-levelup-button"
+              disabled={levelUpPending}
+              aria-busy={levelUpPending}
               onClick={onLevelUp}
               className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-amber-500/20 uppercase tracking-wider"
             >
-              Move to Higher Level
+              {levelUpPending ? "Saving earned level…" : "Move to Higher Level"}
             </button>
           )}
 

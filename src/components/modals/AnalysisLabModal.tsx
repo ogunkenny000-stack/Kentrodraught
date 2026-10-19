@@ -35,6 +35,7 @@ export interface AnalysisLabModalProps {
   isReviewing?: boolean;
   reviewProgress?: number;
   onRunAIGameReview?: () => void;
+  onCancelReview?: () => void;
   lastAnalysisEval?: { quality: string; comment: string; delta: number } | null;
   // Position / Tool Handlers
   setBoard?: React.Dispatch<React.SetStateAction<Board>>;
@@ -92,13 +93,14 @@ export function AnalysisLabModal({
   activeTurn,
   initialTurn = "W",
   onLoadPosition,
-  analysisTimeMs = 1500,
+  analysisTimeMs = 0,
   onAnalysisTimeChange,
   onRetryAnalysis,
   renderBoard,
   isReviewing = false,
   reviewProgress = 0,
   onRunAIGameReview,
+  onCancelReview,
   lastAnalysisEval,
   setBoard,
   setTurn,
@@ -326,17 +328,20 @@ export function AnalysisLabModal({
                   {isReviewing ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Reviewing ({reviewProgress}%)</span>
+                      <span>Depth-30 review ({reviewProgress}%)</span>
                     </>
                   ) : (
                     <>
                       <Play className="w-4 h-4" />
-                      <span>Run Full AI Review</span>
+                      <span>Run / Resume Depth-30 Review</span>
                     </>
                   )}
                 </button>
               )}
             </div>
+
+            {isReviewing && <button type="button" onClick={onCancelReview} className="text-xs text-amber-300 underline">Pause depth-30 review</button>}
+            <p className="text-xs text-slate-400">Every game position targets depth 30. Full searches can take several minutes per position on slower devices. Quick timing affects live position analysis only.</p>
 
             {/* Side-by-side Accuracy Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -551,7 +556,7 @@ export function AnalysisLabModal({
             <p className="text-xs text-slate-400">Scores use White’s perspective. Engine estimates can change with deeper search.</p>
             <label className="flex items-center justify-between text-xs">Analysis time per position
               <select aria-label="Analysis time per position" value={analysisTimeMs} onChange={e => onAnalysisTimeChange?.(Number(e.target.value))} className="bg-slate-900 p-2 rounded border border-slate-700">
-                <option value={1500}>Quick · 1.5 seconds</option><option value={5000}>Deeper · 5 seconds</option><option value={15000}>Deep · 15 seconds</option>
+                <option value={0}>Depth 30 · full search</option><option value={1500}>Quick · 1.5 seconds</option><option value={5000}>Deeper · 5 seconds</option><option value={15000}>Deep · 15 seconds</option>
               </select>
             </label>
             {engineEval.error && <p role="alert" className="text-xs text-rose-300">{engineEval.error} <button className="underline" onClick={onRetryAnalysis}>Retry analysis</button></p>}

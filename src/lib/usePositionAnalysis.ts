@@ -3,7 +3,7 @@ import { Board, boardToScanFen, scanFenToBoard } from '../gameLogic';
 import type { EngineEval } from '../types';
 import { offlineKenMove } from '../engine/offlineKen';
 
-export function usePositionAnalysis(board: Board, turn: 'W' | 'B', enabled: boolean, timeMs = 1500) {
+export function usePositionAnalysis(board: Board, turn: 'W' | 'B', enabled: boolean, timeMs = 0) {
   const fen = boardToScanFen(board, turn);
   const [attempt, setAttempt] = useState(0);
   const key = `${fen}|${enabled}|${timeMs}|${attempt}`;
@@ -15,7 +15,7 @@ export function usePositionAnalysis(board: Board, turn: 'W' | 'B', enabled: bool
       try {
         const position = scanFenToBoard(fen);
         if (!Object.values(position.board).some(Boolean)) throw new Error('Add pieces in the board editor, or load a position.');
-        const data = await offlineKenMove(position.board, turn, timeMs / 1000, 0, false, controller.signal);
+        const data = await offlineKenMove(position.board, turn, timeMs / 1000, 30, false, controller.signal);
         if (!controller.signal.aborted) setResult({ key, evaluation: { ...data, turn, ready: true, isThinking: false } });
       } catch (error) {
         if (!controller.signal.aborted) setResult({ key, evaluation: { score: 0, depth: 0, pv: '', turn, ready: false, isThinking: false,

@@ -36,7 +36,7 @@ EMSCRIPTEN_KEEPALIVE const char * ken_search(const char * fen, double seconds, i
   // A forced move still needs a real evaluation. Move-only search can return
   // the internal "unknown score" sentinel without searching that position.
   si.move = false;
-  si.book = false; si.input = false; si.time = seconds;
+  si.book = false; si.input = false; si.time = seconds > 0 ? seconds : 1E6;
   si.depth = depth > 0 ? Depth(depth) : Depth_Max;
   Search_Output so; search(so, Node(pos), si);
   std::ostringstream out;

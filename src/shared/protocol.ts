@@ -71,7 +71,7 @@ export interface ChatTailEntry {
   ts: number;
 }
 
-export const CLIENT_PING_INTERVAL_MS = 15_000;
+export const CLIENT_PING_INTERVAL_MS = 5_000;
 export const CALL_REQUEST_TIMEOUT_MS = 40_000;
 export const CALL_PEER_DISCONNECT_GRACE_MS = 5_000;
 export const SIGNALLING_BUFFER_MS = 15_000;

@@ -33,6 +33,8 @@ test('source uses persisted one-time claim and denies public RPC access',()=>{
  assert.match(sql,/from public,anon,authenticated/);
  assert.match(sql,/kentro_lock_ken_entitlement_trigger/);
  const app=fs.readFileSync('src/App.tsx','utf8');
- assert.match(app,/\/api\/ken\/claim-win/);
+ const client=fs.readFileSync('src/lib/kenProgression.ts','utf8');
+ assert.match(app,/saveKenVictory/);
+ assert.match(client,/\/api\/ken\/claim-win/);
  assert.match(app,/kenProgressionGameIdRef/);
 });

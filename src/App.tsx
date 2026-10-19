@@ -1,3 +1,4 @@
+import { saveKenVictory, retryPendingKenVictories } from "./lib/kenProgression";
 import React, { useState, useEffect, useRef, useReducer, useMemo, useCallback, lazy, Suspense } from "react";
 import { supabase, handleSupabaseError, OperationType, authReady, signOutUser, resendVerificationEmail, isSupabaseConfigured, isPasswordRecovery, subscribePasswordRecovery } from "./supabase";
 import type { User as SupabaseAuthUser } from "@supabase/supabase-js";
@@ -156,6 +157,8 @@ export default function App() {
     } catch {}
     return createInitialBoard();
   });
+  const boardRef = useRef(board);
+  boardRef.current = board;
   const [turn, setTurn] = useState<"W" | "B">(() => {
     try {
       const active = loadActiveRoom();
@@ -391,12 +394,14 @@ export default function App() {
   // --- Continuous background analysis (runs WHILE the game is being played,
   // not just after it ends) ---
   const [reviewRevision, setReviewRevision] = useState(0);
+  const [reviewPaused, setReviewPaused] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const reviewStartKey = boardToScanFen(initialPositionRef.current.board, initialPositionRef.current.turn);
   // Every task owns its cancellation signal. Switching games, editing the root
   // or leaving Analysis stops both CPU work and stale state updates.
   useEffect(() => {
-    if ((playMode !== "Analysis" && playMode !== "Training") || !moveHistory.length) {
+    if (reviewPaused) { setIsReviewing(false); return; }
+    if (playMode !== "Analysis" || !moveHistory.length) {
       setIsReviewing(false); setReviewProgress(0); setReviewError(null); return;
     }
     const controller = new AbortController();
@@ -414,7 +419,7 @@ export default function App() {
         }).finally(() => { if (!controller.signal.aborted) setIsReviewing(false); });
     }, 500);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [moveHistory, reviewStartKey, playMode, reviewRevision]);
+  }, [moveHistory, reviewStartKey, playMode, reviewRevision, reviewPaused]);
 
   // --- VS Computer & Analysis Interactive States ---
   const [showComputerConfigModal, setShowComputerConfigModal] = useState<boolean>(false);
@@ -427,6 +432,9 @@ export default function App() {
     durationSeconds?: number;
     movesCount?: number;
   } | null>(null);
+
+  const [kenProgressPending, setKenProgressPending] = useState(false);
+  const [kenProgressError, setKenProgressError] = useState<string | null>(null);
 
   // --- Resume an in-progress AI game after leaving and coming back ---
   // The app always lands on the Lobby on load (unchanged) -- this is only
@@ -881,10 +889,10 @@ export default function App() {
         }
         if (!active) return;
         if (data) {
-          setProfileStats({
+          setProfileStats(previous => ({
             ...data,
-            maxUnlockedKenLevel: Math.max(3, data.maxUnlockedKenLevel || 1)
-          });
+            maxUnlockedKenLevel: Math.max(3, previous.maxUnlockedKenLevel || 3, data.maxUnlockedKenLevel || 1)
+          }));
         } else {
           const newStats = {
             username: uname,
@@ -1307,7 +1315,7 @@ export default function App() {
   /** Adopt a full server `gameState` (board/turn/history/status). Clocks come from `clock` only. */
   const applyGameState = (gs: any, opts: { resetView?: boolean } = {}) => {
     if (!gs || typeof gs !== "object") return;
-    if (gs.board) setBoard(gs.board);
+    if (gs.board) { boardRef.current = gs.board; setBoard(gs.board); }
     if (gs.turn === "W" || gs.turn === "B") setTurn(gs.turn);
     if (Array.isArray(gs.moveHistory)) {
       setMoveHistory(gs.moveHistory);
@@ -1718,8 +1726,8 @@ export default function App() {
           // The opponent's move (or, for spectators, either player's):
           // apply it locally with the same rules engine the server used.
           moveCountRef.current = idx;
-          let resultingBoard: Board | null = null;
-          setBoard((prev) => {
+          const prev = boardRef.current;
+          {
             if (mv.caps && mv.caps.length > 0) {
               const newAnims = mv.caps.map((sq) => {
                 const piece = prev[sq];
@@ -1732,9 +1740,10 @@ export default function App() {
                 }, 350);
               }
             }
-            resultingBoard = applyMove(prev, mv).board;
-            return resultingBoard;
-          });
+          }
+          const resultingBoard = applyMove(prev, mv).board;
+          boardRef.current = resultingBoard;
+          setBoard(resultingBoard);
           setMoveHistory((prev) => [...prev, mv]);
           setHistoryViewIndex(null);
           if (data.turn === "W" || data.turn === "B") setTurn(data.turn);
@@ -1745,10 +1754,9 @@ export default function App() {
           // Fast pre-move execution trigger
           const queued = premoveRef.current;
           if (queued && data.turn === yourColorRef.current) {
+            premoveRef.current = null;
             setPremove(null);
-            setTimeout(() => {
-              executePremoveIfLegal(queued, resultingBoard);
-            }, 10);
+            executePremoveIfLegal(queued, resultingBoard);
           }
         } else {
           // Out of step (missed a message): ask for the full state; the
@@ -1772,10 +1780,9 @@ export default function App() {
           } else {
             const queued = premoveRef.current;
             if (queued) {
+              premoveRef.current = null;
               setPremove(null);
-              setTimeout(() => {
-                executePremoveIfLegal(queued, data.gameState.board);
-              }, 10);
+              executePremoveIfLegal(queued, data.gameState.board);
             }
           }
         }
@@ -2165,7 +2172,7 @@ export default function App() {
   const stats = getPieceCounts(renderBoard);
   const activeTurn = historyViewIndex !== null ? turnAfterMoves(historyViewIndex + 1) : turn;
 
-  const [analysisTimeMs, setAnalysisTimeMs] = useState(1500);
+  const [analysisTimeMs, setAnalysisTimeMs] = useState(0);
   const analysisEnd = useMemo(() => checkGameEnd(historyViewIndex === null ? moveHistory : moveHistory.slice(0, historyViewIndex + 1),
     initialPositionRef.current.board, initialPositionRef.current.turn), [moveHistory, historyViewIndex, reviewStartKey]);
   const terminalAnalysis = analysisEnd.isOver && Object.values(renderBoard).some(Boolean);
@@ -2312,9 +2319,9 @@ export default function App() {
     const legalList = generateLegalMoves(currentBoard, currentTurn);
 
     if (queued.to !== undefined) {
-      const matched = legalList.find((m) => m && m.from === queued.from && m.to === queued.to);
-      if (matched) {
-        executeMove(matched);
+      const matches = legalList.filter((m) => m && m.from === queued.from && m.to === queued.to);
+      if (matches.length === 1) {
+        executeMove(matches[0], currentBoard, currentTurn);
         return;
       }
     }
@@ -2335,7 +2342,8 @@ export default function App() {
     }
   };
 
-  const executeMove = (mv: Move) => {
+  const executeMove = (mv: Move, sourceBoard: Board = board, sourceTurn: "W" | "B" = turn) => {
+    premoveRef.current = null;
     setPremove(null);
     if (playMode === "Multiplayer") {
       // The server validates the move and owns the clocks: ship the move
@@ -2343,10 +2351,10 @@ export default function App() {
       // refuses because the link is down, do NOT apply it locally -- a move
       // that never reached the server must not appear on the board (H2).
       if (!gameSocket.send({ type: "make-move", move: mv })) return;
-      moveCountRef.current = moveHistory.length + 1;
+      moveCountRef.current += 1;
     } else if (localClock && !activePuzzleId && !isEditorMode) {
       // Local timed game: the snapshot advances per move, never per second.
-      setLocalClock((prev) => (prev ? advanceLocalClock(prev, turn) : prev));
+      setLocalClock((prev) => (prev ? advanceLocalClock(prev, sourceTurn) : prev));
     }
 
     const isCapture = mv.caps.length > 0;
@@ -2355,7 +2363,7 @@ export default function App() {
       
       // Store captured piece details to trigger the 300ms shrink & fade out animation
       const newAnims = mv.caps.map((sq) => {
-        const piece = board[sq];
+        const piece = sourceBoard[sq];
         return piece ? { sq, piece, id: `${sq}-${Date.now()}-${Math.random()}` } : null;
       }).filter((anim) => anim !== null);
 
@@ -2371,21 +2379,22 @@ export default function App() {
       playClickSound(muted);
     }
 
-    const { board: newBoard, promoted } = applyMove(board, mv);
+    const { board: newBoard, promoted } = applyMove(sourceBoard, mv);
 
     if (promoted) {
       playPromoSound(muted);
-      const playerColor = turn === "W" ? "White" : "Black";
+      const playerColor = sourceTurn === "W" ? "White" : "Black";
       setPromotedToast(`${playerColor} promoted to King! 👑`);
       setTimeout(() => setPromotedToast(null), 3500);
     }
 
+    boardRef.current = newBoard;
     setBoard(newBoard);
     setMoveHistory((prev) => [...prev, mv]);
     setSelectedSq(null);
     setHistoryViewIndex(null); // Return to active live play on new moves
 
-    const nextTurn = turn === "W" ? "B" : "W";
+    const nextTurn = sourceTurn === "W" ? "B" : "W";
     setTurn(nextTurn);
     setStatusMessage(`${nextTurn === "W" ? "White" : "Black"} to play`);
   };
@@ -2930,6 +2939,9 @@ export default function App() {
   };
 
   const handlePostGameLevelUp = async () => {
+    if (kenProgressPending) return;
+    setKenProgressError(null);
+    const owner = walletIdentity;
     const nextLevel = kenLevelId + 1;
     if (!gameOverInfo || gameOverInfo.outcome !== "win" ||
       !["Human_vs_AI", "AI_vs_Human"].includes(playMode) ||
@@ -2939,28 +2951,52 @@ export default function App() {
         setStatusMessage("Sign in to save earned Ken levels.");
         return;
       }
+      setKenProgressPending(true);
       try {
-        const { data } = await supabase.auth.getSession();
-        if (!data.session?.access_token) throw new Error("Sign in again to save your Ken victory.");
-        const response = await fetch("/api/ken/claim-win", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-          body: JSON.stringify({ level: kenLevelId, gameId: kenProgressionGameIdRef.current, mode: playMode, moves: moveHistory }),
-        });
-        const result = await response.json();
-        if (!response.ok || !result?.ok || result.maxUnlockedKenLevel < nextLevel) {
-          throw new Error(result?.error || "Your victory could not be verified. Please retry.");
-        }
-        setProfileStats(prev => ({ ...prev, maxUnlockedKenLevel: Math.max(prev.maxUnlockedKenLevel || 3, result.maxUnlockedKenLevel) }));
+        const maxUnlockedKenLevel = await saveKenVictory(authUser.id, kenProgressionGameIdRef.current, kenLevelId, playMode, moveHistory);
+        if (walletIdentityRef.current !== owner) return;
+        setProfileStats(prev => ({ ...prev, maxUnlockedKenLevel: Math.max(prev.maxUnlockedKenLevel || 3, maxUnlockedKenLevel) }));
       } catch (error) {
-        setStatusMessage(error instanceof Error ? error.message : "Ken level unlock failed. Retry while connected.");
+        if (walletIdentityRef.current !== owner) return;
+        const message = error instanceof Error ? error.message : "Reconnect and retry to save your earned level.";
+        setKenProgressError(message); setStatusMessage(message);
         return;
+      } finally {
+        if (walletIdentityRef.current === owner) setKenProgressPending(false);
       }
     }
     setKenLevelId(nextLevel);
     handleNewGame();
     setStatusMessage(`Ken ${nextLevel} unlocked. New game started.`);
   };
+
+  useEffect(() => {
+    setKenProgressPending(false); setKenProgressError(null);
+    if (!authUser) return;
+    const owner = walletIdentity;
+    const retry = () => { void retryPendingKenVictories(authUser.id).then(max => {
+      if (max && walletIdentityRef.current === owner) setProfileStats(prev => ({ ...prev, maxUnlockedKenLevel: Math.max(prev.maxUnlockedKenLevel || 3, max) }));
+    }); };
+    retry(); window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, [walletIdentity]);
+
+  // Earned levels are saved on victory even if the player goes Home/Analysis.
+  useEffect(() => {
+    if (!authUser || !gameOverInfo || gameOverInfo.outcome !== "win" ||
+        !["Human_vs_AI", "AI_vs_Human"].includes(playMode) || usedHintsOrUndo ||
+        isUnsavedPracticeGame || kenLevelId >= 8 || kenLevelId + 1 <= Math.max(3, profileStats.maxUnlockedKenLevel || 3)) return;
+    const owner = walletIdentity;
+    setKenProgressPending(true); setKenProgressError(null);
+    saveKenVictory(authUser.id, kenProgressionGameIdRef.current, kenLevelId, playMode, moveHistory).then(max => {
+      if (walletIdentityRef.current === owner) setProfileStats(prev => ({ ...prev, maxUnlockedKenLevel: Math.max(prev.maxUnlockedKenLevel || 3, max) }));
+    }).catch(error => {
+      if (walletIdentityRef.current === owner) {
+        const message = error instanceof Error ? error.message : "Reconnect and tap Move to Higher Level to save your victory.";
+        setKenProgressError(message); setStatusMessage(message);
+      }
+    }).finally(() => { if (walletIdentityRef.current === owner) setKenProgressPending(false); });
+  }, [gameOverInfo, authUser?.id, kenLevelId, playMode, usedHintsOrUndo, isUnsavedPracticeGame]);
 
   // Resign: immediately ends the match with the opponent as winner. Server
   // decides and broadcasts the outcome to both players (see "resign" case
@@ -3733,7 +3769,7 @@ export default function App() {
       const result = await apiPost("/api/coins/unlock-ai-level", { username: username.toLowerCase().trim(), level });
       if (walletIdentityRef.current !== owner) return;
       setCoinBalance(result.balance);
-      setProfileStats((prev) => ({ ...prev, maxUnlockedKenLevel: result.maxUnlockedKenLevel }));
+      setProfileStats((prev) => ({ ...prev, maxUnlockedKenLevel: Math.max(prev.maxUnlockedKenLevel || 3, result.maxUnlockedKenLevel) }));
       setStatusMessage(level === "all" ? "All AI levels unlocked!" : `Ken Level ${level} unlocked!`);
       playClickSound(muted);
     } catch (err: any) {
@@ -3871,6 +3907,7 @@ export default function App() {
 
   const runAIGameReview = () => {
     if (!moveHistory.length || isReviewing) return;
+    setReviewPaused(false);
     setReviewRevision(n => n + 1);
   };
 
@@ -4069,6 +4106,8 @@ export default function App() {
       isReviewing={isReviewing}
       reviewProgress={reviewProgress}
       onRunAIGameReview={runAIGameReview}
+      onCancelReview={() => setReviewPaused(true)}
+      reviewPaused={reviewPaused}
       historyViewIndex={historyViewIndex}
       onHistoryNavigate={handleHistoryNavigate}
       onContinueFromHistory={handleContinueFromHistory}
@@ -5473,6 +5512,8 @@ export default function App() {
         currentUsername={username || undefined}
         rematchState={playMode === "Multiplayer" ? rematchState : { status: "idle" }}
         onLevelUp={handlePostGameLevelUp}
+        levelUpPending={kenProgressPending}
+        levelUpError={kenProgressError}
         onRematch={handlePostGameRematch}
         onCancelRematch={playMode === "Multiplayer" ? handleCancelRematch : undefined}
         onAcceptRematch={playMode === "Multiplayer" ? () => handleRematchResponse(true) : undefined}
@@ -5533,6 +5574,7 @@ export default function App() {
         isReviewing={isReviewing}
         reviewProgress={reviewProgress}
         onRunAIGameReview={runAIGameReview}
+        onCancelReview={() => setReviewPaused(true)}
         lastAnalysisEval={lastAnalysisEval}
         setBoard={setBoard}
         setTurn={setTurn}
