@@ -1,35 +1,42 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm-slim AS build
+# Kentro Draughts, optimized for a small persistent host.
+# Two stages: native engine + frontend are built off-line from the runtime;
+# the final container has no compiler, Vite dev server, or build cache.
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential unzip python3 ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends g++ make \
     && rm -rf /var/lib/apt/lists/*
-
-# Install from the existing lockfile; the prebuild step compiles the engine
-# after its source archive has been copied into the image.
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
+    npm ci --ignore-scripts --strict-ssl=true --no-audit --no-fund
 COPY . .
+# These two keys are designed to be public and are compiled into the web app.
+# NEVER pass the Supabase secret key as a build arg.
 ARG VITE_SUPABASE_URL
+ARG VITE_KENTRO_COINS_ENABLED=0
 ARG VITE_SUPABASE_PUBLISHABLE_KEY
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
-    VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
-RUN npm run build \
-    && npm prune --omit=dev --ignore-scripts
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+ENV VITE_KENTRO_COINS_ENABLED=${VITE_KENTRO_COINS_ENABLED}
+RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS runtime
+ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 KENTRO_DATA_DIR=/app/data
 WORKDIR /app
-ENV NODE_ENV=production PORT=3000
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libstdc++6 ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=build --chown=node:node /app/package.json ./package.json
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist ./dist
-COPY --from=build --chown=node:node /app/nd_upgraded ./nd_upgraded
-COPY --from=build --chown=node:node /app/scan.ini ./scan.ini
-COPY --from=build --chown=node:node /app/supabase ./supabase
-RUN mkdir -p data && chown node:node data
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/nd_upgraded/scan_nigerian ./nd_upgraded/scan_nigerian
+COPY --from=builder /app/nd_upgraded/data/eval_nigerian ./nd_upgraded/data/eval_nigerian
+COPY --from=builder /app/nd_upgraded/scan.ini ./nd_upgraded/scan.ini
+COPY --from=builder /app/data/eval_nigerian ./data/eval_nigerian
+COPY --from=builder /app/supabase ./supabase
+# Game records and other local mutable state live here. Mount /app/data
+# as a persistent volume so a container restart does not discard records.
+RUN chown -R node:node /app/data /app/nd_upgraded
 USER node
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 CMD ["node", "dist/server.cjs"]

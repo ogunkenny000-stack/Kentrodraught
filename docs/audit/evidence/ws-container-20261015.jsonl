@@ -1,0 +1,1 @@
+{"clients":2,"rooms":1,"elapsedMs":598.7,"roomSetupMs":{"samples":1,"p50":5.296,"p95":5.296,"max":5.296},"moveRelayMs":{"samples":12,"p50":0.905,"p95":2.469,"max":2.469},"pingMs":{"samples":20,"p50":0.563,"p95":0.919,"max":0.973},"deltaBytes":{"samples":12,"p50":355,"p95":368,"max":368},"nodeRssMiB":null,"nodeCpuOneCorePercent":null,"failures":0}

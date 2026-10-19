@@ -6,7 +6,7 @@
 #   SUPABASE_URL=https://YOURPROJECT.supabase.co
 #   SUPABASE_SECRET_KEY=sb_secret_...
 #   SUPABASE_DB_URL=postgresql://postgres:PASSWORD@db.YOURPROJECT.supabase.co:5432/postgres
-#   BOOTSTRAP_ADMIN_USERNAME=yourname
+#   BOOTSTRAP_ADMIN_UID=your-authenticated-supabase-user-uuid
 #
 # then:  docker compose up -d --build
 services:
@@ -16,11 +16,29 @@ services:
       args:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
+        VITE_KENTRO_COINS_ENABLED: ${VITE_KENTRO_COINS_ENABLED:-0}
     ports:
       - "3000:3000"
+    volumes:
+      - kentro_game_data:/app/data
     environment:
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY}
+      KENTRO_COINS_ENABLED: ${KENTRO_COINS_ENABLED:-0}
       SUPABASE_DB_URL: ${SUPABASE_DB_URL:-}
-      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_UID: ${BOOTSTRAP_ADMIN_UID:-}
+      APP_URL: ${APP_URL:-}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:-}
+      WEB_PUSH_CONTACT: ${WEB_PUSH_CONTACT:-}
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:-}
+      KENTRO_DATA_DIR: /app/data
+      SKIP_DB_MIGRATION: "1"
     restart: unless-stopped
+    init: true
+    stop_grace_period: 10s
+
+# Preserve match records and sequence IDs across container restarts.
+volumes:
+  kentro_game_data:

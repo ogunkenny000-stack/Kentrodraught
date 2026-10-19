@@ -57,6 +57,9 @@ export async function verifyAccessToken(accessToken: string | undefined | null):
   try {
     const { data, error } = await getSupabaseAdmin().auth.getUser(accessToken);
     if (error || !data.user) return null;
+    const { data: profile, error: profileError } = await getSupabaseAdmin()
+      .from("profiles").select("usernameLower, banned, suspendedUntil").eq("ownerId", data.user.id).maybeSingle();
+    if (profileError || profile?.usernameLower === "kentro_house" || profile?.banned || (profile?.suspendedUntil && profile.suspendedUntil > Date.now())) return null;
     return data.user.id;
   } catch {
     return null;

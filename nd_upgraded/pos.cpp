@@ -17,6 +17,30 @@
 #include "util.hpp"
 #include "var.hpp"
 
+// The material rules require elapsed moves by BOTH players and at least
+// one king on the other side. A bare position is never an immediate draw.
+static int nigerian_material_limit(const Pos & pos) {
+   for (int sd = 0; sd < Side_Size; sd++) {
+      Side lone = Side(sd);
+      Side strong = side_opp(lone);
+      if (pos.man(lone) == 0 && bit::count(pos.king(lone)) == 1 && pos.king(strong) != 0) {
+         int pieces = bit::count(pos.side(strong));
+         if (pieces == 3) return 32; // 16 moves each
+         if (pieces <= 2) return 10; // 5 moves each
+      }
+   }
+   return 0;
+}
+
+static bool same_material(const Pos & a, const Pos & b) {
+   for (int sd = 0; sd < Side_Size; sd++) {
+      for (int pc = 0; pc < Piece_Size; pc++) {
+         if (bit::count(a.piece_side(Piece(pc), Side(sd))) != bit::count(b.piece_side(Piece(pc), Side(sd)))) return false;
+      }
+   }
+   return true;
+}
+
 // functions
 
 Pos::Pos(Side turn, Bit wm, Bit bm, Bit wk, Bit bk)
@@ -157,12 +181,11 @@ Node::Node(const Pos & pos, int ply, const Node * parent) {
 Node Node::succ(Move mv) const {
 
    Pos new_pos = m_pos.succ(mv);
-
-   if (move::is_conversion(mv, m_pos)) {
-      return Node{new_pos};
-   } else {
-      return Node{new_pos, m_ply + 1, this};
+   Node next = move::is_conversion(mv, m_pos) ? Node{new_pos} : Node{new_pos, m_ply + 1, this};
+   if (var::Variant == var::Nigerian && nigerian_material_limit(new_pos) != 0 && same_material(m_pos, new_pos)) {
+      next.m_material_ply = m_material_ply + 1;
    }
+   return next;
 }
 
 bool Node::is_end() const {
@@ -170,6 +193,13 @@ bool Node::is_end() const {
 }
 
 bool Node::is_draw(int rep) const {
+
+   if (var::Variant == var::Nigerian) {
+      // A capture-out or blocking win takes priority over all draw counters.
+      if (!can_move(m_pos, m_pos.turn())) return false;
+      int material_limit = nigerian_material_limit(m_pos);
+      if (m_ply >= 50 || (material_limit != 0 && m_material_ply >= material_limit)) return true;
+   }
 
    if (m_ply < 4) return false;
 
@@ -263,23 +293,7 @@ void init() {
    }
 }
 
-// Nigerian rules 4.1-4.4: draw when one side has exactly 1 king (0 men)
-// and the other side has <= 3 total pieces (any mix of kings/men).
-static bool is_nigerian_draw(const Pos & pos) {
-   for (int sd = 0; sd < Side_Size; sd++) {
-      Side lone = Side(sd);
-      Side strong = side_opp(lone);
-      if (pos.king(lone) != 0 && pos.man(lone) == 0
-          && bit::count(pos.king(lone)) == 1) {
-         int strong_count = bit::count(pos.side(strong));
-         if (strong_count <= 3) return true;
-      }
-   }
-   return false;
-}
-
 bool is_end(const Pos & pos) {
-   if (var::Variant == var::Nigerian && is_nigerian_draw(pos)) return true;
    return !can_move(pos, pos.turn())
        || (var::Variant == var::BT && has_king(pos, side_opp(pos.turn())));
 }
@@ -292,9 +306,6 @@ bool is_wipe(const Pos & pos) { // fast subset of "is_end", for BT variant
 int result(const Pos & pos, Side sd) { // for losing variant
 
    assert(is_end(pos));
-
-   // Nigerian material draw (rules 4.1–4.4): neither side wins
-   if (var::Variant == var::Nigerian && is_nigerian_draw(pos)) return 0;
 
    int res = (var::Variant == var::Losing) ? +1 : -1; // for turn
    res = score::side(res, pos.turn()); // for white

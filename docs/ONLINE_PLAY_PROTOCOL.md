@@ -12,21 +12,25 @@ Shared TypeScript types live in `src/shared/protocol.ts` (import from both
 - Client -> `login { username, sessionToken?, accessToken? }`
   - `sessionToken`: the token this client got from a previous `login-success`
     (client stores it in `sessionStorage` under `kd.session.<username>`).
-  - `accessToken`: optional Supabase access token (best effort; server only
-    verifies it when `SUPABASE_SECRET_KEY` is configured, otherwise ignored).
+  - `accessToken`: Supabase access token, required for account usernames when
+    both `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are configured. The verified
+    account's metadata username must match the requested name. Anonymous
+    clients use the reserved `KGuest_<20 lowercase hex digits>` format.
 - Server -> `login-success { username, sessionToken, serverNow, onlineUsers }`
   - `sessionToken`: 32-hex random string, minted on first login, reused on
     reconnect when the client presents a matching token.
 - Rules:
   - A username that is currently online on another live socket can only be
-    taken over by presenting its matching `sessionToken`; the old socket then
+    taken over by presenting its matching `sessionToken`, or a verified
+    account UID matching the session's bound account; the old socket then
     receives `session-replaced {}` and is closed. Without the token the server
     answers `error { code: "name-taken", message }` and the socket stays
     logged out.
   - Reconnecting to a seat in a room (disconnect grace) REQUIRES the matching
-    token. Same-username login without it is refused with `name-taken` while
+    token or matching verified account UID. Same-username login without either is refused with `name-taken` while
     the seat is in grace.
   - Sessions expire 30 minutes after their last socket closes.
+    A live game or unfinished series keeps the session until its seat is resolved.
 
 ## 2. Errors
 
@@ -39,8 +43,20 @@ Shared TypeScript types live in `src/shared/protocol.ts` (import from both
 
 ## 3. Room phases and state version
 
+- Client -> `create-room { gameTime?, increment?, specialRule?, bestOf?, private? }`.
+  `private` is an optional boolean, default `false`. Private lobbies and live
+  games never appear in public room lists; `spectate-room` is refused for a
+  private game even when its code is known. A room code still permits a player
+  to request the match preview and explicitly accept an open seat.
+- Client -> `join-room { roomId }` returns `room-preview` with the host, time
+  controls, rule, series length, privacy, wager, and authoritative `entryFee`.
+  Previewing never seats the client, charges coins, claims a guest trial, or
+  forfeits another room. `join-room-accept { roomId }` performs admission and
+  starts the match; a fresh player can only join a lobby. Already seated
+  clients may replay join messages to restore their own room state.
 - `phase: "lobby" | "setup" | "playing" | "ended"` is included in every
   `room-info`, `room-rejoined`, `game-started`, `game-ended`, `spectate-joined`.
+  - `private` is also included in room-info, room-rejoined and game-started.
   - lobby: waiting for opponent / ready.  setup: crown-crown placement etc.
   - playing: clocks may run.  ended: result known, rematch/reset allowed.
 - `seq` (integer, per room, starts at 1, +1 on EVERY mutation of room or game
@@ -91,7 +107,8 @@ Shared TypeScript types live in `src/shared/protocol.ts` (import from both
 
 - Client -> `ping { t }` every 15 s; server -> `pong { t, serverNow }`.
   Client reconnects after 2 missed pongs and refreshes `offset` from each pong.
-- Server keeps its 30 s ws-level ping/pong pruning.
+- Server sends ws-level pings every 20 s and terminates after three missed
+  heartbeats. Receiving a message or a pong marks that socket alive.
 
 ## 6. Reconnect / resync
 
@@ -100,7 +117,8 @@ Shared TypeScript types live in `src/shared/protocol.ts` (import from both
   `room-info` shape plus: `clock`, `phase`, `seq`, `yourColor`,
   `pendingOffer: { type: "draw" | "resign" | "rematch", from } | null`,
   `chatTail: [{ from, text, ts }]` (last 50), `opponentConnected: boolean`.
-  A spectator who reconnects gets `spectate-joined` with the same extras.
+  A public spectator who reconnects with their token within two minutes gets
+  `spectate-joined` with the same extras. Private games never admit spectators.
 - The client applies `room-rejoined` through the same path as `room-info`
   + clock, then resumes.
 
@@ -175,3 +193,19 @@ Shared TypeScript types live in `src/shared/protocol.ts` (import from both
   block game flow. All timer callbacks are wrapped in try/catch.
 - Game-end detection evaluates the live board/turn of the room (not a board
   reconstructed from the standard start position).
+- Duplicate record starts/completions preserve the first terminal result and
+  end timestamp; series totals contain one summary per game code. A delayed
+  record completion uses its captured game code for notifications, even if a
+  rematch has already begun. Custom and crowned opening positions are stored
+  with the record so replay starts from the position actually played.
+- Private records retain verified participant UIDs. Public recent-game lists
+  exclude them; record/replay HTTP access and database row policies enforce
+  participant authorization. Apply the recovery SQL migrations before rollout.
+- Guests may play one free single game. Server admission claims both guests'
+  allowances atomically; paid rooms, series, resets, and rematches are refused
+  for guest participants. A configured database failure fails closed; local
+  development without Supabase keeps guest counts in process memory.
+- `shutdown()` clears transport/session/room timers and closes sockets with
+  code 1012, without declaring winners or initiating new settlement writes.
+  In-memory active games do not survive a server restart. Already initiated
+  settlement operations retain their existing retry behavior.

@@ -121,27 +121,25 @@ export async function settleMatchPot(
     throw new Error("Match rake must be between 0 and 1");
   }
 
-  if (result.isDraw) {
-    await Promise.all(
-      players.map((p) => creditWallet(p.username, entryFeePerPlayer, "refund", matchId))
-    );
-    return;
+  const white = players.find(p => p.color === "W");
+  const black = players.find(p => p.color === "B");
+  if (players.length !== 2 || !white || !black || !matchId || (!result.isDraw && !result.winnerColor)) {
+    throw new Error("A match settlement requires two players and a final result");
   }
-
-  if (!result.winnerColor) return; // shouldn't happen (non-draw with no winner), but don't guess
-  const winner = players.find((p) => p.color === result.winnerColor);
-  if (!winner) return;
-
-  const pot = entryFeePerPlayer * 2;
-  const rake = Math.max(0, Math.min(pot, Math.floor(pot * rakePercent)));
-  const payout = pot - rake;
-
-  if (payout > 0) await creditWallet(winner.username, payout, "match_prize", matchId);
-  if (rake > 0) {
-    await creditWallet(HOUSE_WALLET_USERNAME, rake, "rake", `rake:${matchId}`);
-  }
-  // Loser: intentionally no action -- their entry fee was already debited
-  // at match start and is not returned on a loss.
+  const whiteName = cleanUsername(white.username);
+  const blackName = cleanUsername(black.username);
+  if (whiteName === blackName) throw new Error("Match players must have distinct wallets");
+  const { data, error } = await getSupabaseAdmin().rpc("kentro_settle_match_pot", {
+    p_match_id: matchId,
+    p_white: whiteName,
+    p_black: blackName,
+    p_fee: entryFeePerPlayer,
+    p_winner: result.isDraw ? null : result.winnerColor === "W" ? whiteName : blackName,
+    p_draw: result.isDraw,
+    p_rake: rakePercent,
+  });
+  if (error) throw error;
+  if (!data?.ok) throw new Error("Match settlement returned no successful result");
 }
 
 /**
@@ -168,6 +166,23 @@ export async function debitMultipleWallets(
   requireCoinAmount(amount, true);
   if (amount === 0) return { ok: true };
   const cleaned = usernames.map(cleanUsername);
+  if (cleaned.length === 0 || new Set(cleaned).size !== cleaned.length) {
+    throw new Error("Wallets must be non-empty and distinct");
+  }
+
+  // A wager must have a unique game ID. A database-level receipt protects
+  // against duplicate charges if a room start is retried after a timeout.
+  if (reason === "match_entry") {
+    if (cleaned.length !== 2 || typeof refId !== "string" || !refId.trim()) {
+      throw new Error("Paid matches require two players and a stable game ID");
+    }
+    const { data, error } = await getSupabaseAdmin().rpc("kentro_charge_match_pot", {
+      p_match_id: refId, p_white: cleaned[0], p_black: cleaned[1], p_fee: amount,
+    });
+    if (error) throw error;
+    if (!data || typeof data.ok !== "boolean") throw new Error("Match-charge RPC returned no result");
+    return data.ok ? { ok: true } : { ok: false, insufficientUsers: data.insufficientUsers ?? [] };
+  }
 
   const { data, error } = await getSupabaseAdmin().rpc("debit_multiple_wallets", {
     p_usernames: cleaned,
@@ -201,4 +216,25 @@ export async function creditWallet(
   });
   if (error) throw error;
   return data as number;
+}
+
+/**
+ * Reconcile an uncertain pre-start charge without inventing a second charge.
+ * The database refuses refunds with the wrong receipt and returns notCharged
+ * when the original debit transaction never committed.
+ */
+export async function refundUnstartedMatch(
+  matchId: string, whiteUsername: string, blackUsername: string, fee: number
+): Promise<{ ok: true; refunded?: boolean; notCharged?: boolean; alreadySettled?: boolean }> {
+  requireCoinAmount(fee);
+  if (!matchId || matchId.length > 160) throw new Error("Invalid match ID for refund");
+  const white = cleanUsername(whiteUsername);
+  const black = cleanUsername(blackUsername);
+  if (white === black) throw new Error("Refund requires distinct wallets");
+  const { data, error } = await getSupabaseAdmin().rpc("kentro_refund_unstarted_match", {
+    p_match_id: matchId, p_white: white, p_black: black, p_fee: fee,
+  });
+  if (error) throw error;
+  if (!data?.ok) throw new Error("Unstarted-match refund was not confirmed");
+  return data;
 }

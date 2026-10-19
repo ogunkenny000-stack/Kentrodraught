@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react";
 import { ModalShell } from "../ui/ModalShell";
 import { PlayerStats } from "../../types";
+import { MatchResultPair } from "../MatchResultPair";
 
 interface HeadToHead {
   opponent: string;
@@ -134,10 +135,7 @@ export function PlayerDirectoryModal({
                     onClick={() => onLoadGame(g)}
                     className="flex items-center justify-between bg-slate-950/60 hover:bg-slate-950 border border-slate-800/80 rounded-lg px-3 py-2.5 transition cursor-pointer"
                   >
-                    <span className="text-[11px] text-slate-300">{g.whitePlayer} <span className="text-slate-600">vs</span> {g.blackPlayer}</span>
-                    <span className="text-[9px] font-mono text-slate-500">
-                      {g.winner ? `${g.winner === "W" ? g.whitePlayer : g.blackPlayer} won` : "Draw"}
-                    </span>
+                    <div className="flex-1 min-w-0"><MatchResultPair game={g} compact /></div>
                   </button>
                 ))
               )}

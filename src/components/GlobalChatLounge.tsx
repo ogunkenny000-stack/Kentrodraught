@@ -44,6 +44,7 @@ function GlobalChatLoungeImpl({
     setActiveReply,
     blockedUsers,
     groups,
+    groupError, acceptGroup, declineGroup, transferGroup, deleteGroup,
     customProfiles,
     sendMessage,
     reactToMessage,
@@ -108,19 +109,7 @@ function GlobalChatLoungeImpl({
       if (onStartVoiceCall) {
         onStartVoiceCall(targetUser, type);
       } else {
-        // Fallback internal call HUD simulation
-        setLocalVoiceCall({
-          callState: "calling",
-          targetUser,
-          duration: 0,
-          isMicMuted: false
-        });
-
-        setTimeout(() => {
-          setLocalVoiceCall((prev) =>
-            prev.callState === "calling" ? { ...prev, callState: "connected" } : prev
-          );
-        }, 3000);
+        window.alert('Calling is unavailable until the online voice connection is ready. No call was started.');
       }
     },
     [onStartVoiceCall]
@@ -142,8 +131,13 @@ function GlobalChatLoungeImpl({
   }, []);
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#070913] text-slate-100 select-none overflow-hidden font-sans">
+    <div className="k-lounge w-full h-full flex flex-col bg-[#070913] text-slate-100 select-none overflow-hidden font-sans">
       {/* 1. TOP BRAND NAVIGATION HEADER */}
+      {groupError && <p role="alert" className="p-3 text-sm text-rose-300">{groupError}</p>}
+      {groups.filter(group => group.invited).map(group => <div key={group.id} className="p-3 border-b border-slate-700 text-sm">
+        Invitation to {group.name} <button onClick={() => acceptGroup(group.id)} className="p-2 text-amber-300">Accept invitation</button>
+        <button onClick={() => declineGroup(group.id)} className="p-2">Decline</button>
+      </div>)}
       <LoungeHeader
         username={username}
         profileStats={profileStats}
@@ -276,8 +270,12 @@ function GlobalChatLoungeImpl({
       />
 
       {/* Group Info & Members Modal */}
-      {activeConversation?.groupData && (
-        <GroupInfoModal
+      {activeConversation?.groupData && (<>
+        {showGroupInfoModal && activeConversation?.groupData?.createdBy?.toLowerCase() === username.toLowerCase() && <div className="fixed bottom-5 left-5 z-[60] rounded bg-slate-900 p-3 text-sm">
+        <button onClick={() => { const target = window.prompt('Transfer ownership to which active member?'); if (target) transferGroup(activeConversation.groupData!.id, target); }} className="p-2 text-amber-300">Transfer ownership</button>
+        <button onClick={() => { if (window.confirm('Delete this group and its messages?')) { deleteGroup(activeConversation.groupData!.id); setShowGroupInfoModal(false); } }} className="p-2 text-rose-300">Delete group</button>
+      </div>}
+      <GroupInfoModal
           isOpen={showGroupInfoModal}
           onClose={() => setShowGroupInfoModal(false)}
           group={activeConversation.groupData}
@@ -288,7 +286,7 @@ function GlobalChatLoungeImpl({
           onLeaveGroup={leaveGroup}
           onReportGroup={(grpName) => setReportingData({ user: `Group: ${grpName}` })}
         />
-      )}
+      </>)}
 
       {/* New Chat / Player Search Modal */}
       <NewChatModal

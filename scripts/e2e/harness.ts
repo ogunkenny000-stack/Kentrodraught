@@ -1,23 +1,47 @@
 /**
  * Shared helpers for the two-browser end-to-end tests (scripts/e2e/*.e2e.ts).
- * Drives the locally installed Google Chrome headlessly through puppeteer-core.
+ * Drives a locally installed Chromium browser through puppeteer-core.
  *
- * Auth: the app gates everything behind Supabase email/password auth. The
- * e2e test accounts (see .env.test) exist on the live project but their
- * emails are not confirmed, so instead of signing in we inject a local
- * Supabase session object into localStorage (the shape supabase-js persists).
- * The access token is fake, so any Supabase API call made by the page fails
- * with 401 -- which is what we want: e2e runs never write to production.
- * The WebSocket game server only needs the username from user_metadata.
+ * All browser traffic is restricted to loopback. Rendering tests may inject
+ * synthetic Supabase sessions; authenticated server journeys need a local
+ * auth fixture. Fake tokens are never sent to a hosted Supabase project.
  */
 import puppeteer, { Browser, Page } from "puppeteer-core";
 import fs from "node:fs";
 import path from "node:path";
 
 export const APP_URL = process.env.E2E_APP_URL || "http://localhost:3000";
-export const SUPABASE_REF = "pwovowlyylceuzontdhg";
+export const SUPABASE_REF = process.env.E2E_SUPABASE_REF || "placeholder";
 export const CHROME_PATH =
-  process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  process.env.CHROME_PATH || ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find(candidate => fs.existsSync(candidate));
+
+const isLoopback = (hostname: string) => ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+
+/** Keep local browser tests from reaching production databases or services. */
+export async function restrictToLocalNetwork(page: Page): Promise<void> {
+  if (!isLoopback(new URL(APP_URL).hostname)) throw new Error("E2E_APP_URL must use a loopback host.");
+  await page.setRequestInterception(true);
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (["http:", "https:"].includes(url.protocol) && !isLoopback(url.hostname)) void request.abort("blockedbyclient");
+    else void request.continue();
+  });
+  // Plain JavaScript avoids tsx/esbuild keepNames helpers in a serialized
+  // browser function (those helpers only exist in the Node process).
+  await page.evaluateOnNewDocument(`(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = class LocalWebSocket extends NativeWebSocket {
+      constructor(url, protocols) {
+        const destination = new URL(String(url), window.location.href);
+        const local = ["localhost", "127.0.0.1", "[::1]"].includes(destination.hostname);
+        // Keep the native asynchronous failure behavior expected by
+        // supabase-js; throwing here would crash authenticated UI renders.
+        // Chromium blocks port 1, so the replacement never reaches a host.
+        super(local ? url : "ws://127.0.0.1:1/blocked-external-websocket", protocols);
+      }
+    };
+  })()`);
+}
 
 export function loadEnvTest(): Record<string, string> {
   const p = path.join(process.cwd(), ".env.test");
@@ -31,15 +55,23 @@ export function loadEnvTest(): Record<string, string> {
 }
 
 export const TEST_USERS = {
-  A: { username: "kdtest1", uid: "2952058d-b425-4053-9472-c077b14a6813", email: "bellooluwapelumiayomide210+kdtest1@gmail.com" },
-  B: { username: "kdtest2", uid: "d9eebb45-9421-40af-9b60-a0459ab83633", email: "bellooluwapelumiayomide210+kdtest2@gmail.com" },
+  A: { username: "kdtest1", uid: "00000000-0000-4000-8000-000000000011", email: "player-a@example.test" },
+  B: { username: "kdtest2", uid: "00000000-0000-4000-8000-000000000012", email: "player-b@example.test" },
 };
 
-export async function launchChrome(opts: { headless?: boolean } = {}): Promise<Browser> {
+export async function launchChrome(opts: { headless?: boolean; args?: string[] } = {}): Promise<Browser> {
+  if (!CHROME_PATH) throw new Error("Install Chromium or set CHROME_PATH to its executable.");
+  const browserConfig = path.join("/tmp", "kentro-chromium-config");
+  const browserCache = path.join("/tmp", "kentro-chromium-cache");
+  fs.mkdirSync(browserConfig, { recursive: true });
+  fs.mkdirSync(browserCache, { recursive: true });
   return puppeteer.launch({
     executablePath: CHROME_PATH,
     headless: opts.headless ?? true,
+    env: { ...process.env, XDG_CONFIG_HOME: browserConfig, XDG_CACHE_HOME: browserCache },
     args: [
+      ...(process.getuid?.() === 0 || process.env.CHROME_NO_SANDBOX === "1" ? ["--no-sandbox"] : []),
+      "--disable-dev-shm-usage",
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-gpu",
@@ -50,6 +82,7 @@ export async function launchChrome(opts: { headless?: boolean } = {}): Promise<B
       "--use-fake-ui-for-media-stream",
       "--autoplay-policy=no-user-gesture-required",
       "--allow-insecure-localhost",
+      ...(opts.args || []),
     ],
     defaultViewport: { width: 1280, height: 900 },
   });
@@ -84,6 +117,7 @@ function fakeSession(user: { username: string; uid: string; email: string }) {
 export async function openUserPage(browser: Browser, user: { username: string; uid: string; email: string }): Promise<Page> {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
+  await restrictToLocalNetwork(page);
   page.setDefaultTimeout(30_000);
   const session = fakeSession(user);
   // Re-use the game-server session token from the previous run (like a real
@@ -162,7 +196,7 @@ export async function waitReady(page: Page, timeoutMs = 90_000): Promise<void> {
 export async function gotoArena(page: Page): Promise<void> {
   await waitReady(page);
   const arenaVisible = () =>
-    page.evaluate(() => /ONLINE ARENA/i.test(document.body.innerText) && /CREATE ROOM/i.test(document.body.innerText));
+    page.evaluate(() => /ONLINE ARENA/i.test(document.body.innerText) && /Custom game/i.test(document.body.innerText));
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await clickByText(page, attempt === 0 ? "ONLINE PLAY" : "Online Arena");

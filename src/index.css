@@ -147,3 +147,103 @@ input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
+
+
+/* ===========================================================================
+   Kentro Royal Nigerian Draughts board — reference-matched visual upgrade.
+   All square indexes, Nigerian legal moves, capture rules and piece state stay
+   in their existing TypeScript logic; these are presentation-only styles.
+   Tiny transparent sprites use the reference's ringed black/gold checkers.
+   =========================================================================== */
+.kentro-royal-frame {
+  box-sizing: border-box;
+  padding: clamp(5px, 1.25%, 12px);
+  border: clamp(3px, .65vw, 7px) solid #542407;
+  border-radius: 5px;
+  background: linear-gradient(130deg, #b16a32 0%, #683317 19%, #a05b2a 44%, #562910 78%, #9d5526 100%);
+  box-shadow: inset 0 0 0 2px #2d160a, inset 0 0 0 5px #cd8c47, 0 10px 25px rgba(0,0,0,.36);
+}
+.kentro-royal-grid {
+  border: 1px solid rgba(44,20,5,.86);
+  border-radius: 1px;
+  box-shadow: inset 0 0 6px rgba(25,12,3,.44);
+}
+.kentro-wood-dark {
+  background-color: #85502e;
+  background-image: url('/board/royal-wood/dark.webp');
+  background-size: 100% 100%;
+  background-position: center;
+}
+.kentro-wood-light {
+  background-color: #eed2a6;
+  background-image: url('/board/royal-wood/light.webp');
+  background-size: 100% 100%;
+  background-position: center;
+}
+.kentro-royal-piece {
+  position: relative;
+  display: flex;
+  width: 91%;
+  height: 91%;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 2px 2px rgba(17,8,0,.58));
+  pointer-events: none;
+  will-change: auto;
+}
+.kentro-royal-piece--black { background-image: url('/board/royal-wood/black.webp'); }
+.kentro-royal-piece--gold { background-image: url('/board/royal-wood/gold.webp'); }
+.kentro-royal-king-mark {
+  position: relative;
+  z-index: 1;
+  width: 48%;
+  height: 48%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(35,22,8,.63);
+  color: #fff4cd;
+  font-weight: 900;
+  font-size: clamp(11px, 2.7vw, 25px);
+  text-shadow: 0 1px 3px #1d0b03;
+  border: 1px solid rgba(255,228,158,.55);
+  box-shadow: 0 1px 3px rgba(0,0,0,.6);
+}
+@media (prefers-reduced-motion: reduce) {
+  .kentro-royal-piece { transition: none !important; }
+}
+
+/* Kentro TV: make every replay frame occupy the exact same board geometry.
+   A 10-column grid with implicitly sized rows allows empty rows to collapse
+   and populated rows to grow as pieces move, producing the visible center seam
+   and a board that expands/contracts during playback. Keep the aspect ratio
+   on the padded frame and use explicit, equal-size tracks inside it. */
+.kentro-tv-replay-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+}
+.kentro-tv-replay-grid {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  grid-template-rows: repeat(10, minmax(0, 1fr));
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+}
+.kentro-tv-replay-cell {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}

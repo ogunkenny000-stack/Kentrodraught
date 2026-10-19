@@ -25,7 +25,7 @@ export interface TournamentPlayer {
   isHuman: boolean;
   handicap?: string;
   // Set on exactly one roster entry per tournament: the official Ken 5 AI
-  // competitor the spec requires in every tournament (see KEN5_PLAYER below).
+  // Legacy archives may identify an engine entrant.
   isKen5?: boolean;
 }
 
@@ -38,6 +38,7 @@ export interface TournamentMatch {
   status: "pending" | "playing" | "completed";
   handicapInfo?: string;
   moveHistory?: string[];
+  roomId?: string;
 }
 
 export interface TournamentChatMsg {
@@ -51,6 +52,7 @@ export interface TournamentChatMsg {
 }
 
 export interface Tournament {
+  engineState?: { endsAt?: number; champions?: string[] };
   id: string;
   name: string;
   description: string;
@@ -79,7 +81,7 @@ export interface Tournament {
 interface TournamentDashboardProps {
   username: string;
   userRating: number;
-  onStartMatch: (opponent: string, playerColor: "W" | "B", handicap: string, matchId: string, timeControl: string) => void;
+  onStartMatch: (opponent: string, playerColor: "W" | "B", handicap: string, matchId: string, timeControl: string, roomId?: string) => void;
   activeMatchId: string | null;
   activeMatchOutcome: "win" | "loss" | "draw" | null;
   onResetMatchOutcome: () => void;
@@ -88,49 +90,15 @@ interface TournamentDashboardProps {
   playPromoSound: (m: boolean) => void;
   playVictorySound: (m: boolean) => void;
   canManageTournaments: boolean;
+  onSpectateMatch?: (roomId: string) => void;
   onBackToHome?: () => void;
-}
-
-// Pre-defined Nigeria/African master players to populate matches and bracket simulation
-const BOT_MASTERS = [
-  { username: "Bashir Kentro", rating: 2450, country: "NG", team: "Lagos Kings" },
-  { username: "Emeka Flying King", rating: 2320, country: "NG", team: "Enugu Falcons" },
-  { username: "Yakubu Delay-Remove", rating: 2280, country: "NG", team: "Abuja Warriors" },
-  { username: "Nduka Golden Crown", rating: 2150, country: "NG", team: "Enugu Falcons" },
-  { username: "Chidi Robin Hood", rating: 2050, country: "NG", team: "Lagos Kings" },
-  { username: "Oluwa Time Master", rating: 1980, country: "NG", team: "Abuja Warriors" },
-  { username: "Kofi Draught Boss", rating: 2210, country: "GH", team: "Kano Knights" },
-  { username: "Amadi Slide King", rating: 1890, country: "NG", team: "Kano Knights" },
-  { username: "Babajide Black King", rating: 2410, country: "NG", team: "Lagos Kings" },
-  { username: "Musa Ghost Capture", rating: 2100, country: "NG", team: "Abuja Warriors" },
-];
-
-// Spec requirement: "Ken 5 always joins every tournament as one of the
-// competitors ... follows the same pairing rules as every other participant."
-// This is a real engine-driven opponent, not a flavor-text bot: App.tsx's
-// getTournamentOpponentLevel() maps the exact username "Ken 5" to actual
-// Ken-Level-5 engine strength, so matches against it are genuinely played,
-// not randomly resolved like the BOT_MASTERS roster filler.
-function makeKen5Player(): TournamentPlayer {
-  return {
-    username: "Ken 5",
-    rating: 2380,
-    wins: 0,
-    losses: 0,
-    draws: 0,
-    points: 0,
-    streak: 0,
-    country: "NG",
-    team: "Kentro AI Lab",
-    isHuman: false,
-    isKen5: true,
-  };
 }
 
 function TournamentDashboardImpl({
   username,
   userRating,
   onStartMatch,
+  onSpectateMatch,
   activeMatchId,
   activeMatchOutcome,
   onResetMatchOutcome,
@@ -189,9 +157,6 @@ function TournamentDashboardImpl({
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
   // Spectator simulation states
-  const [spectatingMatch, setSpectatingMatch] = useState<TournamentMatch | null>(null);
-  const [spectatorBoard, setSpectatorBoard] = useState<number[]>([]);
-  const [spectatorLogs, setSpectatorLogs] = useState<string[]>([]);
 
   // Timer simulation tick (runs in active tournament)
   const [timeRemaining, setTimeRemaining] = useState<number>(3600); // 1 hour
@@ -215,6 +180,7 @@ function TournamentDashboardImpl({
       // Real tournaments only -- no fake/demo placeholders. An empty list is
       // shown as-is; see the "No tournaments" empty state in the lobby view.
       setTournamentsList(list);
+      setActiveTour(current => current ? list.find(t => t.id === current.id) || null : null);
     } catch (e) {
       console.error("Supabase tournaments error, falling back:", e);
     } finally {
@@ -222,75 +188,12 @@ function TournamentDashboardImpl({
     }
   };
 
+  useEffect(() => { void loadTournaments(); const timer = setInterval(() => void loadTournaments(), 5000); return () => clearInterval(timer); }, []);
+  useEffect(() => { if (activeMatchOutcome) { onResetMatchOutcome(); void loadTournaments(); } }, [activeMatchOutcome]);
   useEffect(() => {
-    loadTournaments();
-  }, []);
-
-  // Handle active game completion reporting
-  useEffect(() => {
-    if (activeTour && activeMatchId && activeMatchOutcome) {
-      handleMatchResultReport(activeMatchId, activeMatchOutcome);
-    }
-  }, [activeMatchOutcome]);
-
-  // Automatic chat ticker simulation from bots to make lobby feel intensely alive!
-  useEffect(() => {
-    if (activeTour && activeTour.status === "active") {
-      const chatInterval = setInterval(() => {
-        const comments = [
-          "Amazing move on board 1!",
-          "Flying king is extremely active here.",
-          "Oof, watch out for the delayed ghost removal rule!",
-          "Kentro! This draught style is lightning fast.",
-          "Good game opponent!",
-          "My clocks are running low!",
-          "Unbelievable strategy on display.",
-          "Anti-cheat engine just verified board 2. Pristine gameplay.",
-          "Who is spectating Emeka's game? Incredible tactical puzzle.",
-          "That was a blunder on my end, undo disabled makes it intense!",
-          "Nigerian masters represent!",
-          "Love the wood board aesthetic."
-        ];
-        const randomBot = activeTour.players.filter(p => !p.isHuman)[Math.floor(Math.random() * (activeTour.players.filter(p => !p.isHuman).length || 1))] || BOT_MASTERS[0];
-        const randomComment = comments[Math.floor(Math.random() * comments.length)];
-        
-        const newMsg: TournamentChatMsg = {
-          id: `sim_${Date.now()}`,
-          sender: randomBot.username,
-          message: randomComment,
-          timestamp: Date.now(),
-          reactions: { "❤️": Math.floor(Math.random() * 3), "👍": Math.floor(Math.random() * 4) }
-        };
-
-        const updatedChat = [...activeTour.chat, newMsg];
-        const updatedTour: Tournament = {
-          ...activeTour,
-          chat: updatedChat
-        };
-        
-        setActiveTour(updatedTour);
-        supabase.from("tournaments").update({ chat: updatedChat }).eq("id", activeTour.id).then(() => {});
-      }, 15000); // Send message every 15 seconds
-
-      return () => clearInterval(chatInterval);
-    }
-  }, [activeTour]);
-
-  // Handle timer countdown
-  useEffect(() => {
-    if (activeTour && activeTour.status === "active" && timeRemaining > 0) {
-      const timerId = setInterval(() => {
-        setTimeRemaining(prev => {
-          if (prev <= 1) {
-            handleCompleteTournament();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(timerId);
-    }
-  }, [activeTour, timeRemaining]);
+    const update = () => setTimeRemaining(Math.max(0, Math.ceil(((activeTour?.engineState?.endsAt || Date.now()) - Date.now()) / 1000)));
+    update(); const timer = setInterval(update, 1000); return () => clearInterval(timer);
+  }, [activeTour?.engineState?.endsAt]);
 
   // Auto scroll chat to bottom
   useEffect(() => {
@@ -299,96 +202,15 @@ function TournamentDashboardImpl({
 
   // Create Tournament Handler
   const handleCreateTournament = async () => {
-    if (!formName.trim()) {
-      showToast("Please enter a tournament name.");
-      return;
-    }
-    playPromoSound(muted);
-    const code = formVisibility === "private" ? (formInviteCode || Math.random().toString(36).substring(2, 7).toUpperCase()) : "";
-    const tourId = `tour_${Date.now()}`;
-    
-    // Add human player to roster
-    const humanPlayer: TournamentPlayer = {
-      username: username || "You",
-      rating: userRating || 1500,
-      wins: 0,
-      losses: 0,
-      draws: 0,
-      points: 0,
-      streak: 0,
-      country: "NG",
-      team: formTeamName,
-      isHuman: true,
-      handicap: formHandicap !== "None" ? formHandicap : undefined
-    };
-
-    // Auto register a few African bots to complete minimum requirement, plus
-    // the mandatory Ken 5 AI competitor every tournament must include.
-    const roster: TournamentPlayer[] = [humanPlayer, makeKen5Player()];
-    const availableBots = [...BOT_MASTERS];
-    const botCountToFill = Math.min(Math.max(formMaxPlayers - 2, 0), 5);
-    
-    for (let i = 0; i < botCountToFill; i++) {
-      const bIdx = Math.floor(Math.random() * availableBots.length);
-      const b = availableBots.splice(bIdx, 1)[0];
-      roster.push({
-        username: b.username,
-        rating: b.rating,
-        wins: 0,
-        losses: 0,
-        draws: 0,
-        points: 0,
-        streak: 0,
-        country: b.country,
-        team: b.team,
-        isHuman: false,
-        handicap: formHandicap !== "None" ? "Short One" : undefined
-      });
-    }
-
-    const newTour: Tournament = {
-      id: tourId,
-      name: formName,
-      description: formDesc || "Kentro Draughts ultimate tournament challenge.",
-      type: formType,
-      visibility: formVisibility,
-      inviteCode: code,
-      maxPlayers: formMaxPlayers,
-      minPlayers: formMinPlayers,
-      registrationDeadline: "Immediate",
-      startTime: "Immediate",
-      timeControl: formTimeControl,
-      handicap: formHandicap,
-      tieBreak: formTieBreak,
-      prize: formPrize,
-      spectatorPermission: formSpectator,
-      status: "registration",
-      currentRound: 1,
-      maxRounds: formType.includes("Arena") ? 1 : 3,
-      players: roster,
-      matches: [],
-      chat: [
-        { id: "welcome", sender: "Organizer", message: `Welcome to ${formName}! Match pairings will start once tournament gets active.`, timestamp: Date.now(), isAnnouncement: true }
-      ],
-      logs: [`Tournament created by ${username || "You"}.`, `${username || "You"} registered in team ${formTeamName}.`],
-      createdAt: new Date().toISOString()
-    };
-
+    if (!formName.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const { error } = await supabase.from("tournaments").insert(newTour);
-      if (error) throw error;
-      setTournamentsList(prev => [newTour, ...prev]);
-      setActiveTour(newTour);
-      setViewState("active");
-      addNotification("Tournament created successfully! Roster populated.");
-    } catch (err) {
-      console.error("Supabase save tournament error, using local state:", err);
-      setActiveTour(newTour);
-      setViewState("active");
-    } finally {
-      setIsLoading(false);
-    }
+      const result = await apiPost('/api/admin/tournaments', { name: formName, description: formDesc, type: formType, visibility: formVisibility,
+        maxPlayers: formMaxPlayers, minPlayers: formMinPlayers, timeControl: formTimeControl, handicap: formHandicap, tieBreak: formTieBreak,
+        prize: formPrize, spectatorPermission: formSpectator });
+      setActiveTour(result.tournament); setViewState('active'); await loadTournaments();
+    } catch (error) { showToast((error as Error).message || 'Could not create the tournament.'); }
+    finally { setIsLoading(false); }
   };
 
   // Delete specific tournament
@@ -469,7 +291,7 @@ function TournamentDashboardImpl({
         // No username: the server derives it from the verified session --
         // the ONLY wallet this can ever charge is the caller's own.
         tournamentId: tour.id,
-        playerData: { rating: userRating || 1500, country: "NG" },
+        playerData: { country: "NG", team: formTeamName },
       });
 
       // Trust the server's authoritative roster (result.players) rather than
@@ -497,328 +319,37 @@ function TournamentDashboardImpl({
   };
 
   // Join Private Tournament
-  const handleJoinPrivate = () => {
-    const found = tournamentsList.find(t => t.inviteCode.toUpperCase() === joinCode.trim().toUpperCase());
-    if (found) {
-      handleJoinTournament(found);
+  const handleJoinPrivate = async () => {
+    if (!joinCode.trim() || isLoading) return;
+    setIsLoading(true);
+    try {
+      const result = await apiPost("/api/tournaments/invite", { inviteCode: joinCode.trim() });
+      if (!result.tournament?.id || !Array.isArray(result.tournament.players)) throw new Error("The tournament invitation could not be loaded.");
+      const authorizedTournament = result.tournament as Tournament;
+      setTournamentsList(previous => [...previous.filter(tournament => tournament.id !== authorizedTournament.id), authorizedTournament]);
       setJoinCode("");
-    } else {
-      showToast("Invalid invitation code.");
-    }
+      await handleJoinTournament(authorizedTournament);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Could not redeem this invitation. Please try again.");
+    } finally { setIsLoading(false); }
   };
 
-  // Start Tournament & Generate Pairings
+  // Server-owned pairings, results and progression. The browser never reports a winner.
   const handleStartTournament = async () => {
+    if (!activeTour || !canManageTournaments || isLoading) return;
+    setIsLoading(true);
+    try { const result = await apiPost('/api/tournaments/start', { tournamentId: activeTour.id }); setActiveTour(result.tournament); await loadTournaments(); }
+    catch (error) { showToast((error as Error).message); }
+    finally { setIsLoading(false); }
+  };
+  const handleLaunchMatch = async (match: TournamentMatch) => {
     if (!activeTour) return;
-    playPromoSound(muted);
-    
-    const logs = [...activeTour.logs, "Tournament started! Generating round 1 pairings."];
-    const pairings = generatePairings(activeTour.players, activeTour.currentRound, activeTour.type);
-    
-    const updatedTour: Tournament = {
-      ...activeTour,
-      status: "active",
-      matches: pairings,
-      logs
-    };
-
-    setActiveTour(updatedTour);
-    setTimeRemaining(updatedTour.type.includes("Arena") ? 600 : 3600); // 10m for arena, 1h for others
-
     try {
-      const { error } = await supabase.from("tournaments").update({
-        status: "active",
-        matches: pairings,
-        logs
-      }).eq("id", activeTour.id);
-      if (error) throw error;
-      loadTournaments();
-    } catch (e) {
-      console.error("Supabase activate tournament fail:", e);
-    }
-
-    addNotification("Tournament battle has begun! Good luck!");
+      const result = await apiPost('/api/tournaments/join-match', { tournamentId: activeTour.id, matchId: match.id });
+      onStartMatch(match.white === username ? match.black : match.white, result.color, activeTour.handicap, match.id, activeTour.timeControl, result.roomId);
+    } catch (error) { showToast((error as Error).message); }
   };
-
-  // Generate pairing matches based on format
-  const generatePairings = (players: TournamentPlayer[], round: number, type: string): TournamentMatch[] => {
-    const pairings: TournamentMatch[] = [];
-    const shuff = [...players].sort((a, b) => b.rating - a.rating); // Seeded by rating
-    
-    if (type.includes("Single Elimination") || type.includes("Knockout Cup")) {
-      // Bracket knockout style
-      for (let i = 0; i < shuff.length; i += 2) {
-        if (i + 1 < shuff.length) {
-          pairings.push({
-            id: `match_r${round}_${i}`,
-            round,
-            white: shuff[i].username,
-            black: shuff[i + 1].username,
-            winner: null,
-            status: "pending"
-          });
-        } else {
-          // Bye
-          pairings.push({
-            id: `match_r${round}_${i}`,
-            round,
-            white: shuff[i].username,
-            black: "Bye",
-            winner: "W",
-            status: "completed"
-          });
-        }
-      }
-    } else if (type.includes("Double Elimination")) {
-      // Simplification of double elimination Winners Bracket
-      for (let i = 0; i < shuff.length; i += 2) {
-        if (i + 1 < shuff.length) {
-          pairings.push({
-            id: `match_de_r${round}_${i}`,
-            round,
-            white: shuff[i].username,
-            black: shuff[i + 1].username,
-            winner: null,
-            status: "pending",
-            handicapInfo: "Double Elimination Bracket Match"
-          });
-        }
-      }
-    } else {
-      // Swiss, Arena, Round Robin, League standard score pairings
-      const sortedByPoints = [...players].sort((a, b) => b.points - a.points);
-      const paired = new Set<string>();
-
-      for (let i = 0; i < sortedByPoints.length; i++) {
-        if (paired.has(sortedByPoints[i].username)) continue;
-        
-        let foundOpponent = false;
-        for (let j = i + 1; j < sortedByPoints.length; j++) {
-          if (!paired.has(sortedByPoints[j].username)) {
-            pairings.push({
-              id: `match_r${round}_${i}_${j}`,
-              round,
-              white: sortedByPoints[i].username,
-              black: sortedByPoints[j].username,
-              winner: null,
-              status: "pending"
-            });
-            paired.add(sortedByPoints[i].username);
-            paired.add(sortedByPoints[j].username);
-            foundOpponent = true;
-            break;
-          }
-        }
-        
-        if (!foundOpponent) {
-          // Bye
-          pairings.push({
-            id: `match_r${round}_${i}_bye`,
-            round,
-            white: sortedByPoints[i].username,
-            black: "Bye",
-            winner: "W",
-            status: "completed"
-          });
-          paired.add(sortedByPoints[i].username);
-        }
-      }
-    }
-
-    return pairings;
-  };
-
-  // Launch draughts match for the user
-  const handleLaunchMatch = (match: TournamentMatch) => {
-    if (!activeTour) return;
-    const isWhite = match.white === username;
-    const opponent = isWhite ? match.black : match.white;
-    const handicapRule = activeTour.handicap !== "None" ? activeTour.handicap : "None";
-    
-    // Set match status to playing
-    const updatedMatches = activeTour.matches.map(m => m.id === match.id ? { ...m, status: "playing" as const } : m);
-    setActiveTour({ ...activeTour, matches: updatedMatches });
-
-    // Inform user and trigger callback to launch interactive draught board match
-    addNotification(`Match launched! You play as ${isWhite ? "White" : "Black"} against ${opponent}.`);
-    onStartMatch(opponent, isWhite ? "W" : "B", handicapRule, match.id, activeTour.timeControl);
-  };
-
-  // Handle reporting back the completed draught match result
-  const handleMatchResultReport = async (matchId: string, outcome: "win" | "loss" | "draw") => {
-    if (!activeTour) return;
-    
-    const isWin = outcome === "win";
-    const isLoss = outcome === "loss";
-    const isDraw = outcome === "draw";
-
-    // Deduce winner based on your perspective
-    let winnerSymbol: "W" | "B" | "D" = "D";
-    const userMatch = activeTour.matches.find(m => m.id === matchId);
-    if (userMatch) {
-      const userIsWhite = userMatch.white === username;
-      if (isWin) {
-        winnerSymbol = userIsWhite ? "W" : "B";
-      } else if (isLoss) {
-        winnerSymbol = userIsWhite ? "B" : "W";
-      } else {
-        winnerSymbol = "D";
-      }
-    }
-
-    // Update active matches with winner
-    const updatedMatches = activeTour.matches.map(m => {
-      if (m.id === matchId) {
-        return { ...m, winner: winnerSymbol, status: "completed" as const };
-      }
-      return m;
-    });
-
-    // Award points to human player
-    const updatedPlayers = activeTour.players.map(p => {
-      if (p.username === username) {
-        const addedPts = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
-        return {
-          ...p,
-          wins: p.wins + (outcome === "win" ? 1 : 0),
-          losses: p.losses + (outcome === "loss" ? 1 : 0),
-          draws: p.draws + (outcome === "draw" ? 1 : 0),
-          points: p.points + addedPts,
-          streak: outcome === "win" ? p.streak + 1 : 0
-        };
-      }
-      return p;
-    });
-
-    // Auto simulate other bot matches in the round
-    const fullyCompletedMatches = updatedMatches.map(m => {
-      if (m.status === "pending" || m.status === "playing") {
-        // Simple ELO based winner probability simulation
-        const whiteP = activeTour.players.find(p => p.username === m.white);
-        const blackP = activeTour.players.find(p => p.username === m.black);
-        const diff = (whiteP?.rating || 1500) - (blackP?.rating || 1500);
-        
-        let roll = Math.random();
-        let simWinner: "W" | "B" | "D" = "D";
-        if (diff > 150) {
-          simWinner = roll < 0.65 ? "W" : roll < 0.85 ? "D" : "B";
-        } else if (diff < -150) {
-          simWinner = roll < 0.65 ? "B" : roll < 0.85 ? "D" : "W";
-        } else {
-          simWinner = roll < 0.4 ? "W" : roll < 0.8 ? "B" : "D";
-        }
-
-        return {
-          ...m,
-          winner: simWinner,
-          status: "completed" as const
-        };
-      }
-      return m;
-    });
-
-    // Distribute points to simulated bots based on results
-    const finalizedPlayers = updatedPlayers.map(p => {
-      if (p.username === username) return p;
-      
-      let botWinCount = 0;
-      let botLossCount = 0;
-      let botDrawCount = 0;
-      let botPoints = p.points;
-      
-      fullyCompletedMatches.forEach(m => {
-        if (m.white === p.username) {
-          if (m.winner === "W") { botWinCount++; botPoints += 1; }
-          else if (m.winner === "B") { botLossCount++; }
-          else { botDrawCount++; botPoints += 0.5; }
-        } else if (m.black === p.username) {
-          if (m.winner === "B") { botWinCount++; botPoints += 1; }
-          else if (m.winner === "W") { botLossCount++; }
-          else { botDrawCount++; botPoints += 0.5; }
-        }
-      });
-
-      return {
-        ...p,
-        wins: p.wins + botWinCount,
-        losses: p.losses + botLossCount,
-        draws: p.draws + botDrawCount,
-        points: botPoints,
-        streak: botWinCount > 0 ? p.streak + botWinCount : 0
-      };
-    });
-
-    const currentRound = activeTour.currentRound;
-    const maxRounds = activeTour.maxRounds;
-    
-    let nextRound = currentRound;
-    let newStatus = activeTour.status;
-    let nextMatches = fullyCompletedMatches;
-    let logs = [...activeTour.logs, `Round ${currentRound} games completed.`];
-
-    if (currentRound < maxRounds) {
-      nextRound += 1;
-      logs.push(`Generating round ${nextRound} pairings.`);
-      const pairingsForNextRound = generatePairings(finalizedPlayers, nextRound, activeTour.type);
-      nextMatches = [...fullyCompletedMatches, ...pairingsForNextRound];
-    } else {
-      newStatus = "completed";
-      logs.push("Championship concluded! Calculating rankings and distribution of awards.");
-    }
-
-    const nextTourState: Tournament = {
-      ...activeTour,
-      status: newStatus,
-      currentRound: nextRound,
-      matches: nextMatches,
-      players: finalizedPlayers,
-      logs
-    };
-
-    setActiveTour(nextTourState);
-    if (newStatus === "completed") {
-      setViewState("results");
-      playVictorySound(muted);
-    }
-    
-    // Save state to Supabase
-    try {
-      const { error } = await supabase.from("tournaments").update({
-        status: newStatus,
-        currentRound: nextRound,
-        matches: nextMatches,
-        players: finalizedPlayers,
-        logs
-      }).eq("id", activeTour.id);
-      if (error) throw error;
-    } catch (e) {
-      console.error("Supabase report match result failed:", e);
-    }
-
-    // Reset parent callback trigger
-    onResetMatchOutcome();
-  };
-
-  const handleCompleteTournament = async () => {
-    if (!activeTour) return;
-    const logs = [...activeTour.logs, "Tournament duration expired. Concluding tournament standings."];
-    const completedTour: Tournament = {
-      ...activeTour,
-      status: "completed",
-      logs
-    };
-    setActiveTour(completedTour);
-    setViewState("results");
-    playVictorySound(muted);
-
-    try {
-      const { error } = await supabase.from("tournaments").update({
-        status: "completed",
-        logs
-      }).eq("id", activeTour.id);
-      if (error) throw error;
-    } catch (e) {}
-  };
+  const handleCompleteTournament = () => showToast('The server completes the tournament after its authoritative games finish.', 'info');
 
   // Chat message sending
   const handleSendChatMessage = async () => {
@@ -847,81 +378,21 @@ function TournamentDashboardImpl({
     setIsOrganizerAnnouncement(false);
 
     try {
-      const { error } = await supabase.from("tournaments").update({
-        chat: updatedChat
-      }).eq("id", activeTour.id);
-      if (error) throw error;
-    } catch (e) {}
-
-    // Simulated reaction to your message after 1.5 seconds!
-    setTimeout(() => {
-      setActiveTour(current => {
-        if (!current) return null;
-        const msgList = current.chat.map(m => {
-          if (m.id === newMsg.id) {
-            return {
-              ...m,
-              reactions: { "❤️": 1, "🔥": Math.random() > 0.5 ? 1 : 0 }
-            };
-          }
-          return m;
-        });
-        return { ...current, chat: msgList };
+      const { data: savedChat, error } = await supabase.rpc("kentro_tournament_chat", {
+        p_tournament: activeTour.id, p_message: chatInput.trim(), p_reply: replyToId || null,
       });
-    }, 1500);
+      if (!error && Array.isArray(savedChat)) setActiveTour(current => current ? { ...current, chat: savedChat } : current);
+      if (error) throw error;
+    } catch (e) {
+      setActiveTour(current => current ? { ...current, chat: current.chat.filter(message => message.id !== newMsg.id) } : current);
+      showToast("Your chat message could not be sent. Please try again.");
+    }
   };
 
   // Add notification to active tray
   const addNotification = (text: string) => {
     setNotifications(prev => [text, ...prev.slice(0, 4)]);
   };
-
-  // Spectate active match simulations
-  const handleSpectateMatch = (match: TournamentMatch) => {
-    playClickSound(muted);
-    setSpectatingMatch(match);
-    
-    // Create static layout of a kentro draughts 10x10 board coordinates
-    const draftBoardPieces = Array(50).fill(0).map(() => {
-      let rand = Math.random();
-      return rand < 0.25 ? 1 : rand < 0.5 ? -1 : 0; // 1 = White, -1 = Black, 0 = Empty
-    });
-    setSpectatorBoard(draftBoardPieces);
-
-    const matchLogs = [
-      `Connecting to Live Spectator Server...`,
-      `Opponents: ${match.white} vs ${match.black}`,
-      `Move 1: White 35-30. Black responds 15-20.`,
-      `Move 5: Multi-capture jump sequence triggered.`,
-      `Verified with Kentro Anti-Cheat monitor: OK.`
-    ];
-    setSpectatorLogs(matchLogs);
-  };
-
-  // Simulation step for spectated game
-  useEffect(() => {
-    if (spectatingMatch) {
-      const interval = setInterval(() => {
-        const from = Math.floor(Math.random() * 50) + 1;
-        const to = Math.floor(Math.random() * 50) + 1;
-        const comment = `${spectatingMatch.white === username ? "You" : spectatingMatch.white} moves square ${from} to ${to} • Flying King active.`;
-        
-        setSpectatorLogs(prev => [...prev, comment].slice(-10));
-        
-        // Randomly modify board state
-        setSpectatorBoard(prev => {
-          const next = [...prev];
-          const idxFrom = Math.floor(Math.random() * 50);
-          const idxTo = Math.floor(Math.random() * 50);
-          next[idxTo] = next[idxFrom];
-          next[idxFrom] = 0;
-          return next;
-        });
-      }, 5000);
-
-      return () => clearInterval(interval);
-    }
-  }, [spectatingMatch]);
 
   // Formatted date and times
   const formatTime = (secs: number) => {
@@ -942,11 +413,10 @@ function TournamentDashboardImpl({
     playClickSound(muted);
     setActiveTour(null);
     setViewState("lobby");
-    setSpectatingMatch(null);
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto flex flex-col gap-5 text-slate-100 p-1.5 md:p-3 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+    <div className="k-tournament-hub w-full max-w-6xl mx-auto flex flex-col gap-5 text-slate-100 p-1.5 md:p-3 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
 
       <AnimatePresence>
         {toast && (
@@ -1153,7 +623,7 @@ function TournamentDashboardImpl({
                   <span>Enter Private Invitation</span>
                 </h3>
                 <p className="text-slate-400 text-[11px] leading-relaxed mb-4">
-                  Have an invitation code from a friend or club organizer? Paste it below to bypass visibility locks.
+                  Have an invitation code from a friend or club organizer? Paste it below to open your invitation securely.
                 </p>
                 
                 <div className="flex gap-2">
@@ -1166,6 +636,7 @@ function TournamentDashboardImpl({
                   />
                   <button
                     onClick={handleJoinPrivate}
+                    disabled={isLoading || !joinCode.trim()}
                     className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2 rounded-xl text-xs transition cursor-pointer uppercase"
                   >
                     Join
@@ -1543,6 +1014,7 @@ function TournamentDashboardImpl({
 
                 {activeTour.status === "registration" && activeTour.players.some(p => p.username === username) && (
                   <button
+                    disabled={!canManageTournaments}
                     onClick={handleStartTournament}
                     className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-2 rounded-xl text-xs transition uppercase flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/10 cursor-pointer"
                   >
@@ -1561,7 +1033,7 @@ function TournamentDashboardImpl({
 
                 <div className="flex-1 overflow-y-auto space-y-2 border border-slate-950 bg-slate-950/60 rounded-xl p-2 divide-y divide-slate-950">
                   {activeTour.players
-                    .sort((a, b) => b.points - a.points || b.rating - a.rating)
+                    .slice().sort((a, b) => b.points - a.points || b.rating - a.rating)
                     .map((p, index) => {
                       const isSelf = p.username === username;
                       return (
@@ -1676,16 +1148,6 @@ function TournamentDashboardImpl({
                                 </span>
                               )}
 
-                              {!userPlays && m.status === "pending" && (
-                                <button
-                                  onClick={() => handleSpectateMatch(m)}
-                                  className="bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-white px-2.5 py-1 rounded-lg text-[9px] font-bold border border-slate-850 flex items-center gap-1 transition cursor-pointer"
-                                >
-                                  <Eye className="w-3 h-3" />
-                                  <span>Spectate 👁️</span>
-                                </button>
-                              )}
-
                               {m.status === "completed" && (
                                 <span className="text-[9px] font-extrabold uppercase text-slate-500 bg-slate-950 px-2 py-1 rounded">
                                   {m.winner === "D" ? "Draw" : "Finished"}
@@ -1706,50 +1168,14 @@ function TournamentDashboardImpl({
                   <span>Live Spectator Arena</span>
                 </h4>
 
-                {spectatingMatch ? (
-                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Small preview board */}
-                    <div className="bg-slate-950 rounded-xl p-2.5 flex items-center justify-center border border-slate-900">
-                      <div className="grid grid-cols-5 gap-0.5 max-w-[140px] w-full aspect-square bg-[#7c4c24] border-2 border-[#4a2e16] p-0.5">
-                        {spectatorBoard.slice(0, 25).map((piece, idx) => (
-                          <div key={idx} className="aspect-square bg-[#eac494] flex items-center justify-center rounded">
-                            {piece !== 0 && (
-                              <div className={`w-3 h-3 rounded-full shadow ${piece === 1 ? "bg-white" : "bg-neutral-800"}`} />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {/* Simulator Match Logs */}
-                    <div className="flex flex-col justify-between h-full bg-slate-950 rounded-xl p-3 border border-slate-900 text-[10px]">
-                      <div className="space-y-1 overflow-y-auto max-h-[140px] font-mono text-slate-400 text-[9px] leading-relaxed">
-                        {spectatorLogs.map((log, lIdx) => (
-                          <div key={lIdx} className="border-b border-slate-900/60 pb-0.5">
-                            {log}
-                          </div>
-                        ))}
-                      </div>
-                      <button
-                        onClick={() => setSpectatingMatch(null)}
-                        className="w-full mt-2 bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-white font-extrabold py-1.5 rounded-lg text-[9px] uppercase border border-slate-800 transition cursor-pointer"
-                      >
-                        Disconnect Spectator
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-2">
-                    <div className="p-2.5 bg-slate-900/60 border border-slate-850 rounded-xl text-slate-500">
-                      <Eye className="w-6 h-6 text-slate-500" />
-                    </div>
-                    <div>
-                      <h5 className="font-bold text-slate-300 text-xs uppercase">No Active Spectated Match</h5>
-                      <p className="text-slate-500 text-[10px] mt-1 max-w-xs leading-normal">
-                        Click 'Spectate' on any of the bot matches above to join the observer pool, audit gameplay, or study master moves!
-                      </p>
-                    </div>
-                  </div>
-                )}
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-2">
+                  <Eye className="w-6 h-6 text-slate-500" />
+                  <h5 className="font-bold text-slate-300 text-xs">Live tournament games</h5>
+                  <p className="text-slate-400 text-xs max-w-xs leading-relaxed">
+                    {activeTour.visibility === 'private' || !activeTour.spectatorPermission ? 'Spectating is disabled for this event.' : 'Open an authoritative live board below.'}
+                    {activeTour.visibility !== 'private' && activeTour.spectatorPermission && activeTour.matches.filter(match => match.roomId && match.status !== 'completed').map(match => <button key={match.id} className="block p-2 text-amber-300" onClick={() => onSpectateMatch?.(match.roomId!)}>Watch {match.white} vs {match.black}</button>)}
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -1761,7 +1187,7 @@ function TournamentDashboardImpl({
                   <span>Public Lobby Chat</span>
                 </h4>
                 <span className="text-[10px] font-bold text-amber-500 bg-amber-500/5 border border-amber-500/20 px-2 py-0.5 rounded-full animate-pulse">
-                  {activeTour.players.length + 3} Online
+                  {activeTour.players.length} registered
                 </span>
               </div>
 
@@ -1899,7 +1325,7 @@ function TournamentDashboardImpl({
                 { label: "Champion", index: 0, medal: "🥇" },
                 { label: "Third Place", index: 2, medal: "🥉" }
               ].map((pos) => {
-                const p = activeTour.players.sort((a, b) => b.points - a.points || b.rating - a.rating)[pos.index];
+                const p = activeTour.players.slice().sort((a, b) => b.points - a.points || b.rating - a.rating)[pos.index];
                 if (!p) return null;
                 return (
                   <div 

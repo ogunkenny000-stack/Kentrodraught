@@ -9,6 +9,7 @@ interface ComputerConfigModalProps {
   open: boolean;
   onClose: () => void;
   coinBalance: number;
+  coinsEnabled?: boolean;
   profileStats: PlayerStats;
   coinSettings: CoinSettings | null;
   kenLevelId: number;
@@ -25,7 +26,7 @@ interface ComputerConfigModalProps {
 }
 
 export function ComputerConfigModal({
-  open, onClose, coinBalance, profileStats, coinSettings, kenLevelId, setKenLevelId,
+  open, onClose, coinBalance, coinsEnabled = false, profileStats, coinSettings, kenLevelId, setKenLevelId,
   setStatusMessage, muted, playMode, setPlayMode, purchaseSubmitted,
   onUnlockKenLevel, onOpenStore, onApplyStart, onOpenPastGamesModal,
 }: ComputerConfigModalProps) {
@@ -60,19 +61,11 @@ export function ComputerConfigModal({
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             {KEN_LEVELS.map((lvl) => {
-              const maxKen = profileStats.maxUnlockedKenLevel || 1;
+              const maxKen = Math.max(3, profileStats.maxUnlockedKenLevel || 1);
               const isLocked = lvl.id > maxKen;
               return (
-                <button
+                <div
                   key={lvl.id}
-                  onClick={() => {
-                    if (isLocked) {
-                      setStatusMessage(`Level ${lvl.id} locked! Defeat Level ${lvl.id - 1} without hints/undo, or spend ${coinSettings?.aiUnlockCostPerLevel ?? 50} coins to unlock it.`);
-                      return;
-                    }
-                    setKenLevelId(lvl.id);
-                    playClickSound(muted);
-                  }}
                   className={`p-2.5 rounded-xl text-[10px] font-bold text-left transition flex items-center justify-between cursor-pointer ${
                     kenLevelId === lvl.id
                       ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
@@ -81,30 +74,47 @@ export function ComputerConfigModal({
                         : "bg-slate-900/60 border border-slate-800 text-slate-300 hover:bg-slate-800/80"
                   }`}
                 >
-                  <div>
+                  <button
+                    type="button"
+                    aria-pressed={kenLevelId === lvl.id}
+                    aria-disabled={isLocked}
+                    className="flex-1 min-w-0 text-left"
+                    onClick={() => {
+                      if (isLocked) {
+                        setStatusMessage(`Level ${lvl.id} locked! Spend Kentro Coins to unlock level ${lvl.id}, or choose a free available level.`);
+                        return;
+                      }
+                      setKenLevelId(lvl.id);
+                      playClickSound(muted);
+                    }}
+                  >
                     <div className="truncate">{lvl.name}</div>
                     <div className={`text-[8px] font-medium font-sans ${kenLevelId === lvl.id ? "text-slate-800" : (isLocked ? "text-slate-700" : "text-slate-500")}`}>
                       Level {lvl.id}
                     </div>
-                  </div>
-                  {isLocked && (
+                  </button>
+                  {isLocked && coinsEnabled && (
                     <button
+                      type="button"
+                      aria-label={`Unlock ${lvl.name} for ${(coinSettings?.aiUnlockCostPerLevel ?? 50) * Math.max(1, lvl.id - Math.max(3, maxKen))} coins`}
+                      disabled={!coinsEnabled}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onUnlockKenLevel(lvl.id);
+                        if (coinsEnabled) onUnlockKenLevel(lvl.id);
                       }}
-                      title={`Unlock with ${coinSettings?.aiUnlockCostPerLevel ?? 50} coins`}
+                      title={`Unlock with ${(coinSettings?.aiUnlockCostPerLevel ?? 50) * Math.max(1, lvl.id - Math.max(3, maxKen))} coins`}
                       className="text-[9px] font-bold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 cursor-pointer transition"
                     >
                       <KentroCoin size="2xs" />
-                      {coinSettings?.aiUnlockCostPerLevel ?? 50}
+                      {(coinSettings?.aiUnlockCostPerLevel ?? 50) * Math.max(1, lvl.id - Math.max(3, maxKen))}
                     </button>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>
-          {(profileStats.maxUnlockedKenLevel || 1) < 8 && (
+          {!coinsEnabled && <p className="text-[10px] text-amber-300">Coin purchases are temporarily disabled until the wallet is ready. Ken 1–3 remain free.</p>}
+          {coinsEnabled && (profileStats.maxUnlockedKenLevel || 1) < 8 && (
             <div className="flex gap-1.5 mt-1">
               <button
                 onClick={() => onUnlockKenLevel("all")}
@@ -113,7 +123,7 @@ export function ComputerConfigModal({
                 <Crown size={12} className="text-amber-400" />
                 <span>Unlock All</span>
                 <span className="flex items-center gap-0.5 font-mono text-amber-200">
-                  (<KentroCoin size="2xs" /> {coinSettings?.aiUnlockAllCost ?? 250})
+                  (<KentroCoin size="2xs" /> {Math.min(coinSettings?.aiUnlockAllCost ?? 250, (coinSettings?.aiUnlockCostPerLevel ?? 50) * (8 - Math.max(3, profileStats.maxUnlockedKenLevel || 1)))})
                 </span>
               </button>
               <button

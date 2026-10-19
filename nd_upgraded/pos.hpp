@@ -81,6 +81,7 @@ private:
 
    Pos m_pos;
    int m_ply;
+   int m_material_ply {0};
    const Node * m_parent;
 
 public:

@@ -1,7 +1,11 @@
-import { Board, Move } from "../gameLogic";
+import type { Board, Move } from "../gameLogic";
+import type { Color } from "../shared/protocol";
 
 export interface KentroGameRecord {
   gameCode: string; // e.g. "2690001"
+  private?: boolean;
+  participantUserIds?: string[];
+  serverSyncPending?: boolean;
   previousGameCode: string | null; // e.g. "2690000" if rematch
   nextGameCode?: string | null;
   seriesId: string; // Connected rematch series ID
@@ -14,9 +18,11 @@ export interface KentroGameRecord {
   gameMode: string;
   timeControl: string;
   startingPosition?: Board | null;
+  startingTurn?: Color;
   completeMoveHistory: Move[];
   moveHistoryStrings: string[];
   currentPosition?: Board | null;
+  currentTurn?: Color;
   gameStartTime: number;
   gameEndTime: number;
   durationSeconds: number;

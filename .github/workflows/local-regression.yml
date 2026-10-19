@@ -1,0 +1,42 @@
+name: Local regression
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      AUDIT_PG_URL: postgresql://postgres@127.0.0.1:55432/postgres
+      SKIP_DB_MIGRATION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --include=dev
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:capture-rules
+      - run: npm run build
+      - run: npm run migrations:check
+      - run: npm run test:preflight
+      - run: npm run test:coin-safety
+      - run: npm run test:supabase-contract
+      - run: npm run test:database
+      - run: npm run test:multiplayer
+      - run: npm run test:restart
+      - run: npm run test:tournaments

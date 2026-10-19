@@ -24,9 +24,14 @@
  * first failed expectation.
  */
 import WebSocket from "ws";
+import { randomBytes } from "node:crypto";
 import { Board, Move, generateLegalMoves, applyMove } from "../src/gameLogic";
 
 const URL = process.env.SMOKE_URL || "ws://localhost:8123";
+const target = new globalThis.URL(URL);
+if (!["ws:", "wss:"].includes(target.protocol) || !["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)) {
+  throw new Error("PvP smoke is restricted to a disposable loopback server");
+}
 
 type Msg = any;
 
@@ -86,8 +91,13 @@ class Client {
   /** Waits only for messages that arrive AFTER this call. */
   waitNext(desc: string, match: (m: Msg) => boolean, timeoutMs = 12000): Promise<Msg> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`[${this.name}] timed out waiting for next: ${desc}`)), timeoutMs);
-      this.waiters.push({ match, resolve: (m) => { clearTimeout(timer); resolve(m); } });
+      const waiter = { match, resolve: (m: Msg) => { clearTimeout(timer); resolve(m); } };
+      const timer = setTimeout(() => {
+        const index = this.waiters.indexOf(waiter);
+        if (index >= 0) this.waiters.splice(index, 1);
+        reject(new Error(`[${this.name}] timed out waiting for next: ${desc}`));
+      }, timeoutMs);
+      this.waiters.push(waiter);
     });
   }
 
@@ -126,8 +136,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function openSocket(c: Client) {
   await new Promise<void>((res, rej) => {
-    c.ws.on("open", () => res());
-    c.ws.on("error", (e) => rej(e));
+    const timer = setTimeout(() => { c.drop(); rej(new Error(`[${c.name}] socket connection timed out`)); }, 12000);
+    c.ws.once("open", () => { clearTimeout(timer); res(); });
+    c.ws.once("error", (e) => { clearTimeout(timer); rej(e); });
   });
 }
 
@@ -229,7 +240,7 @@ async function main() {
   const mm1 = await mvSeen;
   assert(black1.turn === black1.color, "turn passed to Black after White's move");
   assert(mm1.whiteTime > 290 && mm1.clock?.running === "B" && typeof mm1.seq === "number", `move-made ignores client clock (whiteTime=${mm1.whiteTime}), clock now runs for Black, seq=${mm1.seq}`);
-  const mvSeen2 = white1.waitNext("move-made 2", (m) => m.type === "move-made");
+  const mvSeen2 = white1.waitNext("move-made 2", (m) => m.type === "move-made" && m.moveIndex === 2);
   black1.playFirstLegalMove();
   const mm2 = await mvSeen2;
   assert(mm2.moveIndex === 2 && mm2.turn === "W", "second move relayed with moveIndex 2");
@@ -326,6 +337,15 @@ async function main() {
   (A.color === A.turn ? A : B).playFirstLegalMove();
   await specMove;
   assert(true, "spectator receives live moves in real time");
+  const oldSpectator = S;
+  oldSpectator.drop(); await sleep(100);
+  S = await connect(oldSpectator.name, oldSpectator.token!);
+  const specResume = await S.wait("spectator rejoined", (m) => m.type === "spectate-joined");
+  assert(specResume.roomId === r3.roomId && specResume.gameState.moveHistory.length === 1,
+    "spectator token reconnect restores the full public game without another watch request");
+  const specWrite = S.waitNext("spectator action refused", (m) => m.type === "error" && m.code === "not-in-room");
+  S.send({ type: "make-move", move: S.legalMoves()[0] }); await specWrite;
+  assert(true, "spectator cannot submit player moves");
 
   console.log("\n== 14. Sessions: duplicate name refused without token, takeover with token ==");
   const dup = await connectRaw(A.name);
@@ -471,6 +491,34 @@ async function main() {
   await limited;
   assert(true, "error { code: rate-limited } returned instead of a silent drop");
   await sleep(100);
+
+  console.log("\n== 25. Guests receive exactly one free online game ==");
+  const G = await connect(`KGuest_${randomBytes(10).toString("hex")}`);
+  const guestMatch = await createAndJoin(A, G, { ...FIVE_MIN, bestOf: 1 });
+  assert(guestMatch.started.phase === "playing", "guest joins and starts a free single game");
+  await resign(G, A);
+  const guestRematch = A.waitNext("guest rematch refused", (m) => m.type === "room-error");
+  A.send({ type: "rematch-request" }); await guestRematch;
+  await leaveBoth(A, G);
+  const quotaExhausted = G.waitNext("guest quota exhausted", (m) => m.type === "guest-limit-reached");
+  G.send({ type: "create-room", ...FIVE_MIN, bestOf: 3 }); await quotaExhausted;
+  assert(true, "guest cannot create another game or play a rematch after completion");
+  G.close();
+
+  console.log("\n== 26. Private rooms never appear in discovery and cannot be watched by code ==");
+  const P = await connect(`smokePrivate${suffix}`);
+  const privateMatch = await createAndJoin(A, B, { ...FIVE_MIN, bestOf: 1, private: true });
+  assert(privateMatch.started.private === true, "both players receive the private game flag");
+  const privateListP = P.waitNext("private listing", (m) => m.type === "live-rooms-list");
+  P.send({ type: "list-live-rooms" }); const privateList = await privateListP;
+  assert(!privateList.rooms.some((r: any) => r.roomId === privateMatch.roomId), "private match is absent from Kentro TV discovery");
+  const privateDenied = P.waitNext("private spectator rejected", (m) => m.type === "error");
+  P.send({ type: "spectate-room", roomId: privateMatch.roomId });
+  assert((await privateDenied).code === "busy", "knowing a private room code does not permit spectating");
+  const stateDenied = P.waitNext("private resync rejected", (m) => m.type === "error" && m.code === "not-in-room");
+  P.send({ type: "resync", roomId: privateMatch.roomId }); await stateDenied;
+  assert(true, "unauthorized socket cannot fetch private game state through resync");
+  await leaveBoth(A, B); P.close();
 
   A.close(); B.close(); S.close(); C.close();
   console.log("\n✅ ALL PVP SMOKE TESTS PASSED\n");

@@ -102,20 +102,28 @@ describe("existing service worker", () => {
 });
 
 describe("production asset injection", () => {
-  it("includes lazy runtime chunks, preserves dev guards, and is idempotent", () => {
+  it("prepares startup and nearby dependencies, preserves dev guards, and is idempotent", () => {
     const dir = fs.mkdtempSync(path.resolve(".sw-fixture-"));
     fixtureDirs.push(dir);
     fs.mkdirSync(path.join(dir, "dist/assets/lazy"), { recursive: true });
     fs.writeFileSync(path.join(dir, "dist/sw.js"), source);
-    fs.writeFileSync(path.join(dir, "dist/index.html"), "<html>shell</html>");
-    for (const name of ["index-1.js", "index-1.css", "analysis-2.js", "lazy/worker-3.wasm", "photo.jpg"]) fs.writeFileSync(path.join(dir, "dist/assets", name), "fixture");
+    fs.writeFileSync(path.join(dir, "dist/index.html"), '<script type="module" src="/assets/index-1.js"></script><link rel="stylesheet" href="/assets/index-1.css">');
+    for (const name of ["index-1.css", "analysis-2.js", "KentroTV-lazy.js", "lazy/worker-3.wasm", "photo.jpg"]) fs.writeFileSync(path.join(dir, "dist/assets", name), "fixture");
+    fs.writeFileSync(path.join(dir, "dist/assets/index-1.js"), 'const tv = () => import("./KentroTV-lazy.js");');
+    fs.writeFileSync(path.join(dir, "dist/assets/OfflineNearby-1.js"), 'import { rules } from "./rules-1.js";');
+    fs.writeFileSync(path.join(dir, "dist/assets/rules-1.js"), 'import "./lazy/worker-3.wasm"; export const rules = true;');
     const script = path.resolve("scripts/inject-sw-assets.cjs");
     const run = () => spawnSync(process.execPath, [script], { cwd: dir, encoding: "utf8" });
     const first = run();
     expect(first.status, first.stderr).toBe(0);
     const result = fs.readFileSync(path.join(dir, "dist/sw.js"), "utf8");
-    expect(result).toContain('"/assets/analysis-2.js"');
+    expect(result).toContain('"/assets/index-1.js"');
+    expect(result).toContain('"/assets/index-1.css"');
+    expect(result).toContain('"/assets/OfflineNearby-1.js"');
+    expect(result).toContain('"/assets/rules-1.js"');
     expect(result).toContain('"/assets/lazy/worker-3.wasm"');
+    expect(result).not.toContain('"/assets/analysis-2.js"');
+    expect(result).not.toContain('"/assets/KentroTV-lazy.js"');
     expect(result).not.toContain('"/assets/photo.jpg"');
     expect(result).toContain("if (isDevEnv)");
     expect(() => new vm.Script(result)).not.toThrow();

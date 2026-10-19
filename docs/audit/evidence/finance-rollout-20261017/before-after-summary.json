@@ -1,0 +1,51 @@
+{
+  "before": {
+    "captured_at": "2026-10-17T15:37:02.513024+00:00",
+    "total_debits": 910,
+    "wallet_count": 34,
+    "total_credits": 3945,
+    "pending_purchases": 1,
+    "transaction_count": 45,
+    "wallet_balance_sum": 3035,
+    "pending_withdrawals": 0
+  },
+  "after": {
+    "migrations": [
+      {
+        "name": "revoke_public_execute_on_money_functions",
+        "version": "20261001095803"
+      },
+      {
+        "name": "protect_ban_columns_and_lock_game_updates",
+        "version": "20261001100003"
+      },
+      {
+        "name": "add_profile_bio_and_status_quote",
+        "version": "20261001100732"
+      },
+      {
+        "name": "chat_columns_chat_friends_tournament_policies",
+        "version": "20261002203526"
+      },
+      {
+        "name": "kentro_verified_ken_victory_progression_20261017",
+        "version": "20261017145413"
+      },
+      {
+        "name": "kentro_lock_ken_entitlements_20261017",
+        "version": "20261017145448"
+      }
+    ],
+    "captured_at": "2026-10-18T05:44:41.106034+00:00",
+    "total_debits": 910,
+    "wallet_count": 34,
+    "total_credits": 3945,
+    "finance_tables": null,
+    "pending_purchases": 1,
+    "transaction_count": 45,
+    "wallet_balance_sum": 3035,
+    "pending_withdrawals": 0,
+    "all_per_wallet_rows_unchanged": true
+  },
+  "live_writes_by_this_task": 0
+}

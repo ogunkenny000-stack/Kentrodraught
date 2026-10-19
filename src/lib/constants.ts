@@ -69,12 +69,6 @@ export interface KenDifficulty {
 }
 
 
-// Mirrors KENTRO_COINS_ENABLED in server.ts. Coins are live: the store,
-// AI-level unlock purchases, tournament entry fees, and match wagers all
-// charge real wallet balances now. Flip both this and the server.ts copy
-// back to false together if coins ever need to be pulled again.
-export const KENTRO_COINS_ENABLED = true;
-
 // Match wager range for Create Game -- host picks the per-player entry fee
 // directly instead of it being auto-derived from time control. Mirrors
 // MIN_MATCH_WAGER/MAX_MATCH_WAGER/MATCH_WAGER_STEP in server.ts, which

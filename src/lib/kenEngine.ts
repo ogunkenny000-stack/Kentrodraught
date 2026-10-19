@@ -1,6 +1,7 @@
 /** Client for the project's compiled native Scan C++ engine. */
 import { Board, Move, boardToScanFen, hubMoveStringToNigerian, generateLegalMoves, movesAreEquivalent } from "../gameLogic";
 import { KEN_LEVELS } from "./constants";
+import { supabase } from "../supabase";
 
 export interface KenResult {
   move: Move | null;
@@ -9,6 +10,7 @@ export interface KenResult {
   nodes: number;
   pv: string;
   fromCache?: boolean;
+  kenProof?: string;
 }
 
 export class EngineUnavailableError extends Error {
@@ -41,14 +43,18 @@ type Flight = { cacheKey: string; requestKey: string; controller: AbortControlle
 const clientEngineCache = new ClientLRUCache<KenResult>();
 const inFlightRequests = new Map<string, Flight>();
 const activeBySupersedeKey = new Map<string, Flight>();
+// A tab owns its cancellation streams. Identical component names in another
+// browser must never preempt this tab's native search on the shared server.
+const browserRequestNamespace = globalThis.crypto?.randomUUID?.()
+  ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 async function requestMove(
   board: Board, turn: "W" | "B", thinkTimeSec: number, depth: number,
-  usePst = false, supersedeKey?: string
+  usePst = false, supersedeKey?: string, levelId?: number, gameId?: string
 ): Promise<KenResult> {
   const position = { ...board };
   const fen = boardToScanFen(position, turn);
-  const cacheKey = `${fen}|${thinkTimeSec.toFixed(3)}|${depth}|${usePst ? 1 : 0}`;
+  const cacheKey = `${fen}|${thinkTimeSec.toFixed(3)}|${depth}|${usePst ? 1 : 0}|${levelId ?? "analysis"}|${gameId ?? ""}`;
   // Cancellation belongs to the caller's stream, not to unrelated callers
   // requesting the same position. They can still share completed evaluations.
   const requestKey = JSON.stringify([cacheKey, supersedeKey || null]);
@@ -74,11 +80,15 @@ async function requestMove(
     try {
       let res: Response;
       try {
+        const { data } = await supabase.auth.getSession();
+        if (controller.signal.aborted) throw new SupersededError();
+        const token = data.session?.access_token;
         res = await fetch("/api/engine/move", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
           signal: controller.signal,
-          body: JSON.stringify({ fen, thinkTime: thinkTimeSec, ...(depth > 0 ? { depth } : {}), usePst, supersedeKey }),
+          body: JSON.stringify({ fen, purpose: levelId ? "play" : "analysis", levelId, gameId, thinkTime: thinkTimeSec, ...(depth > 0 ? { depth } : {}), usePst,
+            supersedeKey: supersedeKey ? `${browserRequestNamespace}:${supersedeKey}` : undefined }),
         });
       } catch (err: any) {
         if (controller.signal.aborted || err?.name === "AbortError") throw new SupersededError();
@@ -98,6 +108,7 @@ async function requestMove(
         depth: Number.isFinite(data.depth) ? data.depth : 0,
         nodes: Number.isFinite(data.nodes) ? data.nodes : 0,
         pv: typeof data.pv === "string" ? data.pv : "",
+        kenProof: typeof data.kenProof === "string" ? data.kenProof : undefined,
       };
       clientEngineCache.set(cacheKey, result);
       return result;
@@ -114,9 +125,9 @@ async function requestMove(
 }
 
 /** Preserve the existing eight levels and their configured depth/time/eval. */
-export async function getKenMove(board: Board, turn: "W" | "B", levelId: number): Promise<KenResult> {
-  const level = KEN_LEVELS.find((value) => value.id === levelId) || KEN_LEVELS[KEN_LEVELS.length - 1];
-  return requestMove(board, turn, level.moveTimeMs / 1000, level.depth, level.pst, "ken-game-move");
+export async function getKenMove(board: Board, turn: "W" | "B", levelId: number, gameId?: string): Promise<KenResult> {
+  const level = KEN_LEVELS.find((value) => value.id === levelId) || KEN_LEVELS[0];
+  return requestMove(board, turn, level.moveTimeMs / 1000, level.depth, level.pst, "ken-game-move", level.id, gameId);
 }
 
 export async function analyzeKen(board: Board, turn: "W" | "B", moveTimeMs: number, supersedeKey?: string): Promise<KenResult> {

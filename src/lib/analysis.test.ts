@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createInitialBoard, generateLegalMoves, applyMove } from "../gameLogic";
+import { createInitialBoard, generateLegalMoves, applyMove, type Board } from "../gameLogic";
 vi.mock("./kenEngine", () => ({ analyzeKen: vi.fn() }));
 import { analyzeKen } from "./kenEngine";
 import { evaluatePosition, classifyMove, analyzeMoveHistory } from "./analysis";
+import { replayForAnalysis } from "./analysisReplay";
 beforeEach(() => { vi.mocked(analyzeKen).mockReset(); });
 describe("analysis correctness", () => {
   it("recognizes a no-move position without a network request", async () => {
@@ -27,5 +28,27 @@ describe("analysis correctness", () => {
     const progress: number[] = [];
     const result = await analyzeMoveHistory([move], (pct) => progress.push(pct));
     expect(result[0]).toBeDefined(); expect(progress.at(-1)).toBe(100);
+  });
+  it("reviews the actual custom starting board and Black first mover", async () => {
+    const start: Board = { 23: "W", 40: "B" };
+    const move = generateLegalMoves(start, "B")[0];
+    vi.mocked(analyzeKen).mockImplementation(async (board, turn) => ({ move: generateLegalMoves(board, turn)[0], score: 0, depth: 1, nodes: 1, pv: "" }));
+    const result = await analyzeMoveHistory([move], undefined, start, "B");
+    expect(result[0]).toBeDefined();
+    expect(analyzeKen).toHaveBeenNthCalledWith(1, expect.objectContaining(start), "B", 500);
+    expect(analyzeKen).toHaveBeenNthCalledWith(2, applyMove(replayForAnalysis([], start, "B").boards[0], move).board, "W", 500);
+    expect(start).toEqual({ 23: "W", 40: "B" });
+  });
+  it("rejects an illegal recorded move before requesting any evaluations", async () => {
+    await expect(analyzeMoveHistory([{ from: 1, to: 50, caps: [] }])).rejects.toThrow("Illegal recorded move at ply 1");
+    expect(analyzeKen).not.toHaveBeenCalled();
+  });
+  it.each([{ 0: "w" }, { 51: "b" }, { 12: "invalid" }, []])("rejects invalid review starting positions", (start) => {
+    expect(() => replayForAnalysis([], start as Board)).toThrow("starting position");
+  });
+  it("keeps a failed review pending instead of inventing a zero score", async () => {
+    vi.mocked(analyzeKen).mockRejectedValue(new Error("engine unavailable"));
+    const move = generateLegalMoves(createInitialBoard(), "W")[0];
+    await expect(analyzeMoveHistory([move])).rejects.toThrow("engine unavailable");
   });
 });

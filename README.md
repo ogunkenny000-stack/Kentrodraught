@@ -1,3 +1,5 @@
+> **October 15 Supabase review:** See [Supabase completion and migration status](docs/SUPABASE_COMPLETION_STATUS_2026-10-15.md). The live project has schema drift; do not auto-apply combined SQL or run test fixtures on it.
+
 ---
 title: Kentro Draught
 emoji: 👑
@@ -8,223 +10,115 @@ app_port: 3000
 pinned: false
 ---
 
-# Kentro Draught
+# Kentro Draughts
 
-Nigerian Draughts, online. Play the Ken engine (Ken 1–8, powered by a
-compiled SCAN-derived C++ engine), battle friends in real time, join
-tournaments, and use the built-in AI game analysis. Installable as a PWA —
-open the Space on your phone and tap **Install**.
+## Nigerian king capture upgrade (17 October 2026)
 
-## Deploying (Hugging Face Spaces)
+The TypeScript referee and native C++ Ken engine implement **compulsory continuation per jumped king victim**. A king cannot stop after a capture by landing on a square that avoids a further available capture behind the same victim. Different first capture opportunities remain free choices regardless of capture length (Nigerian rule 2.9).
 
-This repo is set up for the **Docker** Space SDK (see the YAML frontmatter
-at the top of this file). Push `draught_com/` (including the `Dockerfile`)
-to your Space's repo and it builds automatically. Before it'll work
-correctly:
+Check both implementations on the screenshot trap and 300 seeded test positions without installing JavaScript dependencies (requires Node 22 and a C++14 compiler):
 
-1. **Run `supabase/schema.sql`** against your Supabase project once (SQL
-   Editor in the dashboard, or `supabase db push`) — creates every table,
-   RLS policy, and the wallet/tournament-entry functions the app needs.
-2. **`VITE_SUPABASE_URL`** and **`VITE_SUPABASE_PUBLISHABLE_KEY`** (required)
-   — from your Supabase project's Settings -> API Keys page. These are
-   exposed to the browser by design (same as Firebase's client config used
-   to be); security comes from the RLS policies in `supabase/schema.sql`,
-   not from hiding these.
-3. **`SUPABASE_URL`** and **`SUPABASE_SECRET_KEY`** (required for Kentro
-   Coins and admin actions) — Space secrets containing your Supabase
-   project URL and Secret key. Without these, Kentro Coins and every admin
-   action fail loudly (not silently) — see `supabaseAdmin.ts` for exact
-   setup steps.
-4. **`BOOTSTRAP_ADMIN_USERNAME`** (required to ever access the admin panel)
-   — set to your own in-app username. You must have played at least one
-   game with that username first (creates the `profiles` row the bootstrap
-   binds to). See `server.ts`'s startup bootstrap logic.
-
-The Dockerfile expects `draught_com.zip` and `Dockerfile` side by side and
-un-zips the app itself during the build — see the comment at the top of the
-Dockerfile for the exact expected layout.
-
-## Running locally
-
-**Prerequisites:** Node.js 20+, a C++ toolchain (`g++`, `make`) for the
-draughts engine, and a Supabase project with `supabase/schema.sql` applied.
-
+```bash
+npm run build:engine
+npm run test:capture-rules
+npm run test:captures
 ```
-npm install
+
+See `docs/NIGERIAN_KING_CONTINUATION_ENGINE_2026-10-17.md` for the rule contract, example moves and limitations. No Supabase changes are part of this engine upgrade.
+
+
+Nigerian Draughts with React, real-time multiplayer, a native SCAN-derived Ken
+engine, tournament scheduling, persistent groups, replay/analysis and a PWA.
+This source continues the owner's GitHub audit on
+`codex-audit-recovery-20261014`. **Local development and staging integration are
+verified within the audit's scope; hosted Supabase and production acceptance
+remain pending.** No production infrastructure was modified.
+
+Read [executed checks](docs/audit/13_TEST_RESULTS.md),
+[remaining constraints](docs/audit/14_REMAINING_ISSUES.md) and the
+[Supabase handoff](docs/SUPABASE_HANDOFF.md) before deployment.
+
+## Local development
+
+Requires Node 22 or newer, npm, make and a C++14 compiler (`g++`). Keep the
+tracked `nd_upgraded/data/eval_nigerian` weights; empty/substituted data will
+not produce a working native engine.
+
+```sh
+npm ci --include=dev
 npm run dev
 ```
 
-`npm run dev` (and `npm run build`) automatically compile the engine binary
-first — see `scripts/build-engine.cjs`. Set `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_PUBLISHABLE_KEY` (e.g. in a `.env` file) before running —
-see `.env.example`. Coins/admin features additionally need `SUPABASE_URL`
-and `SUPABASE_SECRET_KEY` set locally too if you want to test them.
+The lockfile install builds and search-verifies the actual native engine.
+The complete server supplies HTTP, WebSocket and native search; Vite preview
+alone does not provide those services. Supabase is optional for local guest
+UI, Ken levels 1–3 and development socket fixtures. Hosted account/paid/social
+features need the reviewed SQL and secure bindings from `.env.example`.
 
-## Project layout
-
-- `src/` — React/Vite frontend
-- `server.ts` — Express + WebSocket backend (multiplayer rooms, coin wallet
-  endpoints, admin endpoints, the engine HTTP bridge)
-- `nd_upgraded/` — the C++ draughts engine source (compiled fresh on every
-  build/deploy, never shipped precompiled — see `.gitignore`)
-- `supabase/schema.sql` — Postgres schema, RLS policies, and the wallet /
-  tournament-entry RPC functions (apply once via the SQL Editor or
-  `supabase db push`; this file existing in the repo does not apply it
-  automatically)
-
-## Frontend architecture (July 2026 refactor)
-
-`src/App.tsx` was previously a 6,780-line monolith. It is now a ~3,700-line
-state container (all game/multiplayer/economy state, effects and handlers)
-that composes focused view components:
-
-```
-src/
-├── lib/
-│   ├── audio.ts          # Web-Audio sound effect synths
-│   ├── analysis.ts       # engine eval, move classification, game review
-│   └── constants.ts      # KEN_LEVELS, badges, coin economy, OPay details
-├── components/
-│   ├── ui/ModalShell.tsx        # shared responsive dialog (bottom sheet on
-│   │                            #   phones, centered dialog on desktop)
-│   ├── layout/
-│   │   ├── TopNav.tsx           # global header
-│   │   ├── MobileTabBar.tsx     # bottom navigation (phones, hub screens)
-│   │   └── MobileDrawers.tsx    # menu + scorecard slide-out drawers
-│   ├── game/GameScreen.tsx      # board arena, HUD cards, controls, editor
-│   ├── panels/
-│   │   ├── GameSidebar.tsx      # "Arena Desk": clocks, engine, move sheet,
-│   │   │                        #   AI coach, practice mode, saved games
-│   │   └── MultiplayerPanel.tsx # lobby + in-room chat/voice/ready panel
-│   └── modals/                  # Rules, Settings, App Guide, Analysis,
-│                                #   PDN import, Coins store, VS Computer,
-│                                #   Game Over, Sandbox choice, Players
-└── App.tsx                      # state owner + composition root
+```sh
+npm run lint
+npm test
+npm run migrations:check
+npm run build
+npm start
 ```
 
-### Mobile fixes shipped with the refactor
+`npm start` runs the built production server. Paid AI levels are checked against
+canonical account access on the server. The engine is not an offline browser
+worker. Nearby can open offline after the service worker prepares it; successful
+real-device pairing still depends on supported local networking/ICE.
 
-- The in-game column now scrolls on phones (was `overflow-hidden` +
-  `justify-center`, which clipped the opponent card and bottom controls on
-  short screens with no way to reach them).
-- Multiplayer chat / voice / ready controls are reachable on phones during a
-  live match via a floating chat button + bottom sheet (previously the panel
-  had no entry point at all once a game started).
-- Every modal is a safe-area-aware bottom sheet on phones and can never
-  overflow off-screen (body scrolls, capped at 88dvh).
-- New bottom tab bar (Home / Arena / Play / Events / Lounge) on hub screens;
-  hidden during board play to preserve vertical space.
-- Safe-area insets respected throughout for Android gesture bars and
-  notches in the installed PWA; tap-highlight and pull-to-refresh disabled
-  for a native feel.
+## Supabase and hosting
 
-## Online play protocol and tests
+For a new empty project, apply `supabase/schema.sql` once and then every ordered
+migration. For an existing project, inspect/back up its current schema/data and
+rehearse reviewed incremental upgrades in staging. The base schema alone is not
+a complete secured installation. Keep startup migrations disabled with
+`SKIP_DB_MIGRATION=1`; see [migration and rollback instructions](docs/SUPABASE_HANDOFF.md).
 
-The multiplayer layer (rooms, server-owned clocks, sessions, reconnects,
-draw/resign/rematch, spectators, voice/video call signalling) follows the
-contract in `docs/ONLINE_PLAY_PROTOCOL.md`; shared types live in
-`src/shared/protocol.ts`. The server side is `src/server/onlinePlay.ts`
-(attached from `server.ts`), the client side is `src/lib/gameSocket.ts`
-(resilient socket manager), `src/lib/roomState.ts` (room reducer),
-`src/lib/useServerClock.ts` (clock snapshots) and `src/lib/useWebRTCCall.ts`
-(calls, perfect negotiation).
+Browser build values `VITE_SUPABASE_URL`/`VITE_SUPABASE_PUBLISHABLE_KEY` are public.
+Server `SUPABASE_SECRET_KEY`, optional TURN secret and VAPID keys belong only in
+runtime secret settings. Never compile private provider/server keys into `VITE_*`.
+See `.env.example`; no working secrets or runtime user data are included.
 
-Three layers of tests:
+The multi-stage Dockerfile builds native/client/server code and runs as UID 1000.
+Compose persists `/app/data`, enables an init process and a ten-second stop grace
+period. Set `APP_URL` to the deployed HTTPS origin for account recovery. Use a
+WebSocket-capable persistent host and exactly one Node authority per data directory.
 
-    npx vitest run                                  # unit tests (rules, socket manager, clocks, call state machine)
-    PORT=8123 npx tsx server.ts &                   # then, in another terminal:
-    SMOKE_URL=ws://localhost:8123 npx tsx scripts/pvp-smoke.ts   # 24-section WebSocket smoke test
-    npm run dev &                                   # then, in another terminal:
-    npx tsx scripts/e2e/pvp.e2e.ts                  # two headless Chrome players: host/join, moves, clocks,
-                                                    # dropped-socket recovery, voice call, resign, rematch
+Live rooms and the tournament outbox now recover from private atomic snapshots.
+Clocks freeze during outages, with roughly one-second crash checkpoint tolerance.
+This is single-writer recovery; horizontal replicas need shared authority/storage.
+Do not delete persistent volumes on ordinary redeploy or rollback.
 
-The browser test drives the locally installed Google Chrome through
-`puppeteer-core` with fake camera/microphone devices and signs the two test
-accounts in with an injected local session (see `scripts/e2e/harness.ts`),
-so it never writes to the production database. Screenshots land in
-`scripts/e2e/out/`.
+## Integration and audit
 
-## Offline Ken engine (on-device AI)
+`scripts/audit/local-regression.sh` runs core checks and optional disposable local
+PostgreSQL tests. Additional commands include `test:database`, `test:tournaments`,
+`test:restart`, `test:multiplayer`, `test:groups`, browser/TV/offline and container
+smokes. Browser commands require Chromium. The local database harness refuses
+non-loopback targets and creates/drops its own fixture database.
 
-Ken 1-8 no longer call the server at all. A TypeScript alpha-beta engine
-(`src/engine/kenCore.ts`) runs inside a Web Worker on the player's device,
-powering AI games, hints, the live eval bar, and AI Game Review — all fully
-offline. Move legality is delegated to the app's own `generateLegalMoves`,
-so Ken can never disagree with the arbiter about forced captures.
+`npm run test:hosted` is a separate opt-in disposable staging suite; missing
+bindings report PENDING and exit 2. Its template is
+`supabase/.env.staging-test.example`. Local synthetic Auth claims never establish
+that hosted Auth, PostgREST or Realtime passed.
 
-The level strategy is copied **verbatim from lidraughts' draughtsnet**
-(RoepStoep/draughtsnet, `draughtsnet.py` — the tables Scan 1-8 use for the
-normal 10x10 game):
+The [16 audit reports](docs/audit/README.md) include evidence, operating limits
+and release gates. [Cloud setup](docs/CLOUD_ENVIRONMENT.md),
+[optional Go edge](PERFORMANCE_UPGRADE.md),
+[performance notes](MAX_PERFORMANCE_README.md) and
+[deployment/rollback](docs/audit/15_DEPLOYMENT_AND_ROLLBACK.md) provide more context.
+Prefer current audit evidence when older performance documents describe earlier
+checkpoints. Save/download the reviewed branch or exact Git commit archive from
+GitHub so source delivery does not depend on a temporary workspace attachment.
 
-| Level | Move time | Nodes cap | Depth cap | Eval    | Handicap |
-|------:|----------:|----------:|----------:|---------|---------:|
-| 1     | 50 ms     | 50        | —         | simple  | 3        |
-| 2     | 100 ms    | 120       | —         | simple  | 2        |
-| 3     | 150 ms    | 400       | —         | simple  | 0        |
-| 4     | 200 ms    | 1200      | —         | simple  | 0        |
-| 5     | 300 ms    | —         | 6         | simple  | 0        |
-| 6     | 400 ms    | —         | 5         | full    | 0        |
-| 7     | 500 ms    | —         | 11        | full    | 0        |
-| 8     | 1000 ms   | —         | 21        | full    | 0        |
+The archive includes `SOURCE_MANIFEST.sha256`. From the extracted root, run
+`sha256sum --check SOURCE_MANIFEST.sha256` to verify the packaged source bytes.
+The manifest excludes itself; never edit files before checking it.
 
-Handicap = uniform random noise on root move scores (±80cp per point), the
-same weakening idea Scan's `level handicap` applies. Depth caps are
-ceilings; within Scan's exact time budget the engine searches as deep as
-the device allows (capture chains are extended for free, so tactics are
-seen far beyond the nominal depth). `scripts/ken-selftest.ts` self-plays a
-full legality-checked game and verifies every level's caps:
 
-    npx tsx scripts/ken-selftest.ts
+Latest merge handoff: `docs/COMBINED_CAPTURE_TV_SUPABASE_HANDOFF.md`. The live Supabase project was inspected read-only; migrations are **not** applied.
 
-The server's C++ Scan engine remains for server-side jobs (e.g. mining
-puzzles from games); the client no longer depends on it.
 
-## Fair Play Guard (anti app-switching)
-
-Switching to another app, split-screening, or defocusing the window during
-a live game is detected client-side (visibilitychange, window blur while
-visible, and a rotation-safe viewport-shrink heuristic that ignores the
-on-screen keyboard) and enforced server-side for multiplayer:
-
-- 3 warnings, then the absentee **forfeits** (opponent wins; wager pot is
-  settled through the exact resign flow).
-- A single absence longer than 12s, or more than 20s total away time in a
-  game, is also a forfeit — timed on the server, so a throttled background
-  tab can't dodge it.
-- The opponent and spectators see a live "left the app — warning N/3"
-  banner; the offender gets a warning dialog on return.
-- Tournament games vs Ken forfeit locally on the same 3-strike rule.
-- Casual AI games aren't forfeited, but leaving the app voids the
-  level-unlock for that match (same rule as using a hint/undo).
-
-Forfeit (not restart) is deliberate: a restart would let a losing player
-escape a lost position by switching apps on purpose. Honest limits: a
-second device is physically undetectable, and a modified client can lie —
-this closes the easy same-device route; pair it with move-quality
-analysis for wagered games as the next layer.
-
-## Docker
-
-A production multi-stage `Dockerfile` is included (plus `docker-compose.yml`
-and `.dockerignore`). It compiles the C++ Scan engine inside the image,
-builds the frontend, bundles the server, and ships a slim non-root runtime
-with tini and a healthcheck. Quickest path:
-
-    # .env next to docker-compose.yml (see the comment inside it for keys)
-    docker compose up -d --build
-
-Or plain Docker:
-
-    docker build \
-      --build-arg VITE_SUPABASE_URL=https://YOURPROJECT.supabase.co \
-      --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_... \
-      -t kentro-draught .
-    docker run -d -p 3000:3000 --env-file .env kentro-draught
-
-Frontend keys (`VITE_*`) are build-time (Vite bakes them into the bundle;
-they're the publishable, RLS-protected values). Server secrets
-(`SUPABASE_URL`, `SUPABASE_SECRET_KEY`, optional `SUPABASE_DB_URL` for
-boot-time auto-migration, optional `BOOTSTRAP_ADMIN_USERNAME`) are runtime
-env vars. On Hugging Face Docker Spaces, add all of them under Settings →
-Variables and secrets — the `VITE_*` pair arrives via BuildKit secrets,
-which this Dockerfile also accepts.
+Latest merge handoff: `docs/COMBINED_CAPTURE_TV_SUPABASE_HANDOFF.md`. The live Supabase project was inspected read-only; migrations are **not** applied.

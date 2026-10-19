@@ -1,5 +1,0 @@
-Command: node scripts/inject-sw-assets.cjs
-Exit: 0
-
-[inject-sw-assets] precached 2 runtime asset(s).
-

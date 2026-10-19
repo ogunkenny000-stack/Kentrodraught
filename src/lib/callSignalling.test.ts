@@ -15,17 +15,11 @@ import {
 } from "./callSignalling";
 
 describe("ICE configuration", () => {
-  it("has two STUN servers and the three openrelay TURN transports, no API keys", () => {
-    const urls = ICE_SERVERS.map((s) => (Array.isArray(s.urls) ? s.urls.join(",") : s.urls));
-    expect(urls.filter((u) => u.startsWith("stun:"))).toHaveLength(2);
-    expect(urls).toContain("turn:openrelay.metered.ca:80");
-    expect(urls).toContain("turn:openrelay.metered.ca:443?transport=tcp");
-    expect(urls).toContain("turns:openrelay.metered.ca:443?transport=tcp");
-    for (const s of ICE_SERVERS) {
-      if (String(s.urls).startsWith("turn")) {
-        expect(s.username).toBe("openrelayproject");
-        expect(s.credential).toBe("openrelayproject");
-      }
+  it("ships public STUN only and no shared TURN passwords", () => {
+    expect(ICE_SERVERS).toHaveLength(2);
+    for (const server of ICE_SERVERS) {
+      expect(String(server.urls)).toMatch(/^stun:/);
+      expect(server.credential).toBeUndefined();
     }
   });
 });

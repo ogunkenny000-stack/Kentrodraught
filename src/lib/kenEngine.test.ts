@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createInitialBoard, generateLegalMoves, applyMove, moveToHubString } from "../gameLogic";
 import { analyzeKen, clearClientEngineCache, EngineUnavailableError, SupersededError } from "./kenEngine";
+vi.mock("../supabase", () => ({ supabase: { auth: { getSession: async () => ({ data: { session: null } }) } } }));
+const flushAuth = async () => { await Promise.resolve(); await Promise.resolve(); };
 const board = createInitialBoard();
 const move = generateLegalMoves(board, "W")[0];
 const boardB = applyMove(board, move).board;
@@ -21,6 +23,14 @@ describe("native engine client", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response()));
     expect((await analyzeKen(board, "W", 100)).move).toEqual(move);
   });
+  it("namespaces cancellation keys to this browser tab", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response());
+    vi.stubGlobal("fetch", fetcher);
+    await analyzeKen(board, "W", 100, "live");
+    const key = JSON.parse(fetcher.mock.calls[0][1].body).supersedeKey;
+    expect(key).toMatch(/^.+:live$/);
+    expect(key.length).toBeLessThanOrEqual(128);
+  });
   it.each([{ move: "1-50" }, { move: moveToHubString(move) + "junk" }, { score: NaN }, { move: null }])("rejects invalid engine results %s", async (data) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(data)));
     await expect(analyzeKen(board, "W", 100)).rejects.toBeInstanceOf(EngineUnavailableError);
@@ -34,8 +44,11 @@ describe("native engine client", () => {
   it("A→B→A starts a fresh A and old cleanup cannot delete it", async () => {
     const { requests, fetcher } = pendingFetch();
     const first = analyzeKen(board, "W", 100, "live").catch((e) => e);
+    await flushAuth();
     const middle = analyzeKen(boardB, "W", 100, "live").catch((e) => e);
+    await flushAuth();
     const last = analyzeKen(board, "W", 100, "live");
+    await flushAuth();
     expect(requests).toHaveLength(3);
     expect(await first).toBeInstanceOf(SupersededError);
     expect(await middle).toBeInstanceOf(SupersededError);
@@ -47,8 +60,9 @@ describe("native engine client", () => {
   });
   it("a cached A still cancels a pending B", async () => {
     const { requests, fetcher } = pendingFetch();
-    const first = analyzeKen(board, "W", 100, "live"); requests[0].resolve(response()); await first;
+    const first = analyzeKen(board, "W", 100, "live"); await flushAuth(); requests[0].resolve(response()); await first;
     const middle = analyzeKen(boardB, "W", 100, "live").catch((e) => e);
+    await flushAuth();
     expect((await analyzeKen(board, "W", 100, "live")).fromCache).toBe(true);
     expect(requests[1].signal.aborted).toBe(true);
     expect(await middle).toBeInstanceOf(SupersededError);
@@ -58,7 +72,9 @@ describe("native engine client", () => {
     const { requests } = pendingFetch();
     const live = analyzeKen(board, "W", 100, "live").catch((e) => e);
     const review = analyzeKen(board, "W", 100, "review");
+    await flushAuth();
     const next = analyzeKen(boardB, "W", 100, "live").catch((e) => e);
+    await flushAuth();
     expect(requests[0].signal.aborted).toBe(true);
     expect(requests[1].signal.aborted).toBe(false);
     requests[1].resolve(response()); expect((await review).move).toEqual(move);
@@ -68,6 +84,7 @@ describe("native engine client", () => {
   it("stops pending work when clearing caches", async () => {
     const { requests } = pendingFetch();
     const pending = analyzeKen(board, "W", 100).catch((e) => e);
+    await flushAuth();
     clearClientEngineCache();
     expect(requests[0].signal.aborted).toBe(true);
     expect(await pending).toBeInstanceOf(SupersededError);

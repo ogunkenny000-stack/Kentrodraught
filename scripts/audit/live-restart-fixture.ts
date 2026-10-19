@@ -1,0 +1,10 @@
+import { createServer } from 'node:http';
+import { attachOnlinePlay } from '../../src/server/onlinePlay';
+import { initGameRecordsManager, flushGameRecords } from '../../src/server/gameRecordsManager';
+import { generateLegalMoves, movesAreEquivalent } from '../../src/gameLogic';
+if (!process.env.KENTRO_DATA_DIR || process.env.SUPABASE_URL || process.env.SUPABASE_SECRET_KEY) throw new Error('Disposable local fixture only');
+await initGameRecordsManager({ handleSignals: false });
+const server = createServer((_q,r) => { r.writeHead(200); r.end('fixture'); });
+const game = attachOnlinePlay(server, { coinsEnabled: false, getCoinSettings: async()=>({matchRakePercent:0}), resolveEntryFee:()=>0, sanitizeWagerAmount:()=>0, sanitizeBestOf:x=>Number(x)||1, sanitizeCustomBoard:x=>x as any, findLegalMatch:(b,t,m)=>generateLegalMoves(b,t).find(c=>movesAreEquivalent(c,m))||null });
+server.listen(0,'127.0.0.1',()=>console.log('FIXTURE '+JSON.stringify(server.address())));
+process.on('SIGTERM',()=>{ game.shutdown(); game.wss.close(); server.close(); void flushGameRecords().then(()=>process.exit(0)); });

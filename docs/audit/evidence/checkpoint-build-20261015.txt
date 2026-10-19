@@ -1,0 +1,61 @@
+
+> react-example@0.0.0 prebuild
+> node scripts/build-engine.cjs
+
+[build:engine] Native engine initialized and completed a search.
+
+> react-example@0.0.0 build
+> vite build && node scripts/inject-sw-assets.cjs && node scripts/precompress-assets.cjs && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
+
+vite v6.4.3 building for production...
+transforming...
+✓ 2236 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) /workspace/Kentrodraught/src/lib/pushSubscription.ts is dynamically imported by /workspace/Kentrodraught/src/supabase.ts but also statically imported by /workspace/Kentrodraught/src/components/NotificationCenter.tsx, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                                                      2.11 kB │ gzip:   0.90 kB
+dist/assets/idiot_goat_sticker_1783328576437-DOVwspeK.jpg           20.04 kB
+dist/assets/ok_noted_sticker_1783328622945-BLbHENjr.jpg             26.14 kB
+dist/assets/you_say_sticker_1783328552772-DsdFLDBp.jpg              26.54 kB
+dist/assets/talk_am_again_sticker_1783328563690-B_-tvTVH.jpg        27.37 kB
+dist/assets/gbemidebe_sticker_1783328591091-CBhMAAAH.jpg            27.55 kB
+dist/assets/take_time_sticker_1783328542659-CfsgOP6S.jpg            29.68 kB
+dist/assets/egg_zactly_sticker_1783328613445-CK_33Krm.jpg           30.41 kB
+dist/assets/bring_your_plate_sticker_1783328602603-CufZc4qC.jpg     34.11 kB
+dist/assets/kentro_gold_coin_1787044207657-Dgcbctqm.jpg            780.11 kB
+dist/assets/kentro_coin_stack_1787044217748-BGECzb5a.jpg           839.40 kB
+dist/assets/index-DZ-h9vjH.css                                     203.82 kB │ gzip:  29.77 kB
+dist/assets/flame-DPkSatwV.js                                        0.37 kB │ gzip:   0.29 kB
+dist/assets/user-plus-D2k38RgS.js                                    0.48 kB │ gzip:   0.34 kB
+dist/assets/PlayerDirectoryModal-CjpqlyKH.js                         4.85 kB │ gzip:   1.36 kB
+dist/assets/PuzzlesPane-yICa5DOt.js                                  4.97 kB │ gzip:   1.81 kB
+dist/assets/FriendsPage-BllVPahN.js                                  6.64 kB │ gzip:   2.44 kB
+dist/assets/ProfilePage-CjR_TleK.js                                  7.87 kB │ gzip:   2.84 kB
+dist/assets/PastGamesModal-67-tAQGX.js                               9.35 kB │ gzip:   2.78 kB
+dist/assets/KentroTV-C4_JDN-i.js                                    16.37 kB │ gzip:   5.89 kB
+dist/assets/AnalysisLabModal-DS37ZhoA.js                            20.76 kB │ gzip:   5.15 kB
+dist/assets/OfflineNearby-KI-VJ2Rj.js                               21.60 kB │ gzip:   7.21 kB
+dist/assets/TournamentDashboard-BiJsxj44.js                         47.54 kB │ gzip:  11.73 kB
+dist/assets/GlobalChatLounge-DT57R0-0.js                           106.19 kB │ gzip:  24.80 kB
+dist/assets/AdminPanel-BUCG5suC.js                                 513.70 kB │ gzip:  97.83 kB
+dist/assets/index-BTd_Wxwm.js                                    1,126.41 kB │ gzip: 311.07 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 5.76s
+[inject-sw-assets] Startup and nearby offline assets: 3. Other feature chunks load only when opened.
+[Kentro] Precompressed 15 gzip and 15 Brotli files at build time
+
+  dist/server.cjs      299.5kb
+  dist/server.cjs.map  606.1kb
+
+⚡ Done in 50ms
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

@@ -4,15 +4,11 @@
 import type { CallPhase } from "./callStateMachine";
 import { isActiveCall, isIdleLike } from "./callStateMachine";
 
-// --- ICE servers: two STUN + free TURN relay (no keys, no paid services) ---
-const OPENRELAY = { username: "openrelayproject", credential: "openrelayproject" };
-
+// Public STUN only. Short-lived, authenticated TURN credentials come from
+// /api/media/ice; never embed a shared relay password in the browser bundle.
 export const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun.cloudflare.com:3478" },
-  { urls: "turn:openrelay.metered.ca:80", ...OPENRELAY },
-  { urls: "turn:openrelay.metered.ca:443?transport=tcp", ...OPENRELAY },
-  { urls: "turns:openrelay.metered.ca:443?transport=tcp", ...OPENRELAY },
 ];
 
 // --- Timing (ms) ---

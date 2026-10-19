@@ -1,0 +1,53 @@
+
+== 1. A hosts a room ==
+  [B console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  [A console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  [B console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  [A console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  [B console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  ✓ room code shown to host: 26100001
+
+== 2. B joins by code and accepts ==
+  [A console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  [B console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  ✓ both players see the starting position
+
+== 3. Moves relay both ways (server-validated) ==
+  ✓ White is A (kdtest1); 31-26 relayed to the opponent
+  ✓ Black's 16-21 relayed to White
+  [A console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  [B console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  ✓ Black cannot move twice in a row (turn enforced)
+  ✓ White played 26-22
+  ✓ Black played 17-26 (capture)
+  ✓ White played 32-27
+
+== 4. Server clocks are shown and tick for the side to move ==
+  ✓ clocks visible: 4:59 | 4:56
+  ✓ a clock ticked: 4:59 | 4:56 -> 4:56 | 4:56
+
+== 5. Dropped socket: banner appears, reconnects, play continues ==
+  ✓ black's socket status before drop: connected
+  ✓ 'Reconnecting…' shown after the drop
+  ✓ socket reconnected and banner cleared
+  ✓ piece still on 1 after rejoin
+  ✓ piece still on 2 after rejoin
+  ✓ piece still on 3 after rejoin
+  ✓ piece still on 4 after rejoin
+  ✓ piece still on 5 after rejoin
+  ✓ piece still on 6 after rejoin
+  ✓ play continues after the reconnect (11-16)
+
+== 6. Voice call between the players (fake devices) ==
+  SKIP voice transport: E2E_SKIP_MEDIA=1. Managed Chromium may disallow non-proxied UDP; this run makes no voice-call claim.
+
+== 7. Resign -> opponent accepts -> game over ==
+  ✓ resignation request reached the opponent and paused the clock
+  ✓ game over shown to both after the accepted resignation
+
+== 8. Rematch request -> accept -> new game starts ==
+  [A console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+  ✓ board reset to the starting position for the rematch
+  [B console.error] WebSocket connection to 'ws://127.0.0.1:1/blocked-external-websocket' failed: Error in connection establishment: net::ERR_UNSAFE_PORT
+
+PASS browser PvP gameplay journey (voice transport explicitly skipped)

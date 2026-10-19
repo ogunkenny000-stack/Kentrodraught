@@ -1,0 +1,36 @@
+
+> kentro-draughts@0.0.0 test:database
+> tsx scripts/audit/database-security.mjs
+
+PASS anonymous and authenticated roles cannot resolve account emails
+PASS SECURITY DEFINER signup cannot claim the reserved house wallet identity
+PASS concurrent first-profile claims cannot create two identities for one Auth UID
+PASS profile identity, paid unlock, moderation and account age cannot be changed by owner
+PASS friend consent, immutable participants and privacy
+PASS DM sender and recipient bindings are genuine and message contents immutable
+PASS official records and tournament standings are server managed
+PASS private replay rows are visible only to their verified participants
+PASS private tournament rows, invite redemption, entry and chat all enforce verified access
+PASS notification owners may mark read but cannot forge stored content or recipients
+PASS wallets without ownerId stay private and purchases are pending genuine-owner claims
+PASS new wallet writes reject negative, fractional and overflowing balances
+PASS multi-wallet insufficient funds leaves every wallet unchanged
+PASS concurrent and repeated match settlements distribute one escrow only
+PASS match credit failure rolls back payout, rake and settlement marker
+PASS concurrent unlock requests charge once and persist paid level
+PASS withdrawal creation and concurrent rejection are atomic
+PASS concurrent purchase approvals credit canonical owner once
+PASS concurrent tournament entry honors capacity, charges one canonical entrant and pays once
+PASS cancelled tournament refunds all logged entries once under concurrency
+PASS bans and suspensions block direct browser writes and tournament admin powers
+PASS duplicate concurrent authoritative results apply both Glicko ratings and stats once
+PASS overlapping concurrent rated games retry stale snapshots without losing either result
+PASS a failed second profile update rolls back both statistics and the rated ledger
+PASS security migration reruns and exact-policy rollback preserve application data
+PASS combined migrations match ordered source, rerun safely and retain private boundaries
+26 database security checks passed in disposable PostgreSQL
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

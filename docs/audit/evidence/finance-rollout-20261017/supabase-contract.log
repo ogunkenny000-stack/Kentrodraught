@@ -1,0 +1,19 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> kentro-draughts@0.0.0 test:supabase-contract
+> node --test scripts/audit/supabase-schema-readiness.test.mjs
+
+✔ hardened schema contract passes (1.307016ms)
+✔ pre-upgrade schema reports missing objects instead of claiming readiness (0.250241ms)
+✔ publicly executable definer RPCs block readiness (0.173117ms)
+✔ legacy permissive match/tournament writes block readiness (0.154299ms)
+✔ required missing RLS on exposed tables is a blocker (0.447583ms)
+✔ potentially callable tournament-admin function surfaces warning (0.226045ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 89.51043

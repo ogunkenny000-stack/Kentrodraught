@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useEffect, useId, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
+import { isTopmostDialog } from "../../lib/dialogFocus";
 
 /**
  * ModalShell -- the one responsive dialog container used by every popup in
@@ -23,6 +24,7 @@ export function ModalShell({
   footer,
   dismissable = true,
   headerAccent,
+  zIndex = 70,
 }: {
   open: boolean;
   onClose: () => void;
@@ -37,7 +39,37 @@ export function ModalShell({
   dismissable?: boolean;
   /** optional class applied to the title row (e.g. celebratory colors) */
   headerAccent?: string;
+  /** Foreground alerts may need to sit above an existing setup dialog. */
+  zIndex?: number;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const headingId = useId();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => dialogRef.current?.focus());
+    const handleDialogKeys = (event: KeyboardEvent) => {
+      const panel = dialogRef.current as HTMLDivElement | null;
+      if (!panel) return;
+      if (!isTopmostDialog(panel)) return;
+      if (event.key === "Escape" && dismissable) {
+        event.stopPropagation();
+        event.preventDefault();
+        closeRef.current();
+      }
+      if (event.key !== "Tab") return;
+      const candidates = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled),[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])'));
+      const controls = candidates.filter(element => element.getClientRects().length > 0 && element.tabIndex >= 0);
+      if (!controls.length) { event.preventDefault(); panel.focus(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", handleDialogKeys);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("keydown", handleDialogKeys); previousFocus?.focus(); };
+  }, [open, dismissable]);
   const maxW =
     size === "sm" ? "sm:max-w-sm" : size === "md" ? "sm:max-w-md" : size === "lg" ? "sm:max-w-lg" : "sm:max-w-2xl";
 
@@ -50,15 +82,22 @@ export function ModalShell({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
           className="fixed inset-0 z-[70] bg-slate-950/90 flex items-end sm:items-center justify-center sm:p-4"
+          style={{ zIndex }}
           onClick={dismissable ? onClose : undefined}
         >
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={title ? headingId : undefined}
+            aria-label={!title ? "Dialog" : undefined}
+            tabIndex={-1}
             initial={{ y: 48, scale: 1, opacity: 0.6 }}
             animate={{ y: 0, scale: 1, opacity: 1 }}
             exit={{ y: 48, opacity: 0 }}
             transition={{ type: "spring", damping: 30, stiffness: 360 }}
             onClick={(e) => e.stopPropagation()}
-            className={`relative w-full ${maxW} bg-[#0b0e17] border border-slate-800 sm:rounded-3xl rounded-t-3xl shadow-2xl shadow-black/60 flex flex-col max-h-[88dvh] overflow-hidden`}
+            className={`k-modal-dialog relative w-full ${maxW} bg-[#0b0e17] border border-slate-800 sm:rounded-3xl rounded-t-3xl shadow-2xl shadow-black/60 flex flex-col max-h-[88dvh] overflow-hidden`}
           >
             {/* Mobile drag-handle affordance */}
             <div className="sm:hidden pt-2.5 pb-1 flex justify-center shrink-0">
@@ -67,7 +106,7 @@ export function ModalShell({
 
             {(title || dismissable) && (
               <div className="flex items-center justify-between gap-3 px-5 pt-2 sm:pt-5 pb-3 shrink-0">
-                <h3 className={`text-sm sm:text-base font-extrabold flex items-center gap-2.5 min-w-0 ${headerAccent || "text-white"}`}>
+                <h3 id={headingId} className={`text-sm sm:text-base font-extrabold flex items-center gap-2.5 min-w-0 ${headerAccent || "text-white"}`}>
                   {icon}
                   <span className="truncate">{title}</span>
                 </h3>

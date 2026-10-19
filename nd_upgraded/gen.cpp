@@ -176,11 +176,26 @@ static void add_king_captures_rec(List & list, const Pos & pos, Bit bd, Bit be, 
    Bit ray = bit::beyond(square_make(jump - inc), jump); // ray(jump, inc)
    Bit froms = bit::attack(jump, ray, be);
 
-   // found_any is set if ANY landing square along the ray can continue capturing.
-   // When true, the king MUST keep jumping — no "stop early" moves are generated.
-   bool found_any = false;
+   // Nigerian king continuation: if ANY landing behind this already-jumped
+   // opponent allows another capture, landing elsewhere to avoid that next
+   // jump is illegal. This applies PER VICTIM, not globally across all
+   // available victims/pieces (rule 2.9 still permits different-length lines).
+   // Do not alter non-Nigerian variants' normal generator here.
+   bool forced_continuation = false;
+   if (var::Variant == var::Nigerian) {
+      for (Square landing : froms & be) {
+         for (Square target : bit::king_captures(landing) & bd) {
+            if (bit::is_incl(bit::capture_mask(landing, target), be)) {
+               forced_continuation = true;
+               break;
+            }
+         }
+         if (forced_continuation) break;
+      }
+   }
 
    for (Square from : froms & be) {
+      bool found = false;
 
       for (Square sq : bit::king_captures(from) & bd) {
 
@@ -189,18 +204,14 @@ static void add_king_captures_rec(List & list, const Pos & pos, Bit bd, Bit be, 
             Inc new_inc = bit::line_inc(from, sq);
 
             assert(new_inc != -inc);
-            if (new_inc == +inc && from != next) continue; // duplicate capture
-
-            found_any = true;
-            add_king_captures_rec(list, pos, bd, be, start, sq, new_inc, caps);
+            found = true;
+            if (new_inc != +inc || from == next) { // avoid duplicate continuation
+               add_king_captures_rec(list, pos, bd, be, start, sq, new_inc, caps);
+            }
          }
       }
-   }
 
-   // Only add terminal moves if no landing square allowed a further capture.
-   // This prevents the king from stopping early to dodge being recaptured.
-   if (!found_any) {
-      for (Square from : froms & be) {
+      if (!found && !forced_continuation) {
          bool cond = var::Variant == var::Killer && pos.is_piece(jump, King) && from != next;
          if (!cond) list.add_capture(start, from, caps, pos, 1);
       }

@@ -15,6 +15,8 @@ export interface Move {
    *  historical moves stored without it (saved games, old puzzles) stay
    *  valid. */
   path?: number[];
+  /** Server attestation of an actual Ken AI reply (only for earned progression). */
+  kenProof?: string;
 }
 
 export type Piece = "w" | "W" | "b" | "B" | null;
@@ -193,8 +195,8 @@ function getKingQuiets(sq: number, board: Board): Move[] {
 
 /**
  * Recursive generator for king captures.
- * King slides to enemy, jumps over it, and can land on any square behind it.
- * Delayed removal: captured pieces stay as blockers during the jump chain.
+ * King slides to enemy and must choose a continuing landing when one exists
+ * behind the jumped enemy (no evasive terminal landing). Delayed removal: captured pieces stay as blockers during the jump chain.
  */
 function kcRec(
   start: number,
@@ -237,16 +239,39 @@ function kcRec(
     let lr = er + dr;
     let lc = ec + dc;
 
-    // Slide behind the enemy to find valid landing squares
+    // Nigerian king continuation: after jumping ONE particular enemy, a king
+    // cannot deliberately choose a landing which ends the capture when another
+    // landing beyond THAT SAME enemy makes a further jump possible. This is
+    // NOT a global maximum-capture rule: other first victims/directions remain
+    // free choices, regardless of how many pieces their complete lines take.
+    //
+    // Finish every landing branch before selecting continuations, so the
+    // delayed-removal walls and the full path are preserved at every hop.
+    const possible: Move[] = [];
+    const nextCaps = [...caps, esq];
     while (true) {
       const land = ngRcToSq(lr, lc);
       if (land === null) break;
       if (bd[land] && land !== start) break; // block ray
 
       found = true;
-      kcRec(start, land, bd, [...caps, esq], res, seen, enemy, [...path, land]);
+      const branch: Move[] = [];
+      kcRec(start, land, bd, nextCaps, branch, new Set<string>(), enemy, [...path, land]);
+      possible.push(...branch);
       lr += dr;
       lc += dc;
+    }
+
+    // Only discard the one-jump terminal landings if at least one landing
+    // behind this same victim can continue. Other initial victims are untouched.
+    const continued = possible.some(move => move.caps.length > nextCaps.length);
+    for (const move of possible) {
+      if (continued && move.caps.length === nextCaps.length) continue;
+      const key = `${move.from}->${move.to}:[${[...move.caps].sort((a,b) => a-b).join(",")}]`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        res.push(move);
+      }
     }
   }
 
@@ -681,6 +706,9 @@ export function boardToScanFen(board: Board, turn: "W" | "B"): string {
  * Parse a SCAN FEN string back into a Board state.
  */
 export function scanFenToBoard(fen: string): { board: Board; turn: "W" | "B" } {
+  if (typeof fen !== "string" || !/^[WB][wWbBe]{50}$/.test(fen)) {
+    throw new Error("Invalid SCAN FEN: expected W or B followed by exactly 50 piece or empty-square characters.");
+  }
   const turn = fen[0] as "W" | "B";
   const board: Board = {};
   for (let scanSq = 1; scanSq <= 50; scanSq++) {
@@ -775,15 +803,21 @@ const NO_END: GameEndResult = { isOver: false, winner: null, isDraw: false, reas
  * do. This is called from BOTH the client (for instant local feedback in
  * AI/analysis games) and the server (as the authoritative check for PvP,
  * which previously had no such check at all).
+ * Custom-position games must supply their initial board and first mover;
+ * standard games can continue passing only their move history.
  */
-export function checkGameEnd(history: Move[]): GameEndResult {
+export function checkGameEnd(
+  history: Move[],
+  initialBoard: Board = createInitialBoard(),
+  firstMover: "W" | "B" = "W"
+): GameEndResult {
   // Reconstruct every board position in the game, 0..history.length.
-  const boards: Board[] = [createInitialBoard()];
+  const boards: Board[] = [{ ...initialBoard }];
   for (let i = 0; i < history.length; i++) {
     boards.push(applyMove(boards[i], history[i]).board);
   }
   const finalBoard = boards[boards.length - 1];
-  const sideToMove: "W" | "B" = history.length % 2 === 0 ? "W" : "B";
+  const sideToMove: "W" | "B" = history.length % 2 === 0 ? firstMover : firstMover === "W" ? "B" : "W";
 
   // 1. No legal moves -> opponent wins.
   if (generateLegalMoves(finalBoard, sideToMove).length === 0) {

@@ -1,0 +1,47 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> kentro-draughts@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.11 /workspace/scratch/72ca4e9a2e90/release/kentro-draughts
+
+ ❯ src/server/onlinePlay.regression.test.ts (34 tests | 1 failed) 324ms
+     × refunds both original payers when a guest leaves during debit 39ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/onlinePlay.regression.test.ts > online game reliability > refunds both original payers when a guest leaves during debit
+AssertionError: expected "vi.fn()" to be called once with arguments: [ '2610001', 'alice', 'bob', 10 ]
+
+Received:
+
+  1st vi.fn() call:
+
+  [
+    "2610001",
+-   "alice",
+    "bob",
++   "alice",
+    10,
+  ]
+
+
+Number of calls: 1
+
+ ❯ src/server/onlinePlay.regression.test.ts:321:29
+    319|     await send(f.bob, { type: "leave-room" });
+    320|     gate.resolve({ ok: true }); await joining; await microtasks();
+    321|     expect(services.refund).toHaveBeenCalledExactlyOnceWith(
+       |                             ^
+    322|       services.debit.mock.calls[0][3], "alice", "bob", 10,
+    323|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 48 passed (49)
+      Tests  1 failed | 519 passed (520)
+   Start at  17:06:38
+   Duration  22.33s (transform 5.64s, setup 0ms, import 11.72s, tests 39.62s, environment 20ms)
+

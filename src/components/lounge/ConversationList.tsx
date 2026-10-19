@@ -125,6 +125,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             return (
               <div
                 key={conv.id}
+                role="button"
+                tabIndex={0}
+                aria-label={"Open " + conv.name}
+                aria-pressed={isActive}
+                onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectConversation(conv.id); } }}
                 onClick={() => onSelectConversation(conv.id)}
                 className={`flex items-center gap-3 p-3.5 transition cursor-pointer relative group ${
                   isActive
@@ -193,11 +198,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                       {isMeLastSender && (
                         <span className="shrink-0">
                           {lastMsg?.status === "seen" ? (
-                            <CheckCheck className="w-3.5 h-3.5 text-amber-400 stroke-[2.5]" title="Read/Seen" />
+                            <CheckCheck className="w-3.5 h-3.5 text-amber-400 stroke-[2.5]" role="img" aria-label="Read/Seen" />
                           ) : lastMsg?.status === "delivered" ? (
-                            <CheckCheck className="w-3.5 h-3.5 text-slate-400" title="Delivered" />
+                            <CheckCheck className="w-3.5 h-3.5 text-slate-400" role="img" aria-label="Delivered" />
                           ) : (
-                            <Check className="w-3.5 h-3.5 text-slate-500" title="Sent" />
+                            <Check className="w-3.5 h-3.5 text-slate-500" role="img" aria-label="Sent" />
                           )}
                         </span>
                       )}

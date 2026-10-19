@@ -1,0 +1,24 @@
+// Run against an isolated local server with hosted services unconfigured.
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+const target = new URL(process.env.ENGINE_AUDIT_URL || 'http://127.0.0.1:8141');
+assert.ok(target.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname), 'Engine audit only supports loopback HTTP targets');
+const base = target.origin;
+const namespace = 'audit:' + randomUUID();
+const fen='W'+'b'.repeat(20)+'e'.repeat(10)+'w'.repeat(20);
+const other='B'+fen.slice(1);
+const send=(body, signal) => fetch(base+'/api/engine/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal});
+let reply=await send({fen,thinkTime:0.1,depth:4,supersedeKey:namespace+':a'});
+assert.equal(reply.status,200); assert.ok(Number.isFinite((await reply.json()).score));
+reply=await send({fen:fen+'\nquit'});assert.equal(reply.status,400);
+reply=await send({fen:'W'+'e'.repeat(50),thinkTime:0.1});assert.equal(reply.status,200);assert.equal((await reply.json()).score,-10000);
+const stale=send({fen:other,thinkTime:5,depth:99,supersedeKey:namespace+':a'});
+await new Promise(resolve=>setTimeout(resolve,100));
+reply=await send({fen,thinkTime:0.1,depth:4,supersedeKey:namespace+':a'});assert.equal(reply.status,200);assert.equal((await stale).status,499);
+const controller=new AbortController();
+const disconnected=send({fen:other,thinkTime:5,depth:99,supersedeKey:namespace+':disconnect'},controller.signal).catch(error=>error.name);
+await new Promise(resolve=>setTimeout(resolve,100));controller.abort();assert.equal(await disconnected,'AbortError');
+const started=performance.now();reply=await send({fen:other,thinkTime:0.1,depth:4,supersedeKey:namespace+':other'});
+assert.equal(reply.status,200);assert.ok(Number.isFinite((await reply.json()).score));assert.ok(performance.now()-started<4000,'disconnected 5-second search must release the queue promptly');
+reply=await fetch(base+'/api/engine/health');assert.equal((await reply.json()).ok,true);
+console.log('Actual HTTP engine: scored native response, invalid-input rejection, terminal loss, cached supersession, disconnect recovery and healthy process: PASS');

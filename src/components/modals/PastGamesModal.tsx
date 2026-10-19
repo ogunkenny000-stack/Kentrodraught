@@ -4,7 +4,8 @@ import {
   RefreshCw, BarChart2, Calendar, Play, Sparkles, X, Filter, User
 } from "lucide-react";
 import { ModalShell } from "../ui/ModalShell";
-import { AdminTappableName } from "../../lib/adminProfileContext";
+import { MatchResultPair } from "../MatchResultPair";
+import { uniqueCompletedMatches } from "../../lib/completedMatches";
 
 interface PastGamesModalProps {
   open: boolean;
@@ -86,8 +87,7 @@ export function PastGamesModal({
       const key = g.gameId || g.id;
       if (key && !map.has(key)) map.set(key, g);
     }
-    const arr = Array.from(map.values());
-    return arr.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return uniqueCompletedMatches(Array.from(map.values()));
   }, [myGamesList, savedGamesList]);
 
   // Counts for each category tab
@@ -285,27 +285,6 @@ export function PastGamesModal({
           <div className="max-h-[50dvh] sm:max-h-[380px] overflow-y-auto space-y-2 pr-1 scrollbar-thin">
             {currentBatchGames.map((game, idx) => {
               const gameNum = (currentPage - 1) * BATCH_SIZE + idx + 1;
-              const isWhite = String(game.whitePlayer || "").toLowerCase() === username.toLowerCase();
-              const opponent = isWhite ? game.blackPlayer : game.whitePlayer;
-              
-              let result = "DRAW";
-              let resultBadgeClass = "text-slate-400 bg-slate-800/60 border-slate-700";
-              
-              if (game.winner === "Draw" || game.winner === null) {
-                result = "DRAW";
-                resultBadgeClass = "text-slate-400 bg-slate-800/60 border-slate-700";
-              } else if (
-                (game.winner === "W" && isWhite) ||
-                (game.winner === "B" && !isWhite) ||
-                (typeof game.winner === "string" && game.winner.toLowerCase() === username.toLowerCase())
-              ) {
-                result = "WIN";
-                resultBadgeClass = "text-emerald-400 bg-emerald-500/15 border-emerald-500/30";
-              } else {
-                result = "LOSS";
-                resultBadgeClass = "text-rose-400 bg-rose-500/15 border-rose-500/30";
-              }
-
               const formattedDate = game.timestamp
                 ? new Date(game.timestamp).toLocaleDateString(undefined, {
                     month: "short",
@@ -325,38 +304,16 @@ export function PastGamesModal({
                   onClick={() => handleSelectGame(game)}
                   className="bg-slate-950/90 hover:bg-slate-900/90 border border-slate-850 hover:border-amber-500/40 rounded-2xl p-3 transition flex flex-col gap-2.5 cursor-pointer shadow-sm group active:scale-[0.99]"
                 >
-                  {/* Top Row: Opponent + Game Type + Result + Action */}
+                  {/* One match card: show BOTH players and their outcomes. */}
                   <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="text-[10px] font-mono text-slate-500 font-bold shrink-0">
-                        #{gameNum}
-                      </span>
-                      <div className="font-extrabold text-slate-100 text-xs sm:text-sm truncate flex items-center gap-1.5">
-                        <span className="text-slate-400 font-normal">vs</span>
-                        <AdminTappableName username={opponent || "Opponent"} />
-                      </div>
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 rounded-md shrink-0">
-                        {gameTypeLabel}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg border tracking-wider ${resultBadgeClass}`}>
-                        {result}
-                      </span>
-
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSelectGame(game);
-                        }}
-                        className="px-2.5 py-1.5 bg-amber-500/15 hover:bg-amber-500 border border-amber-500/30 hover:border-amber-500 text-amber-300 hover:text-slate-950 text-[11px] font-black rounded-xl transition flex items-center gap-1 cursor-pointer shadow-sm"
-                      >
-                        <Play className="w-3 h-3" />
-                        <span>Analyze</span>
-                      </button>
-                    </div>
+                    <span className="text-[10px] font-mono text-slate-500 font-bold shrink-0">#{gameNum}</span>
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 rounded-md">{gameTypeLabel}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleSelectGame(game); }}
+                      className="px-2.5 py-1.5 bg-amber-500/15 hover:bg-amber-500 border border-amber-500/30 hover:border-amber-500 text-amber-300 hover:text-slate-950 text-[11px] font-black rounded-xl transition flex items-center gap-1 cursor-pointer"
+                    ><Play className="w-3 h-3"/> Analyze</button>
                   </div>
+                  <MatchResultPair game={game} />
 
                   {/* Bottom Row: Date, Move count & Analysis Badge (Cleanly separated!) */}
                   <div className="flex items-center justify-between text-[10px] text-slate-400 font-sans pt-1 border-t border-slate-900/80">

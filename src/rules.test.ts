@@ -292,6 +292,57 @@ describe("free-choice capture rule (Nigerian rule 2.9)", () => {
   });
 });
 
+describe("Kentro 49x38 Nigerian capture screenshot regression", () => {
+  // Reconstruct the player-supplied position: Black's king on 49 faces a
+  // White man on 38, with 37 and 32 providing two possible continuations.
+  // A straight, non-capturing move from 49 is ILLEGAL while any jump exists.
+  const example = (): Board => ({
+    2: "b", 3: "b", 4: "b", 8: "b", 11: "b", 12: "b",
+    20: "w", 32: "w", 37: "w", 38: "w", 41: "w", 43: "w",
+    47: "w", 48: "w", 49: "B",
+  });
+
+  it("requires Black to capture 38, never to play a quiet king move", () => {
+    const moves = generateLegalMoves(example(), "B");
+    expect(moves.length).toBeGreaterThan(0);
+    expect(moves.every(m => m.from === 49 && m.caps.length > 0 && m.caps[0] === 38)).toBe(true);
+    expect(moves.some(m => m.caps.length === 2 && m.path?.[0] === 33 && m.to === 42 && m.caps[1] === 37)).toBe(true);
+  });
+
+  it("disallows evasive one-piece king landings and keeps clickable continuation squares", () => {
+    const moves = generateLegalMoves(example(), "B");
+    expect(moves.every(m => m.caps.length === 2)).toBe(true);
+    expect(moves.some(m => m.to === 16 || m.to === 22)).toBe(false);
+    expect(captureClickTargets(moves, [])).toEqual(new Set([33, 27, 42, 46, 36]));
+    expect(resolveCaptureClick(moves, [], 33)).toEqual({ kind: "extend", walked: [33] });
+    const completed = resolveCaptureClick(moves, [33], 46);
+    expect(completed.kind).toBe("apply");
+    if (completed.kind === "apply") expect(completed.move.caps).toEqual([38, 37]);
+  });
+
+  it("keeps a shorter capture of a DIFFERENT victim legal", () => {
+    const board: Board = { 34: "W", 1: "b", 8: "b", 28: "b", 36: "b", 39: "b" };
+    const moves = generateLegalMoves(board, "W");
+    expect(moves.some(m => m.caps.length === 1 && m.caps[0] === 39)).toBe(true);
+    expect(moves.some(m => m.caps.length === 2 && m.caps[0] === 28)).toBe(true);
+    expect(moves.some(m => m.caps.length === 1 && m.caps[0] === 28)).toBe(false);
+  });
+
+  it("keeps all jumps in the selected path, removes every victim, and forbids partial chains", () => {
+    const before = example();
+    const combo = generateLegalMoves(before, "B").find(m => m.to === 42 && m.caps.length === 2)!;
+    const next = applyMove(before, combo).board;
+    expect(next[49]).toBeNull();
+    expect(next[38]).toBeNull();
+    expect(next[37]).toBeNull();
+    expect(next[42]).toBe("B");
+    expect(before[49]).toBe("B"); // rules must not mutate state
+    // The king may not land beyond 38 just to dodge a follow-up jump:
+    // another landing behind that SAME first victim permits continuation.
+    expect(generateLegalMoves(before, "B").every(m => m.caps.length >= 2)).toBe(true);
+  });
+});
+
 describe("multi-jump click walking", () => {
   const setup = () => {
     const b = blank();
@@ -464,7 +515,7 @@ describe("Ken engine position formatting", () => {
     expect(parsed.turn).toBe("W");
   });
 
-  it("every move proposed by scan_nigerian matches a legal move in generateLegalMoves", async () => {
+  it("keeps native choices legal and searches afresh when changing evaluators", async () => {
     const { spawn } = await import("child_process");
     const path = await import("path");
     const { hubMoveStringToNigerian, movesAreEquivalent } = await import("./gameLogic");
@@ -538,6 +589,32 @@ describe("Ken engine position formatting", () => {
         t = t === "W" ? "B" : "W";
       }
     }
+
+    // The same persistent process serves easy PST levels and full pattern
+    // levels. A changed evaluator must search again rather than return the
+    // other evaluator's transposition-table score. Use an asymmetric position
+    // at fixed depth one, where PST and pattern evaluations differ. Node-count
+    // ratios depend on shuffled move order and are not a cache correctness test.
+    const opening = createInitialBoard();
+    const board = applyMove(opening, generateLegalMoves(opening, "W")[0]).board;
+    const fen = boardToScanFen(board, "B");
+    const evaluateOpening = async (mode: "pst" | "pattern", clear = false) => {
+      const out = await query(`set-param name=eval value=${mode}\n${clear ? "new-game\n" : ""}pos pos=${fen}\nlevel depth=1 handicap=0\ngo think`);
+      const info = out.filter((line) => line.startsWith("info ")).at(-1);
+      expect(info).toBeDefined();
+      const score = Number(info!.match(/(?:^|\s)score=([-+\d.]+)/)?.[1]);
+      expect(Number.isFinite(score)).toBe(true);
+      return score;
+    };
+    const freshPst = await evaluateOpening("pst", true);
+    const cachedPst = await evaluateOpening("pst");
+    const freshPatternAfterSwitch = await evaluateOpening("pattern");
+    const cleanPattern = await evaluateOpening("pattern", true);
+    const freshPstAfterSwitch = await evaluateOpening("pst");
+    expect(cachedPst).toBe(freshPst);
+    expect(cleanPattern).not.toBe(freshPst);
+    expect(freshPatternAfterSwitch).toBe(cleanPattern);
+    expect(freshPstAfterSwitch).toBe(freshPst);
     } finally {
       proc.kill();
     }

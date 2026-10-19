@@ -15,6 +15,24 @@
 
 // functions
 
+void List::reserve(int capacity) {
+   if (capacity <= Size || capacity <= int(m_overflow_move.size())) return;
+   int new_capacity = std::max(capacity, m_overflow_move.empty() ? Size * 2 : int(m_overflow_move.size()) * 2);
+   bool first_overflow = m_overflow_move.empty();
+   m_overflow_move.resize(new_capacity);
+   m_overflow_score.resize(new_capacity + 1);
+   if (first_overflow) {
+      std::copy(m_move, m_move + m_size, m_overflow_move.begin());
+      std::copy(m_score, m_score + m_size, m_overflow_score.begin());
+   }
+}
+
+void List::add(Move mv) {
+   reserve(m_size + 1);
+   moves()[m_size] = mv;
+   scores()[m_size++] = 0;
+}
+
 void List::add_move(Square from, Square to) {
    assert(m_capture_score == 0);
    add(move::make(from, to));
@@ -63,18 +81,18 @@ void List::set_size(int size) {
 void List::set_score(int i, int sc) {
    assert(i >= 0 && i < m_size);
    assert(std::abs(sc) < (1 << 15));
-   m_score[i] = sc;
+   scores()[i] = sc;
 }
 
-void List::copy(const List & list) { // HACK: does not copy scores
+void List::copy(const List & list) {
 
    m_capture_score = list.m_capture_score;
-
+   reserve(list.m_size);
    m_size = list.m_size;
 
    for (int i = 0; i < list.m_size; i++) {
-      m_move[i] = list.m_move[i];
-      // m_score[i] = list.m_score[i];
+      moves()[i] = list.moves()[i];
+      scores()[i] = list.scores()[i];
    }
 }
 
@@ -82,16 +100,16 @@ void List::move_to_front(int i) {
 
    assert(i >= 0 && i < m_size);
 
-   Move mv = m_move[i];
-   int  sc = m_score[i];
+   Move mv = moves()[i];
+   int  sc = scores()[i];
 
    for (int j = i; j > 0; j--) {
-      m_move[j] = m_move[j - 1];
-      m_score[j] = m_score[j - 1];
+      moves()[j] = moves()[j - 1];
+      scores()[j] = scores()[j - 1];
    }
 
-   m_move[0] = mv;
-   m_score[0] = sc;
+   moves()[0] = mv;
+   scores()[0] = sc;
 }
 
 void List::sort() {
@@ -102,28 +120,28 @@ void List::sort() {
 
    // insert sort (stable)
 
-   m_score[m_size] = -(1 << 15); // HACK: sentinel
+   scores()[m_size] = -(1 << 15); // HACK: sentinel
 
    for (int i = m_size - 2; i >= 0; i--) {
 
-      Move mv = m_move[i];
-      int  sc = m_score[i];
+      Move mv = moves()[i];
+      int  sc = scores()[i];
 
       int j;
 
-      for (j = i; sc < m_score[j + 1]; j++) {
-         m_move[j] = m_move[j + 1];
-         m_score[j] = m_score[j + 1];
+      for (j = i; sc < scores()[j + 1]; j++) {
+         moves()[j] = moves()[j + 1];
+         scores()[j] = scores()[j + 1];
       }
 
       assert(j < m_size);
-      m_move[j] = mv;
-      m_score[j] = sc;
+      moves()[j] = mv;
+      scores()[j] = sc;
    }
 }
 
 void List::shuffle() {
-   std::shuffle(&m_move[0], &m_move[m_size], ml::gen);
+   std::shuffle(&moves()[0], &moves()[m_size], ml::gen);
 }
 
 void List::sort_static(const Pos & pos) { // for opening book
@@ -136,21 +154,21 @@ void List::sort_static(const Pos & pos) { // for opening book
 
    for (int i = m_size - 2; i >= 0; i--) {
 
-      Move mv = m_move[i];
-      int  sc = m_score[i];
+      Move mv = moves()[i];
+      int  sc = scores()[i];
 
       uint64 order = move_order(mv, pos);
 
       int j;
 
-      for (j = i; j + 1 < m_size && order < move_order(m_move[j + 1], pos); j++) {
-         m_move[j] = m_move[j + 1];
-         m_score[j] = m_score[j + 1];
+      for (j = i; j + 1 < m_size && order < move_order(moves()[j + 1], pos); j++) {
+         moves()[j] = moves()[j + 1];
+         scores()[j] = scores()[j + 1];
       }
 
       assert(j < m_size);
-      m_move[j] = mv;
-      m_score[j] = sc;
+      moves()[j] = mv;
+      scores()[j] = sc;
    }
 }
 

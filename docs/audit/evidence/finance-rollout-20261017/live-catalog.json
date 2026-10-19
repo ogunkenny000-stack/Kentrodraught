@@ -1,0 +1,943 @@
+{
+  "tables": [
+    {
+      "rls": true,
+      "name": "profiles"
+    },
+    {
+      "rls": true,
+      "name": "completed_games"
+    },
+    {
+      "rls": true,
+      "name": "tournaments"
+    },
+    {
+      "rls": true,
+      "name": "coin_wallets"
+    },
+    {
+      "rls": true,
+      "name": "coin_transactions"
+    },
+    {
+      "rls": true,
+      "name": "admins"
+    },
+    {
+      "rls": true,
+      "name": "audit_logs"
+    },
+    {
+      "rls": true,
+      "name": "purchase_requests"
+    },
+    {
+      "rls": true,
+      "name": "reports"
+    },
+    {
+      "rls": true,
+      "name": "app_config"
+    },
+    {
+      "rls": true,
+      "name": "global_chat"
+    },
+    {
+      "rls": true,
+      "name": "kentro_ken_victory_claims"
+    },
+    {
+      "rls": true,
+      "name": "private_messages"
+    },
+    {
+      "rls": true,
+      "name": "withdrawal_requests"
+    },
+    {
+      "rls": true,
+      "name": "friends"
+    },
+    {
+      "rls": true,
+      "name": "puzzles"
+    }
+  ],
+  "columns": [
+    {
+      "table": "profiles",
+      "column": "createdAt"
+    },
+    {
+      "table": "profiles",
+      "column": "rd"
+    },
+    {
+      "table": "profiles",
+      "column": "vol"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "coins"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "amountNaira"
+    },
+    {
+      "table": "profiles",
+      "column": "wins"
+    },
+    {
+      "table": "profiles",
+      "column": "losses"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "submittedAt"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "ownerId"
+    },
+    {
+      "table": "profiles",
+      "column": "draws"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "resolvedAt"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "coinsCredited"
+    },
+    {
+      "table": "reports",
+      "column": "id"
+    },
+    {
+      "table": "reports",
+      "column": "reporterId"
+    },
+    {
+      "table": "tournaments",
+      "column": "spectatorPermission"
+    },
+    {
+      "table": "reports",
+      "column": "details"
+    },
+    {
+      "table": "reports",
+      "column": "createdAt"
+    },
+    {
+      "table": "profiles",
+      "column": "gamesCount"
+    },
+    {
+      "table": "app_config",
+      "column": "data"
+    },
+    {
+      "table": "global_chat",
+      "column": "id"
+    },
+    {
+      "table": "tournaments",
+      "column": "currentRound"
+    },
+    {
+      "table": "tournaments",
+      "column": "maxRounds"
+    },
+    {
+      "table": "global_chat",
+      "column": "timestamp"
+    },
+    {
+      "table": "global_chat",
+      "column": "reactions"
+    },
+    {
+      "table": "global_chat",
+      "column": "elo"
+    },
+    {
+      "table": "tournaments",
+      "column": "players"
+    },
+    {
+      "table": "global_chat",
+      "column": "duration"
+    },
+    {
+      "table": "tournaments",
+      "column": "matches"
+    },
+    {
+      "table": "tournaments",
+      "column": "chat"
+    },
+    {
+      "table": "tournaments",
+      "column": "logs"
+    },
+    {
+      "table": "tournaments",
+      "column": "createdAt"
+    },
+    {
+      "table": "global_chat",
+      "column": "deletedForEveryone"
+    },
+    {
+      "table": "kentro_ken_victory_claims",
+      "column": "owner_id"
+    },
+    {
+      "table": "kentro_ken_victory_claims",
+      "column": "game_id"
+    },
+    {
+      "table": "kentro_ken_victory_claims",
+      "column": "beaten_level"
+    },
+    {
+      "table": "kentro_ken_victory_claims",
+      "column": "claimed_at"
+    },
+    {
+      "table": "private_messages",
+      "column": "id"
+    },
+    {
+      "table": "tournaments",
+      "column": "prizePool"
+    },
+    {
+      "table": "tournaments",
+      "column": "prizePaid"
+    },
+    {
+      "table": "profiles",
+      "column": "totalPlayTime"
+    },
+    {
+      "table": "private_messages",
+      "column": "duration"
+    },
+    {
+      "table": "coin_wallets",
+      "column": "balance"
+    },
+    {
+      "table": "coin_wallets",
+      "column": "ownerId"
+    },
+    {
+      "table": "coin_wallets",
+      "column": "createdAt"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "id"
+    },
+    {
+      "table": "completed_games",
+      "column": "moveHistoryStrings"
+    },
+    {
+      "table": "completed_games",
+      "column": "moveHistory"
+    },
+    {
+      "table": "private_messages",
+      "column": "senderOwnerId"
+    },
+    {
+      "table": "private_messages",
+      "column": "recipientOwnerId"
+    },
+    {
+      "table": "private_messages",
+      "column": "reactions"
+    },
+    {
+      "table": "private_messages",
+      "column": "timestamp"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "amount"
+    },
+    {
+      "table": "private_messages",
+      "column": "deletedForEveryone"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "id"
+    },
+    {
+      "table": "completed_games",
+      "column": "moveEvaluations"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "ownerId"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "coins"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "nairaAmount"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "balanceAfter"
+    },
+    {
+      "table": "profiles",
+      "column": "averageDuration"
+    },
+    {
+      "table": "completed_games",
+      "column": "timestamp"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "timestamp"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "submittedAt"
+    },
+    {
+      "table": "completed_games",
+      "column": "createdAt"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "resolvedAt"
+    },
+    {
+      "table": "admins",
+      "column": "uid"
+    },
+    {
+      "table": "profiles",
+      "column": "maxUnlockedKenLevel"
+    },
+    {
+      "table": "profiles",
+      "column": "banned"
+    },
+    {
+      "table": "friends",
+      "column": "user1Elo"
+    },
+    {
+      "table": "friends",
+      "column": "user2Elo"
+    },
+    {
+      "table": "admins",
+      "column": "addedAt"
+    },
+    {
+      "table": "profiles",
+      "column": "bannedAt"
+    },
+    {
+      "table": "friends",
+      "column": "timestamp"
+    },
+    {
+      "table": "puzzles",
+      "column": "id"
+    },
+    {
+      "table": "audit_logs",
+      "column": "id"
+    },
+    {
+      "table": "profiles",
+      "column": "ownerId"
+    },
+    {
+      "table": "audit_logs",
+      "column": "adminUid"
+    },
+    {
+      "table": "profiles",
+      "column": "suspendedUntil"
+    },
+    {
+      "table": "profiles",
+      "column": "elo"
+    },
+    {
+      "table": "puzzles",
+      "column": "solution"
+    },
+    {
+      "table": "audit_logs",
+      "column": "details"
+    },
+    {
+      "table": "tournaments",
+      "column": "maxPlayers"
+    },
+    {
+      "table": "tournaments",
+      "column": "minPlayers"
+    },
+    {
+      "table": "audit_logs",
+      "column": "timestamp"
+    },
+    {
+      "table": "puzzles",
+      "column": "createdAt"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "id"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "resolvedBy"
+    },
+    {
+      "table": "profiles",
+      "column": "username"
+    },
+    {
+      "table": "profiles",
+      "column": "bannedBy"
+    },
+    {
+      "table": "profiles",
+      "column": "suspendedBy"
+    },
+    {
+      "table": "profiles",
+      "column": "avatarUrl"
+    },
+    {
+      "table": "profiles",
+      "column": "bio"
+    },
+    {
+      "table": "profiles",
+      "column": "statusQuote"
+    },
+    {
+      "table": "completed_games",
+      "column": "gameId"
+    },
+    {
+      "table": "completed_games",
+      "column": "whitePlayer"
+    },
+    {
+      "table": "completed_games",
+      "column": "blackPlayer"
+    },
+    {
+      "table": "completed_games",
+      "column": "winner"
+    },
+    {
+      "table": "completed_games",
+      "column": "playMode"
+    },
+    {
+      "table": "tournaments",
+      "column": "id"
+    },
+    {
+      "table": "tournaments",
+      "column": "name"
+    },
+    {
+      "table": "tournaments",
+      "column": "description"
+    },
+    {
+      "table": "tournaments",
+      "column": "type"
+    },
+    {
+      "table": "tournaments",
+      "column": "visibility"
+    },
+    {
+      "table": "tournaments",
+      "column": "inviteCode"
+    },
+    {
+      "table": "tournaments",
+      "column": "registrationDeadline"
+    },
+    {
+      "table": "tournaments",
+      "column": "startTime"
+    },
+    {
+      "table": "tournaments",
+      "column": "timeControl"
+    },
+    {
+      "table": "tournaments",
+      "column": "handicap"
+    },
+    {
+      "table": "tournaments",
+      "column": "tieBreak"
+    },
+    {
+      "table": "tournaments",
+      "column": "prize"
+    },
+    {
+      "table": "tournaments",
+      "column": "status"
+    },
+    {
+      "table": "coin_wallets",
+      "column": "username"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "username"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "type"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "direction"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "reason"
+    },
+    {
+      "table": "coin_transactions",
+      "column": "refId"
+    },
+    {
+      "table": "admins",
+      "column": "username"
+    },
+    {
+      "table": "admins",
+      "column": "permissions"
+    },
+    {
+      "table": "admins",
+      "column": "roleLabel"
+    },
+    {
+      "table": "admins",
+      "column": "addedBy"
+    },
+    {
+      "table": "audit_logs",
+      "column": "adminUsername"
+    },
+    {
+      "table": "audit_logs",
+      "column": "action"
+    },
+    {
+      "table": "audit_logs",
+      "column": "target"
+    },
+    {
+      "table": "audit_logs",
+      "column": "result"
+    },
+    {
+      "table": "audit_logs",
+      "column": "ip"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "username"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "item"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "packageId"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "receiptRef"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "status"
+    },
+    {
+      "table": "purchase_requests",
+      "column": "resolvedBy"
+    },
+    {
+      "table": "reports",
+      "column": "status"
+    },
+    {
+      "table": "app_config",
+      "column": "id"
+    },
+    {
+      "table": "global_chat",
+      "column": "text"
+    },
+    {
+      "table": "global_chat",
+      "column": "sender"
+    },
+    {
+      "table": "global_chat",
+      "column": "voiceNote"
+    },
+    {
+      "table": "global_chat",
+      "column": "sticker"
+    },
+    {
+      "table": "global_chat",
+      "column": "stickerEmoji"
+    },
+    {
+      "table": "global_chat",
+      "column": "stickerImageUrl"
+    },
+    {
+      "table": "global_chat",
+      "column": "stickerLabel"
+    },
+    {
+      "table": "private_messages",
+      "column": "chatId"
+    },
+    {
+      "table": "private_messages",
+      "column": "text"
+    },
+    {
+      "table": "private_messages",
+      "column": "voiceNote"
+    },
+    {
+      "table": "private_messages",
+      "column": "sticker"
+    },
+    {
+      "table": "private_messages",
+      "column": "stickerEmoji"
+    },
+    {
+      "table": "private_messages",
+      "column": "stickerImageUrl"
+    },
+    {
+      "table": "private_messages",
+      "column": "stickerLabel"
+    },
+    {
+      "table": "private_messages",
+      "column": "sender"
+    },
+    {
+      "table": "private_messages",
+      "column": "recipient"
+    },
+    {
+      "table": "private_messages",
+      "column": "status"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "username"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "accountName"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "accountNumber"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "bankName"
+    },
+    {
+      "table": "withdrawal_requests",
+      "column": "status"
+    },
+    {
+      "table": "profiles",
+      "column": "usernameLower"
+    },
+    {
+      "table": "friends",
+      "column": "id"
+    },
+    {
+      "table": "friends",
+      "column": "user1"
+    },
+    {
+      "table": "friends",
+      "column": "user2"
+    },
+    {
+      "table": "friends",
+      "column": "status"
+    },
+    {
+      "table": "friends",
+      "column": "sender"
+    },
+    {
+      "table": "puzzles",
+      "column": "title"
+    },
+    {
+      "table": "puzzles",
+      "column": "difficulty"
+    },
+    {
+      "table": "puzzles",
+      "column": "theme"
+    },
+    {
+      "table": "puzzles",
+      "column": "description"
+    },
+    {
+      "table": "puzzles",
+      "column": "fen"
+    },
+    {
+      "table": "puzzles",
+      "column": "explanation"
+    },
+    {
+      "table": "puzzles",
+      "column": "source"
+    },
+    {
+      "table": "puzzles",
+      "column": "sourceGameId"
+    },
+    {
+      "table": "puzzles",
+      "column": "createdBy"
+    }
+  ],
+  "policies": [
+    {
+      "name": "profiles_insert_own",
+      "table": "profiles"
+    },
+    {
+      "name": "profiles_select_all",
+      "table": "profiles"
+    },
+    {
+      "name": "profiles_update_own",
+      "table": "profiles"
+    },
+    {
+      "name": "completed_games_select_all",
+      "table": "completed_games"
+    },
+    {
+      "name": "completed_games_write_authenticated",
+      "table": "completed_games"
+    },
+    {
+      "name": "tournaments_delete_authenticated",
+      "table": "tournaments"
+    },
+    {
+      "name": "tournaments_select_all",
+      "table": "tournaments"
+    },
+    {
+      "name": "tournaments_update_authenticated",
+      "table": "tournaments"
+    },
+    {
+      "name": "tournaments_write_authenticated",
+      "table": "tournaments"
+    },
+    {
+      "name": "coin_wallets_select_owner",
+      "table": "coin_wallets"
+    },
+    {
+      "name": "coin_transactions_select_owner",
+      "table": "coin_transactions"
+    },
+    {
+      "name": "purchase_requests_insert_own",
+      "table": "purchase_requests"
+    },
+    {
+      "name": "purchase_requests_select_own",
+      "table": "purchase_requests"
+    },
+    {
+      "name": "reports_insert_own",
+      "table": "reports"
+    },
+    {
+      "name": "reports_select_own",
+      "table": "reports"
+    },
+    {
+      "name": "app_config_select_all",
+      "table": "app_config"
+    },
+    {
+      "name": "global_chat_insert_own_name",
+      "table": "global_chat"
+    },
+    {
+      "name": "global_chat_select_authenticated",
+      "table": "global_chat"
+    },
+    {
+      "name": "global_chat_update_authenticated",
+      "table": "global_chat"
+    },
+    {
+      "name": "private_messages_insert_sender",
+      "table": "private_messages"
+    },
+    {
+      "name": "private_messages_select_participant",
+      "table": "private_messages"
+    },
+    {
+      "name": "private_messages_update_participant",
+      "table": "private_messages"
+    },
+    {
+      "name": "withdrawal_requests_select_own",
+      "table": "withdrawal_requests"
+    },
+    {
+      "name": "friends_delete_participant",
+      "table": "friends"
+    },
+    {
+      "name": "friends_insert_participant",
+      "table": "friends"
+    },
+    {
+      "name": "friends_select_participant",
+      "table": "friends"
+    },
+    {
+      "name": "friends_update_participant",
+      "table": "friends"
+    },
+    {
+      "name": "puzzles_select_authenticated",
+      "table": "puzzles"
+    }
+  ],
+  "functions": [
+    "chat_update_guard",
+    "credit_wallet",
+    "debit_multiple_wallets",
+    "debit_wallet",
+    "handle_new_user",
+    "is_tournament_admin",
+    "kentro_claim_ken_victory",
+    "kentro_lock_ken_entitlement",
+    "my_username_lower",
+    "pay_tournament_prize",
+    "profiles_protect_columns",
+    "refund_tournament_entries",
+    "resolve_username_to_email",
+    "tournament_entry",
+    "tournaments_freeze_config",
+    "tournaments_money_guard"
+  ],
+  "privileged": [
+    {
+      "anon": true,
+      "auth": true,
+      "name": "resolve_username_to_email"
+    },
+    {
+      "anon": true,
+      "auth": true,
+      "name": "is_tournament_admin"
+    },
+    {
+      "anon": false,
+      "auth": false,
+      "name": "debit_wallet"
+    },
+    {
+      "anon": true,
+      "auth": true,
+      "name": "handle_new_user"
+    },
+    {
+      "anon": false,
+      "auth": false,
+      "name": "credit_wallet"
+    },
+    {
+      "anon": true,
+      "auth": true,
+      "name": "tournaments_money_guard"
+    },
+    {
+      "anon": false,
+      "auth": false,
+      "name": "debit_multiple_wallets"
+    },
+    {
+      "anon": false,
+      "auth": false,
+      "name": "pay_tournament_prize"
+    },
+    {
+      "anon": false,
+      "auth": false,
+      "name": "refund_tournament_entries"
+    },
+    {
+      "anon": false,
+      "auth": false,
+      "name": "tournament_entry"
+    },
+    {
+      "anon": false,
+      "auth": false,
+      "name": "kentro_claim_ken_victory"
+    }
+  ]
+}

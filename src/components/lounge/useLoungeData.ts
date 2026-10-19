@@ -12,6 +12,7 @@ import type {
   Sticker
 } from "./types";
 import { playLoungeSound } from "./constants";
+import { directChatId, directChatTarget, encodeLoungePayload, decodeLoungePayload } from "../../lib/loungeProtocol";
 
 const GLOBAL_CHAT_ID = "global_hall";
 const GROUPS_STORAGE_KEY = "kentro_lounge_groups_v2";
@@ -27,36 +28,48 @@ export function useLoungeData(
   const [activeChatId, setActiveChatId] = useState<string>(GLOBAL_CHAT_ID);
   const [messagesMap, setMessagesMap] = useState<Record<string, LoungeMessage[]>>({});
   const [contacts, setContacts] = useState<{ id: string; user1: string; user2: string; user1Elo?: number; user2Elo?: number; status: string }[]>([]);
-  const [groups, setGroups] = useState<LoungeGroup[]>(() => {
+  // Shared groups need a server-owned membership model. Keep saved local
+  // data untouched, but do not present seeded browser-only clubs as real rooms.
+  const [groups, setGroups] = useState<LoungeGroup[]>([]);
+  const [groupError, setGroupError] = useState('');
+  const refreshGroups = useCallback(async () => {
+    const { data, error } = await supabase.rpc('kentro_group_list');
+    if (error) throw error;
+    setGroups(Array.isArray(data) ? data : []);
+  }, []);
+  const groupAction = useCallback(async (groupId: string | null, action: string, data: Record<string, unknown> = {}) => {
+    setGroupError('');
     try {
-      const saved = localStorage.getItem(GROUPS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.warn("Failed reading saved groups:", e);
-    }
-    return [
-      {
-        id: "lagos_masters",
-        name: "Lagos Draughts Masters",
-        description: "Official tactical circle for top-tier Nigerian draughts tacticians.",
-        icon: "🇳🇬",
-        createdBy: "System",
-        createdAt: Date.now() - 86400000 * 5,
-        admins: ["ade", "System"],
-        members: ["ade", "babatunde", "chidi", username]
-      },
-      {
-        id: "grandmaster_academy",
-        name: "Ken Academy & Analysis",
-        description: "Post game reviews, tricky endgames, and ask for King vs King strategies.",
-        icon: "👑",
-        createdBy: "System",
-        createdAt: Date.now() - 86400000 * 12,
-        admins: ["System"],
-        members: ["ade", "babatunde", username]
-      }
-    ];
-  });
+      const result = await supabase.rpc('kentro_group_action', { p_group: groupId, p_action: action, p_data: data });
+      if (result.error) throw result.error;
+      await refreshGroups();
+      return result.data;
+    } catch (error) { setGroupError(error instanceof Error ? error.message : (error as any)?.message || 'Group operation failed.'); throw error; }
+  }, [refreshGroups]);
+  useEffect(() => {
+    let live = true;
+    const load = async () => { try { await refreshGroups(); } catch { if (live) setGroupError('Shared groups could not load. Check the Supabase connection and group migrations.'); } };
+    void load(); const timer = setInterval(load, 5000);
+    return () => { live = false; clearInterval(timer); };
+  }, [username, refreshGroups]);
+  useEffect(() => {
+    if (!activeChatId.startsWith('group_')) return;
+    const group = groups.find(item => 'group_' + item.id === activeChatId);
+    if (!group || group.invited) return;
+    let live = true;
+    const load = async () => {
+      const { data, error } = await supabase.rpc('kentro_group_feed', { p_group: group.id });
+      if (!live) return;
+      if (error) { setGroupError(error.message); return; }
+      const messages: LoungeMessage[] = (data || []).map((row: any) => ({ id: row.id, chatId: activeChatId, sender: row.sender,
+        timestamp: row.created_at, reactions: row.reactions || {}, status: row.sender === username ? 'sent' : 'delivered', deletedFor: [], deletedForEveryone: row.deleted,
+        ...decodeLoungePayload(row.text) }));
+      setMessagesMap(previous => ({ ...previous, [activeChatId]: messages }));
+    };
+    void load(); const timer = setInterval(load, 2500);
+    return () => { live = false; clearInterval(timer); };
+  }, [activeChatId, groups]);
+
 
   const [blockedUsers, setBlockedUsers] = useState<string[]>(() => {
     try {
@@ -81,11 +94,6 @@ export function useLoungeData(
   const [activeReply, setActiveReply] = useState<ReplyContext | null>(null);
 
   // Sync groups & blocked users to storage
-  useEffect(() => {
-    try {
-      localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(groups));
-    } catch {}
-  }, [groups]);
 
   useEffect(() => {
     try {
@@ -105,7 +113,7 @@ export function useLoungeData(
       const { data, error } = await supabase
         .from("profiles")
         .select("ownerId")
-        .ilike("usernameLower", targetUsername.toLowerCase().trim())
+        .eq("usernameLower", targetUsername.toLowerCase().trim())
         .limit(1)
         .maybeSingle();
       if (error) return null;
@@ -117,7 +125,7 @@ export function useLoungeData(
 
   // Format 1-to-1 chatId
   const getDirectChatId = useCallback((u1: string, u2: string) => {
-    return [u1.toLowerCase().trim(), u2.toLowerCase().trim()].sort().join("_");
+    return directChatId(u1, u2);
   }, []);
 
   // Fetch Public Global Chat Messages
@@ -128,12 +136,12 @@ export function useLoungeData(
         const { data, error } = await supabase
           .from("global_chat")
           .select("*")
-          .order("timestamp", { ascending: true })
+          .order("timestamp", { ascending: false })
           .limit(100);
 
         if (error) throw error;
         if (data && isMounted) {
-          const parsed: LoungeMessage[] = data.map((d: any) => ({
+          const parsed: LoungeMessage[] = [...data].reverse().map((d: any) => ({
             id: d.id,
             chatId: GLOBAL_CHAT_ID,
             sender: d.sender || "Anonymous",
@@ -151,7 +159,8 @@ export function useLoungeData(
             stickerLabel: d.stickerLabel,
             gameShare: d.gameShare,
             replyTo: d.replyTo,
-            forwardedFrom: d.forwardedFrom
+            forwardedFrom: d.forwardedFrom,
+            ...decodeLoungePayload(d.text)
           }));
 
           setMessagesMap((prev) => ({
@@ -194,7 +203,8 @@ export function useLoungeData(
             stickerLabel: d.stickerLabel,
             gameShare: d.gameShare,
             replyTo: d.replyTo,
-            forwardedFrom: d.forwardedFrom
+            forwardedFrom: d.forwardedFrom,
+            ...decodeLoungePayload(d.text)
           };
 
           setMessagesMap((prev) => {
@@ -227,16 +237,16 @@ export function useLoungeData(
         const { data, error } = await supabase
           .from("private_messages")
           .select("*")
-          .order("timestamp", { ascending: true })
+          .order("timestamp", { ascending: false })
           .limit(300);
 
         if (error) throw error;
         if (data && isMounted) {
           const map: Record<string, LoungeMessage[]> = {};
-          data.forEach((d: any) => {
+          [...data].reverse().forEach((d: any) => {
             if (blockedUsers.includes(d.sender)) return;
 
-            const cId = d.chatId || getDirectChatId(d.sender, d.recipient);
+            const cId = getDirectChatId(d.sender, d.recipient);
             if (!map[cId]) map[cId] = [];
 
             // Parse rich metadata if stored in text or JSON
@@ -279,7 +289,8 @@ export function useLoungeData(
               deletedFor: d.deletedFor || [],
               deletedForEveryone: d.deletedForEveryone || false,
               timestamp: d.timestamp || d.created_at || Date.now(),
-              elo: d.elo || 1500
+              elo: d.elo || 1500,
+              ...decodeLoungePayload(d.text)
             });
           });
 
@@ -306,7 +317,7 @@ export function useLoungeData(
             const d = payload.new as any;
             if (blockedUsers.includes(d.sender)) return;
 
-            const cId = d.chatId || getDirectChatId(d.sender, d.recipient);
+            const cId = getDirectChatId(d.sender, d.recipient);
             let gameShare = d.gameShare;
             let replyTo = d.replyTo;
             let forwardedFrom = d.forwardedFrom;
@@ -346,7 +357,8 @@ export function useLoungeData(
               deletedFor: d.deletedFor || [],
               deletedForEveryone: d.deletedForEveryone || false,
               timestamp: d.timestamp || d.created_at || Date.now(),
-              elo: d.elo || 1500
+              elo: d.elo || 1500,
+              ...decodeLoungePayload(d.text)
             };
 
             setMessagesMap((prev) => {
@@ -363,12 +375,12 @@ export function useLoungeData(
             }
           } else if (payload.eventType === "UPDATE") {
             const d = payload.new as any;
-            const cId = d.chatId || getDirectChatId(d.sender, d.recipient);
+            const cId = getDirectChatId(d.sender, d.recipient);
             setMessagesMap((prev) => {
               const list = prev[cId] || [];
               return {
                 ...prev,
-                [cId]: list.map((m) => (m.id === d.id ? { ...m, ...d } : m))
+                [cId]: list.map((m) => (m.id === d.id ? { ...m, ...d, chatId: cId, ...decodeLoungePayload(d.text) } : m))
               };
             });
           }
@@ -436,13 +448,8 @@ export function useLoungeData(
         };
       });
 
-      // Update in Supabase
-      try {
-        await supabase
-          .from("private_messages")
-          .update({ status: "seen" })
-          .in("id", unseenIds);
-      } catch {}
+      // Seen state is local; no shared receipt exists in the current schema.
+
     },
     [messagesMap, username]
   );
@@ -482,8 +489,7 @@ export function useLoungeData(
     });
 
     directChatIds.forEach((cId) => {
-      const parts = cId.split("_");
-      const targetUser = parts[0]?.toLowerCase() === username.toLowerCase() ? parts[1] : parts[0];
+      const targetUser = directChatTarget(cId, username);
       if (!targetUser || blockedUsers.includes(targetUser)) return;
 
       const msgs = messagesMap[cId] || [];
@@ -607,13 +613,12 @@ export function useLoungeData(
       const isGlobal = activeChatId === GLOBAL_CHAT_ID;
       const isGroup = activeChatId.startsWith("group_");
       const currentElo = profileStats?.elo || 1500;
-      const tempId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const tempId = crypto.randomUUID();
       const timestamp = new Date().toISOString();
 
       let targetUser = "";
       if (!isGlobal && !isGroup) {
-        const parts = activeChatId.split("_");
-        targetUser = parts[0]?.toLowerCase() === username.toLowerCase() ? parts[1] : parts[0];
+        targetUser = directChatTarget(activeChatId, username);
       }
 
       // Optimistic message
@@ -636,7 +641,7 @@ export function useLoungeData(
         replyTo: payload.replyTo,
         forwardedFrom: payload.forwardedFrom,
         reactions: {},
-        status: "sent",
+        status: "sending",
         deletedFor: [],
         timestamp,
         elo: currentElo
@@ -659,54 +664,23 @@ export function useLoungeData(
 
         const session = sessionData?.session;
 
-        if (isGlobal) {
-          const { error } = await supabase.from("global_chat").insert({
-            sender: username,
-            text: payload.text || (payload.gameShare ? `Shared Draughts Match: #${payload.gameShare.gameCode}` : ""),
-            timestamp,
-            reactions: {},
-            elo: currentElo,
-            voiceNote: payload.voiceNote,
-            duration: payload.duration,
-            sticker: payload.sticker,
-            stickerEmoji: payload.stickerEmoji,
-            stickerImageUrl: payload.stickerImageUrl,
-            stickerLabel: payload.stickerLabel
-          });
-          if (error) console.warn("Supabase global chat error:", error);
-        } else {
-          // If rich payload, encode metadata in text to guarantee 100% preservation
-          let textToSend = payload.text || "";
-          if (payload.gameShare || payload.replyTo || payload.forwardedFrom) {
-            textToSend = `___KENTRO_META___:${JSON.stringify({
-              text: payload.text || "",
-              gameShare: payload.gameShare,
-              replyTo: payload.replyTo,
-              forwardedFrom: payload.forwardedFrom
-            })}`;
-          }
-
-          const { error } = await supabase.from("private_messages").insert({
-            chatId: activeChatId,
-            sender: username,
-            recipient: targetUser || activeChatId,
-            senderOwnerId: session?.user?.id || null,
-            recipientOwnerId,
-            text: textToSend,
-            voiceNote: payload.voiceNote,
-            duration: payload.duration,
-            sticker: payload.sticker,
-            stickerEmoji: payload.stickerEmoji,
-            stickerImageUrl: payload.stickerImageUrl,
-            stickerLabel: payload.stickerLabel,
-            status: "delivered",
-            reactions: {}
-          });
-          if (error) console.warn("Supabase private message error:", error);
-        }
+        if (!session?.user) throw new Error('Sign in to send messages.');
+        if (!isGlobal && !isGroup && (!targetUser || !recipientOwnerId)) throw new Error('The recipient could not be verified.');
+        const row: Record<string, unknown> = isGlobal ? {
+          id: tempId, sender: username, text: encodeLoungePayload(payload), timestamp,
+        } : {
+          id: tempId, chatId: activeChatId, sender: username, recipient: targetUser,
+          senderOwnerId: session.user.id, recipientOwnerId,
+          text: encodeLoungePayload(payload), timestamp,
+        };
+        const { error } = isGroup ? await supabase.rpc('kentro_group_action', { p_group: activeChatId.slice(6), p_action: 'send', p_data: { id: tempId, text: encodeLoungePayload(payload) } }) : await supabase.from(isGlobal ? 'global_chat' : 'private_messages').insert(row);
+        if (error) throw error;
+        setMessagesMap(previous => ({ ...previous, [activeChatId]: (previous[activeChatId] || []).map(message => message.id === tempId ? { ...message, status: 'sent' } : message) }));
       } catch (err) {
         console.error("Failed sending message:", err);
+        setMessagesMap(previous => ({ ...previous, [activeChatId]: (previous[activeChatId] || []).map(message => message.id === tempId ? { ...message, status: 'failed' } : message) }));
       }
+
     },
     [activeChatId, username, profileStats, resolveOwnerId]
   );
@@ -714,6 +688,12 @@ export function useLoungeData(
   // EMOJI REACTION HANDLER
   const reactToMessage = useCallback(
     async (msgId: string, emoji: string) => {
+      if (activeChatId.startsWith('group_')) {
+        try { await groupAction(activeChatId.slice(6), 'react', { id: msgId, emoji }); }
+        catch { /* groupError carries the actual server failure */ }
+        return;
+      }
+
       const currentMsgs = messagesMap[activeChatId] || [];
       const targetMsg = currentMsgs.find((m) => m.id === msgId);
       if (!targetMsg) return;
@@ -744,9 +724,12 @@ export function useLoungeData(
 
       try {
         const table = activeChatId === GLOBAL_CHAT_ID ? "global_chat" : "private_messages";
-        await supabase.from(table).update({ reactions: currentReactions }).eq("id", msgId);
+        const { data, error } = await supabase.from(table).update({ reactions: currentReactions }).eq("id", msgId).select("id");
+        if (error || !data?.length) throw new Error("Reactions are unavailable for this message.");
       } catch (err) {
         console.warn("Failed persisting reaction:", err);
+        setMessagesMap(previous => ({ ...previous, [activeChatId]: (previous[activeChatId] || []).map(message => message.id === msgId ? { ...message, reactions: targetMsg.reactions } : message) }));
+        window.alert("Could not save this reaction. Please try again later.");
       }
     },
     [activeChatId, messagesMap, username]
@@ -755,111 +738,53 @@ export function useLoungeData(
   // DELETE MESSAGE HANDLER
   const deleteMessage = useCallback(
     async (msgId: string, forEveryone = false) => {
+      if (forEveryone && activeChatId.startsWith('group_')) {
+        try { await groupAction(activeChatId.slice(6), 'delete_message', { id: msgId }); }
+        catch { /* groupError is visible */ }
+        return;
+      }
+
       const currentMsgs = messagesMap[activeChatId] || [];
       const targetMsg = currentMsgs.find((m) => m.id === msgId);
       if (!targetMsg) return;
 
-      if (forEveryone) {
-        setMessagesMap((prev) => {
-          const list = prev[activeChatId] || [];
-          return {
-            ...prev,
-            [activeChatId]: list.map((m) =>
-              m.id === msgId ? { ...m, deletedForEveryone: true, text: "This message was deleted." } : m
-            )
-          };
-        });
+      // Hiding a message affects this view only. The server schema has no
+      // deletion tombstone; never claim a shared deletion succeeded.
+      setMessagesMap(previous => ({ ...previous, [activeChatId]: (previous[activeChatId] || []).map(message => message.id === msgId ? { ...message, deletedFor: [...(message.deletedFor || []), username] } : message) }));
 
-        try {
-          const table = activeChatId === GLOBAL_CHAT_ID ? "global_chat" : "private_messages";
-          await supabase
-            .from(table)
-            .update({ text: "This message was deleted.", deletedForEveryone: true })
-            .eq("id", msgId);
-        } catch {}
-      } else {
-        // Delete for me
-        setMessagesMap((prev) => {
-          const list = prev[activeChatId] || [];
-          return {
-            ...prev,
-            [activeChatId]: list.map((m) =>
-              m.id === msgId ? { ...m, deletedFor: [...(m.deletedFor || []), username] } : m
-            )
-          };
-        });
-      }
     },
     [activeChatId, messagesMap, username]
   );
 
-  // FORWARD MESSAGE HANDLER
-  const forwardMessage = useCallback(
-    async (msg: LoungeMessage, targetChatId: string) => {
-      const tempId = `fwd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      const forwardedMsg: LoungeMessage = {
-        ...msg,
-        id: tempId,
-        chatId: targetChatId,
-        sender: username,
-        forwardedFrom: msg.sender,
-        status: "sent",
-        timestamp: new Date().toISOString(),
-        reactions: {}
+  // Forward through the same persistence contract, without trusting sender data.
+  const forwardMessage = useCallback(async (msg: LoungeMessage, targetChatId: string) => {
+    if (targetChatId.startsWith('group_')) {
+      await groupAction(targetChatId.slice(6), 'send', { id: crypto.randomUUID(), text: encodeLoungePayload({ ...msg, forwardedFrom: msg.sender }) });
+      return;
+    }
+    const id = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    const targetUser = directChatTarget(targetChatId, username);
+    const isGlobal = targetChatId === GLOBAL_CHAT_ID;
+    const forwardedMsg: LoungeMessage = { ...msg, id, chatId: targetChatId, sender: username, recipient: targetUser, forwardedFrom: msg.sender, status: 'sending', timestamp, reactions: {} };
+    setMessagesMap(previous => ({ ...previous, [targetChatId]: [...(previous[targetChatId] || []), forwardedMsg] }));
+    try {
+      const { data } = await supabase.auth.getSession();
+      const recipientOwnerId = targetUser ? await resolveOwnerId(targetUser) : null;
+      if (!data.session || (!isGlobal && !recipientOwnerId)) throw new Error('The recipient could not be verified.');
+      const row: Record<string, unknown> = isGlobal ? { id, sender: username, text: encodeLoungePayload({ ...msg, forwardedFrom: msg.sender }), timestamp } : {
+        id, sender: username, recipient: targetUser, chatId: targetChatId,
+        senderOwnerId: data.session.user.id, recipientOwnerId,
+        text: encodeLoungePayload({ ...msg, forwardedFrom: msg.sender }), timestamp,
       };
-
-      setMessagesMap((prev) => ({
-        ...prev,
-        [targetChatId]: [...(prev[targetChatId] || []), forwardedMsg]
-      }));
-
-      playLoungeSound("send");
-
-      try {
-        const isGlobal = targetChatId === GLOBAL_CHAT_ID;
-        const parts = targetChatId.split("_");
-        const targetUser = parts[0]?.toLowerCase() === username.toLowerCase() ? parts[1] : parts[0];
-
-        const textToSend = `___KENTRO_META___:${JSON.stringify({
-          text: msg.text || "",
-          gameShare: msg.gameShare,
-          forwardedFrom: msg.sender
-        })}`;
-
-        if (isGlobal) {
-          await supabase.from("global_chat").insert({
-            sender: username,
-            text: msg.text || "Forwarded Message",
-            timestamp: new Date().toISOString(),
-            voiceNote: msg.voiceNote,
-            duration: msg.duration,
-            sticker: msg.sticker,
-            stickerEmoji: msg.stickerEmoji,
-            stickerImageUrl: msg.stickerImageUrl,
-            stickerLabel: msg.stickerLabel
-          });
-        } else {
-          await supabase.from("private_messages").insert({
-            chatId: targetChatId,
-            sender: username,
-            recipient: targetUser || targetChatId,
-            text: textToSend,
-            voiceNote: msg.voiceNote,
-            duration: msg.duration,
-            sticker: msg.sticker,
-            stickerEmoji: msg.stickerEmoji,
-            stickerImageUrl: msg.stickerImageUrl,
-            stickerLabel: msg.stickerLabel,
-            status: "delivered",
-            reactions: {}
-          });
-        }
-      } catch (err) {
-        console.error("Failed forwarding message:", err);
-      }
-    },
-    [username]
-  );
+      const { error } = await supabase.from(isGlobal ? 'global_chat' : 'private_messages').insert(row);
+      if (error) throw error;
+      setMessagesMap(previous => ({ ...previous, [targetChatId]: (previous[targetChatId] || []).map(message => message.id === id ? { ...message, status: 'sent' } : message) }));
+    } catch (error) {
+      console.error('Failed forwarding message:', error);
+      setMessagesMap(previous => ({ ...previous, [targetChatId]: (previous[targetChatId] || []).map(message => message.id === id ? { ...message, status: 'failed' } : message) }));
+    }
+  }, [username, resolveOwnerId]);
 
   // START DIRECT CHAT WITH USER
   const startDirectChat = useCallback(
@@ -869,101 +794,34 @@ export function useLoungeData(
 
       const cId = getDirectChatId(username, cleanTarget);
 
-      // Also ensure friend record exists so they stay in Rolodex
-      const friendId = [username.toLowerCase(), cleanTarget.toLowerCase()].sort().join("_");
-      supabase
-        .from("friends")
-        .upsert({
-          id: friendId,
-          user1: username,
-          user2: cleanTarget,
-          user1Elo: profileStats?.elo || 1500,
-          user2Elo: targetElo,
-          status: "accepted",
-          sender: username
-        })
-        .then(() => {}, () => {});
-
+      // Opening a DM does not change friendship or consent.
       setActiveChatId(cId);
     },
     [username, profileStats, getDirectChatId]
   );
 
-  // GROUPS ACTIONS
-  const createGroup = useCallback(
-    (name: string, description: string, icon = "👥", initialMembers: string[] = []) => {
-      const newGroupId = `grp_${Date.now()}`;
-      const allMembers = Array.from(new Set([username, ...initialMembers]));
-      const newGroup: LoungeGroup = {
-        id: newGroupId,
-        name,
-        description,
-        icon,
-        createdBy: username,
-        createdAt: Date.now(),
-        admins: [username],
-        members: allMembers
-      };
-
-      setGroups((prev) => [newGroup, ...prev]);
-      setActiveChatId(`group_${newGroupId}`);
-    },
-    [username]
-  );
-
-  const updateGroup = useCallback((groupId: string, updates: Partial<LoungeGroup>) => {
-    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, ...updates } : g)));
-  }, []);
-
-  const addGroupMember = useCallback((groupId: string, newMember: string) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id !== groupId) return g;
-        if (g.members.includes(newMember)) return g;
-        return { ...g, members: [...g.members, newMember] };
-      })
-    );
-  }, []);
-
-  const removeGroupMember = useCallback((groupId: string, memberToRemove: string) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id !== groupId) return g;
-        return {
-          ...g,
-          members: g.members.filter((m) => m !== memberToRemove),
-          admins: g.admins.filter((a) => a !== memberToRemove)
-        };
-      })
-    );
-  }, []);
-
-  const makeGroupAdmin = useCallback((groupId: string, member: string) => {
-    setGroups((prev) =>
-      prev.map((g) => {
-        if (g.id !== groupId) return g;
-        if (g.admins.includes(member)) return g;
-        return { ...g, admins: [...g.admins, member] };
-      })
-    );
-  }, []);
-
-  const leaveGroup = useCallback(
-    (groupId: string) => {
-      setGroups((prev) =>
-        prev.map((g) => {
-          if (g.id !== groupId) return g;
-          return {
-            ...g,
-            members: g.members.filter((m) => m !== username),
-            admins: g.admins.filter((a) => a !== username)
-          };
-        })
-      );
-      setActiveChatId(GLOBAL_CHAT_ID);
-    },
-    [username]
-  );
+  // Retain the operation identity across a lost response or partial invitation failure.
+  const pendingCreation = useRef<{ signature: string; id: string } | null>(null);
+  // Every shared group mutation is authorized and persisted by PostgreSQL.
+  const createGroup = useCallback(async (name: string, description: string, icon = '👥', initialMembers: string[] = []) => {
+    const signature = JSON.stringify([name, description, icon, initialMembers.slice().sort()]);
+    if (pendingCreation.current?.signature !== signature) pendingCreation.current = { signature, id: crypto.randomUUID() };
+    const group = await groupAction(pendingCreation.current.id, 'create', { name, description, icon });
+    setActiveChatId('group_' + group.id);
+    for (const member of [...new Set(initialMembers)].filter(member => member.toLowerCase() !== username.toLowerCase())) {
+      await groupAction(group.id, 'invite', { username: member });
+    }
+    pendingCreation.current = null;
+  }, [groupAction, username]);
+  const updateGroup = useCallback((id: string, updates: Partial<LoungeGroup>) => { void groupAction(id, 'update', updates).catch(() => {}); }, [groupAction]);
+  const addGroupMember = useCallback((id: string, member: string) => { void groupAction(id, 'invite', { username: member }).catch(() => {}); }, [groupAction]);
+  const removeGroupMember = useCallback((id: string, member: string) => { void groupAction(id, 'remove', { username: member }).catch(() => {}); }, [groupAction]);
+  const makeGroupAdmin = useCallback((id: string, member: string) => { void groupAction(id, 'promote', { username: member }).catch(() => {}); }, [groupAction]);
+  const leaveGroup = useCallback((id: string) => { void groupAction(id, 'leave').then(() => setActiveChatId(GLOBAL_CHAT_ID)).catch(() => {}); }, [groupAction]);
+  const acceptGroup = useCallback((id: string) => { void groupAction(id, 'accept').then(() => setActiveChatId('group_' + id)).catch(() => {}); }, [groupAction]);
+  const declineGroup = useCallback((id: string) => { void groupAction(id, 'decline').catch(() => {}); }, [groupAction]);
+  const transferGroup = useCallback((id: string, member: string) => { void groupAction(id, 'transfer', { username: member }).catch(() => {}); }, [groupAction]);
+  const deleteGroup = useCallback((id: string) => { void groupAction(id, 'delete').then(() => setActiveChatId(GLOBAL_CHAT_ID)).catch(() => {}); }, [groupAction]);
 
   // BLOCK / UNBLOCK USER
   const blockUser = useCallback((targetUsername: string) => {
@@ -1046,6 +904,7 @@ export function useLoungeData(
     setActiveReply,
     blockedUsers,
     groups,
+    groupError, acceptGroup, declineGroup, transferGroup, deleteGroup,
     customProfiles,
     sendMessage,
     reactToMessage,

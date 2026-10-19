@@ -1,14 +1,18 @@
 import React, { useState } from "react";
 import { Crown, Mail, Lock, User, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { signUpWithEmail, signInWithUsername, requestPasswordReset } from "./supabase";
+import { getRoomCodeFromUrl } from "./lib/roomInvite";
 
 interface AuthScreenProps {
   onAuthenticated: () => void;
+  onPlayKenOffline?: () => void;
+  onPlayOffline?: () => void;
+  onContinueAsGuest?: () => void;
 }
 
 type Mode = "signin" | "signup" | "reset";
 
-export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, onContinueAsGuest }: AuthScreenProps) {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,6 +26,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const validate = (): string | null => {
     const cleanUsername = username.trim();
     if (cleanUsername.length < 3) return "Username must be at least 3 characters.";
+    if (mode === "signup" && /^KGuest_/i.test(cleanUsername)) return "That username prefix is reserved for Guest Mode.";
     if (!/^[a-zA-Z0-9_]+$/.test(cleanUsername)) return "Username can only contain letters, numbers, and underscores.";
     if (mode === "reset") return null; // no password/email needed to request a reset
     if (password.length < 8) return "Password must be at least 8 characters.";
@@ -73,7 +78,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         // distinguish "no such account" from "wrong password" itself (a
         // modern anti-enumeration default), but our own resolve-first step
         // already ruled the first case out.
-        setError("Incorrect password.");
+        setError("Username or password is incorrect.");
       } else if (code === "email_not_confirmed") {
         setError("Please confirm your email first -- check your inbox for the confirmation link.");
       } else if (code === "user_already_exists" || code === "email_exists") {
@@ -101,8 +106,8 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           </div>
           <h1 className="text-xl font-bold text-white font-sans mb-2">Check your email</h1>
           <p className="text-sm text-slate-400 font-sans leading-relaxed mb-6">
-            We sent a password reset link to the email on file for <span className="text-amber-400">{username.trim()}</span>.
-            Click it to set a new password, then come back and sign in.
+            If an account exists for <span className="text-amber-400">{username.trim()}</span>, a password reset link will be sent to its email address.
+            Check your inbox and follow the link to set a new password.
           </p>
           <button
             onClick={() => { setResetSuccess(false); setMode("signin"); setPassword(""); }}
@@ -139,7 +144,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="k-auth-screen min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
       {/* Ambient board-square texture in the background, subtle, matching the game's checkered identity without competing with the form */}
       <div
         className="absolute inset-0 opacity-[0.03] pointer-events-none"
@@ -150,7 +155,15 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         }}
       />
 
-      <div className="w-full max-w-sm relative">
+      <div className="k-auth-layout relative">
+        <aside className="k-auth-story" aria-label="Kentro Draughts">
+          <span className="k-overline">WELCOME TO KENTRO</span>
+          <h2>Every move<br/>means something.</h2>
+          <p>Play Nigeria's game with a global community. Compete online, train with Ken, and watch the best players.</p>
+          <div className="k-auth-benefits"><span>◆ Nigerian rules</span><span>◆ Live multiplayer</span><span>◆ AI training</span></div>
+          <div className="k-auth-mini-board" aria-hidden="true">{Array.from({length:100},(_,i)=><span className={(Math.floor(i/10)+i%10)%2 ? "dark":"light"} key={i}/>)}</div>
+        </aside>
+        <div className="k-auth-form-card">
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-600 to-amber-400 flex items-center justify-center shadow-lg shadow-amber-500/20 mb-3">
@@ -160,6 +173,21 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           <p className="text-[11px] text-amber-500/80 font-sans tracking-[0.2em] uppercase mt-1">Play. Learn. Analyze. Win.</p>
         </div>
 
+        {typeof window !== "undefined" && getRoomCodeFromUrl(window.location.search) && (
+          <div className="mb-5 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-center text-xs text-emerald-200 leading-relaxed">
+            You've been invited to a draughts match. Continue as Guest or sign in, then tap <strong>Start Game</strong> to join.
+          </div>
+        )}
+
+        {onContinueAsGuest && mode !== "reset" && (
+          <div className="k-guest-entry">
+            <button type="button" onClick={onContinueAsGuest} className="k-guest-cta">
+              Explore as guest
+            </button>
+            <p className="k-guest-subtitle">Explore the app · 3 free AI games · 1 free online match</p>
+          </div>
+        )}
+        <div className="k-auth-divider" aria-hidden="true"><span>or use your account</span></div>
         {/* Mode toggle */}
         {mode !== "reset" && (
           <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1 mb-6">
@@ -202,12 +230,13 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div>
-            <label className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
+            <label htmlFor="auth-username" className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
               Username
             </label>
             <div className="relative">
               <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                id="auth-username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -220,12 +249,13 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
           {mode === "signup" && (
             <div>
-              <label className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
+              <label htmlFor="auth-email" className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
                 Email
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
+                  id="auth-email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -240,7 +270,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           {mode !== "reset" && (
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans">
+              <label htmlFor="auth-password" className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans">
                 Password
               </label>
               {mode === "signin" && (
@@ -256,6 +286,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                id="auth-password"
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -266,8 +297,9 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
               <button
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
-                tabIndex={-1}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
+                className="absolute right-0 top-1/2 -translate-y-1/2 min-w-11 min-h-11 flex items-center justify-center text-slate-400 hover:text-slate-200 transition"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -276,7 +308,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           )}
 
           {error && (
-            <div className="text-[13px] text-rose-400 font-sans bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+            <div role="alert" className="text-[13px] text-rose-400 font-sans bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
               {error}
             </div>
           )}
@@ -298,9 +330,13 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           </button>
         </form>
 
+        {onPlayKenOffline && <button type="button" onClick={onPlayKenOffline} className="w-full mt-4 py-3 rounded-xl border border-amber-500/40 text-amber-300 bg-amber-500/10 text-sm font-bold">Play Ken Offline · Full Strength</button>}
+        {onPlayOffline && <button type="button" onClick={onPlayOffline} className="w-full mt-4 py-3 rounded-xl border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-sm font-bold hover:bg-emerald-500/20">Play Nearby Offline — No Sign In</button>}
+
         <div className="flex items-center justify-center gap-1.5 mt-6 text-[11px] text-slate-600 font-sans">
           <ShieldCheck className="w-3.5 h-3.5" />
           Your rating, coins, and match history are tied to this account.
+        </div>
         </div>
       </div>
     </div>

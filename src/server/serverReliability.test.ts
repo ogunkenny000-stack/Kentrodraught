@@ -38,4 +38,8 @@ describe("websocket validator reliability", () => {
     expect(validateMessage({ type: "login", username: "" })).toBeTypeOf("string");
     expect(validateMessage({ type: "make-move", move: { from: 0, to: 51 } })).toBeTypeOf("string");
   });
+  it("requires a real boolean for room privacy", () => {
+    expect(validateMessage({ type: "create-room", private: true })).toBeNull();
+    expect(validateMessage({ type: "create-room", private: "false" })).toBeTypeOf("string");
+  });
 });

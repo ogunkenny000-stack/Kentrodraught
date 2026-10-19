@@ -619,7 +619,7 @@ function PurchasesTab() {
  */
 function CoinSettingsTab() {
   const [settings, setSettings] = useState<any>(null);
-  const [coinsEnabled, setCoinsEnabled] = useState<boolean>(true);
+  const [coinsEnabled, setCoinsEnabled] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [revenue, setRevenue] = useState<any>(null);
@@ -629,10 +629,20 @@ function CoinSettingsTab() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/coins/settings").then(r => r.json()).then((data) => {
-      setSettings(data);
-      setCoinsEnabled(data.coinsEnabled !== false);
-    });
+    fetch("/api/coins/settings")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Coin settings unavailable");
+        return response.json();
+      })
+      .then((data) => {
+        setSettings(data);
+        setCoinsEnabled(data.coinsEnabled === true);
+      })
+      .catch(() => {
+        // A failed readiness request must never leave admin controls enabled.
+        setCoinsEnabled(false);
+        setSettings({ error: true });
+      });
   }, []);
 
   const save = async () => {
@@ -649,6 +659,7 @@ function CoinSettingsTab() {
   };
 
   if (!settings) return <Panel><p className="text-slate-500">Loading...</p></Panel>;
+  if (settings.error) return <Panel><p className="text-amber-400">Coin settings are unavailable. Coin operations remain disabled until the backend and database pass readiness checks.</p></Panel>;
 
   const field = (label: string, value: number, onChange: (v: number) => void) => (
     <div className="flex items-center justify-between gap-3">

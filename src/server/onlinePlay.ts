@@ -1,3 +1,6 @@
+import path from "node:path";
+import { DurableState } from "./durableState";
+import { replayForAnalysis } from "../lib/analysisReplay";
 // Online play (multiplayer rooms) -- the WebSocket server.
 //
 // Implements the server side of docs/ONLINE_PLAY_PROTOCOL.md (v2):
@@ -15,9 +18,9 @@ import { WebSocketServer } from "ws";
 import type { Server as HttpServer } from "http";
 import { applyMove, createInitialBoard } from "../gameLogic";
 import type { Board, Move } from "../gameLogic";
-import { debitMultipleWallets, settleMatchPot } from "../../coinsService";
-import { verifyAccessToken } from "../../supabaseAdmin";
-import { getNextGameCode, linkRematch, recordGameEnd, recordGameStart } from "./gameRecordsManager";
+import { debitMultipleWallets, settleMatchPot, refundUnstartedMatch } from "../../coinsService";
+import { getSupabaseAdmin } from "../../supabaseAdmin";
+import { getNextGameCode, linkRematch, recordGameEnd, recordGameStart, recordGameStartingPosition } from "./gameRecordsManager";
 import { checkGameEndFrom, normalizeBoard } from "./gameEnd";
 import {
   applyMoveToClock,
@@ -31,6 +34,8 @@ import {
   type RoomClock,
 } from "./roomClock";
 import { SessionStore, type Session } from "./sessions";
+import { isOnlineGuest, guestHasOnlineTrial, claimOnlineGuestTrials, localGuestTrials, restoreGuestTrials } from "./guestQuota";
+import { notifyMatchEnded } from "./notifications";
 import { isCallMessageType, validateMessage } from "./wsValidation";
 import {
   CALL_PEER_DISCONNECT_GRACE_MS,
@@ -50,6 +55,8 @@ import {
 type WS = any;
 
 export interface OnlinePlayDeps {
+  recoveryPath?: string | false;
+  onGameCompleted?: (game: { gameCode: string; white: string; black: string; winner: Color | null; draw: boolean; roomId: string; tournamentId?: string }) => void | Promise<void>;
   coinsEnabled: boolean;
   getCoinSettings: () => Promise<{ matchRakePercent: number } & Record<string, any>>;
   resolveEntryFee: (room: { gameTime: number; specialRule: string; wagerAmount?: number }, settings: any) => number;
@@ -74,6 +81,7 @@ interface Seat {
   ws: WS | null; // null while disconnected (grace) or a ghost in a finished room
   username: string;
   key: string;
+  userId: string | null;
   color: Color;
   ready: boolean;
   // --- Fair Play Guard ---
@@ -105,6 +113,11 @@ interface GameState {
 
 interface Room {
   id: string;
+  tournamentId?: string;
+  tournamentMatchId?: string;
+  awaitingFirstJoin?: boolean;
+  terminalResult?: { isDraw: boolean; winnerColor: Color | null; reason: string };
+  private: boolean;
   seq: number;
   phase: RoomPhase;
   players: Seat[];
@@ -149,7 +162,7 @@ interface Room {
   starting: boolean;
   resultRecorded: boolean;
   gamesStarted: number;
-  pendingEndOffer: { type: "resign" | "draw"; fromUsername: string } | null;
+  pendingEndOffer: { type: "resign" | "draw"; fromUsername: string; expiresAt?: number } | null;
   previousGameCode: string | null;
   gameCode: string;
   seriesId: string;
@@ -185,16 +198,21 @@ const FAIRPLAY_SINGLE_ABSENCE_MS = 15_000;
 const FAIRPLAY_MAX_TOTAL_AWAY_MS = 30_000;
 
 const supabaseConfigured = () => !!(process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY);
+const accountAuthRequired = () => process.env.NODE_ENV === "production" || !!(process.env.SUPABASE_URL || process.env.SUPABASE_SECRET_KEY);
 
 export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   const wss = new WebSocketServer({ server, maxPayload: MAX_WS_PAYLOAD_BYTES, perMessageDeflate: false });
 
   const onlinePlayers = new Map<WS, OnlinePlayer>();
   const rooms = new Map<string, Room>();
+  const userSessions = new Map<string, Set<Session>>();
+  const authRevocations = new Map<string, number>();
+  let authRevision = 0;
   const sessions = new SessionStore({
     ttlMs: SESSION_TTL_MS,
     keepAlive: (s) => holdsLiveSeat(s.key),
     onExpire: (s) => {
+      forgetUserSession(s);
       cleanupGhostSeats(s.key);
       console.log(`[WS] Session expired: ${s.username}`);
     },
@@ -202,6 +220,25 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   const activeCalls = new Map<string, ActiveCall>();
   const callDisconnectTimers = new Map<string, NodeJS.Timeout>();
   const signalBuffers = new Map<string, { items: any[]; timer: NodeJS.Timeout }>();
+  let shuttingDown = false;
+  let storageFailed = false;
+  const recovery = new DurableState<any>(deps.recoveryPath ?? (process.env.NODE_ENV === 'test' && !process.env.KENTRO_DATA_DIR ? false : path.join(process.env.KENTRO_DATA_DIR || path.join(process.cwd(), 'data'), 'live_rooms.json')));
+  const excluded = new Set(['ws', 'expireTimer', 'flagTimer', 'deletionTimer', 'seriesNextGameTimer', 'awayForfeitTimer', 'forfeitTimer']);
+  let checkpointFingerprint = "";
+  function checkpoint(force = false): void {
+    if (shuttingDown || !recovery.file) return;
+    if (storageFailed) throw new Error('Room persistence unavailable; restart after repairing storage');
+    try {
+      const persistedRooms = JSON.parse(JSON.stringify([...rooms.values()], (key, value) => excluded.has(key) ? undefined : value));
+      for (const room of persistedRooms) room.seq = Math.ceil(room.seq / 256) * 256;
+      const fingerprint = JSON.stringify({ rooms: persistedRooms, sessions: sessions.snapshot(), guestTrials: localGuestTrials() });
+      if (!force && fingerprint === checkpointFingerprint) return;
+      for (const room of persistedRooms) { const live = rooms.get(room.id)!; room.clock = { ...live.clock, whiteMs: clockRemainingMs(live.clock, "W", now()), blackMs: clockRemainingMs(live.clock, "B", now()), running: null }; }
+      recovery.write({ rooms: persistedRooms, sessions: sessions.snapshot(), guestTrials: localGuestTrials() });
+      checkpointFingerprint = fingerprint;
+    } catch (error) { storageFailed = true; throw error; }
+  }
+
 
   // ------------------------------------------------------------------
   // Small utilities
@@ -212,6 +249,27 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   const isLive = (ws: WS | null | undefined) => !!ws && ws.readyState === 1;
   const otherColor = (c: Color): Color => (c === "W" ? "B" : "W");
   const colorName = (c: Color | null) => (c === "W" ? "White" : c === "B" ? "Black" : "Nobody");
+
+  function forgetUserSession(session: Session): void {
+    if (!session.userId) return;
+    const bound = userSessions.get(session.userId);
+    bound?.delete(session);
+    if (bound?.size === 0) userSessions.delete(session.userId);
+  }
+
+  /** Remove every resume token and disconnect the account through normal match cleanup. */
+  function revokeUser(userId: string): void {
+    authRevocations.set(userId, ++authRevision);
+    for (const session of Array.from(userSessions.get(userId) ?? [])) {
+      sessions.remove(session);
+      forgetUserSession(session);
+      if (session.ws) {
+        sendError(session.ws, "not-logged-in", "Account access has been removed.");
+        try { session.ws.close(4003, "account-access-revoked"); }
+        catch { session.ws.terminate(); }
+      }
+    }
+  }
 
   function safeTimer(label: string, fn: () => void): void {
     try {
@@ -242,6 +300,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   /** Players AND live spectators. Every room-scoped message carries `seq`. Seated players receive their specific `yourColor`. */
   function sendToRoom(room: Room, message: any, excludeWs?: WS): void {
     const seq = nextSeq(room);
+    checkpoint();
     for (const p of room.players) {
       if (p.ws && p.ws !== excludeWs && isLive(p.ws)) {
         sendJson(p.ws, message.yourColor !== undefined
@@ -310,15 +369,20 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           const r = rooms.get(p.roomId);
           if (r && (r.phase === "playing" || r.phase === "setup")) continue;
         }
-        p.ws.send(payload);
+        // Lobby broadcasts are informational. Drop an obsolete snapshot
+        // rather than grow the outbound buffer of a congested mobile socket.
+        // Critical room/move traffic still uses sendToRoom separately.
+        if (p.ws.bufferedAmount > 256 * 1024) continue;
+        try { p.ws.send(payload); } catch { /* socket close handler cleans up */ }
       }
     };
     return {
       schedule() {
-        if (timer) return;
+        if (shuttingDown || timer) return;
         const wait = Math.max(0, BROADCAST_COALESCE_MS - (now() - lastSentAt));
         timer = setTimeout(() => safeTimer(label, flush), wait);
       },
+      cancel() { if (timer) clearTimeout(timer); timer = null; },
     };
   }
   const onlineUsersBroadcast = makeCoalescer("online-users", () => ({ type: "online-users-update", onlineUsers: onlineUsernames() }));
@@ -330,7 +394,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     const openList: any[] = [];
     for (const r of rooms.values()) {
       const host = r.players[0];
-      if (r.phase !== "lobby" || r.players.length !== 1 || !host || !isLive(host.ws)) continue;
+      if (r.private || r.phase !== "lobby" || r.players.length !== 1 || !host || !isLive(host.ws)) continue;
       openList.push({
         id: r.id,
         creator: r.creator || host.username,
@@ -415,6 +479,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     return {
       type: "room-info",
       roomId: room.id,
+      private: room.private,
       players: playersPayload(room),
       spectatorCount: liveSpectatorCount(room),
       gameState: room.gameState,
@@ -627,6 +692,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     room.phase = crown ? "setup" : "playing";
     room.started = true;
     room.resultRecorded = false;
+    room.terminalResult = undefined;
     room.pendingEndOffer = null;
     room.pendingRematch = null;
     room.gameState = {
@@ -651,6 +717,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     try {
       recordGameStart({
         gameCode,
+        private: room.private,
+        participantUserIds: room.players.flatMap((p) => {
+          const id = p.userId;
+          return id ? [id] : [];
+        }),
         previousGameCode: room.previousGameCode,
         seriesId: room.seriesId,
         seriesGameNumber: room.seriesGameNumber || 1,
@@ -660,6 +731,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         gameMode: "Multiplayer",
         timeControl: timed ? `${room.gameTime} min${room.incrementSec ? ` + ${room.incrementSec}s` : ""}` : "Untimed",
         startingPosition: room.startBoard,
+        startingTurn: room.startTurn,
       });
     } catch (err) {
       console.error("[GameRecord] Failed to record game start:", err);
@@ -672,6 +744,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     sendToRoom(room, {
       type: "game-started",
       roomId: room.id,
+      private: room.private,
       players: playersPayload(room),
       gameState: room.gameState,
       clockLimitType: room.clockLimitType,
@@ -684,6 +757,25 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     if (room.bestOf > 1 && room.seriesGameNumber > 1) broadcastSeriesUpdate(room);
     broadcastOpenRooms();
     console.log(`[WS] Room ${room.id}: game ${gameCode} started (${room.phase}, ${whiteName} vs ${blackName}${room.bestOf > 1 ? `, series game ${room.seriesGameNumber}/${room.bestOf}` : ""}).`);
+  }
+
+  /** A paid room whose start is uncertain must be retired immediately.
+   * Reconcile only by its immutable database receipt; never re-use its room ID.
+   * Failures remain visible in the reconciliation audit, not silently paid. */
+  function refundInterruptedStart(gameCode: string, white: string, black: string, fee: number, reason: string): void {
+    void (async () => {
+      for (const delay of [0, 1500, 5000, 15000]) {
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        try {
+          const outcome = await refundUnstartedMatch(gameCode, white, black, fee);
+          console.log(`[Coins] Interrupted start ${gameCode} reconciled (${reason}): ${JSON.stringify(outcome)}`);
+          return;
+        } catch (error) {
+          console.error(`[Coins] Interrupted start refund pending for ${gameCode} (${reason})`, error);
+        }
+      }
+      console.error(`[Coins] CRITICAL: manual reconciliation required for interrupted paid room ${gameCode}.`);
+    })();
   }
 
   /**
@@ -708,7 +800,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       for (const pl of room.players) pl.ready = true;
       const gameCode = preallocatedGameCode ?? allocateGameCode(room);
 
-      if (!room.feesCharged && deps.coinsEnabled) {
+      if (!room.feesCharged && deps.coinsEnabled && !participants.some(p => isOnlineGuest(p.username))) {
         const coinSettings = await deps.getCoinSettings();
         if (!rosterIsCurrent()) {
           for (const pl of room.players) pl.ready = false;
@@ -717,15 +809,23 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         }
         const entryFee = coinSettings ? deps.resolveEntryFee(room, coinSettings) : 0;
         if (entryFee > 0) {
-          const usernames = participants.map((p) => p.username);
+          // The receipt API takes White first, Black second, regardless of who joined first.
+          // Settlement supplies players by color, so ordering must match exactly.
+          const whiteParticipant = participants.find((p) => p.color === "W");
+          const blackParticipant = participants.find((p) => p.color === "B");
+          if (!whiteParticipant || !blackParticipant) throw new Error("Paid match requires one White and one Black seat");
+          const usernames = [whiteParticipant.username, blackParticipant.username];
           let chargeResult: Awaited<ReturnType<typeof debitMultipleWallets>>;
           try {
             chargeResult = await debitMultipleWallets(usernames, entryFee, "match_entry", gameCode);
           } catch (err) {
-            console.error("Wallet debit failed at match start:", err);
-            for (const pl of room.players) pl.ready = false;
-            sendToRoom(room, { type: "room-error", error: "Wallet service is unavailable right now — try again in a moment." });
-            sendRoomInfo(room);
+            console.error("Wallet debit had an uncertain outcome at match start:", err);
+            // The database may have committed the charge before the HTTP
+            // acknowledgement was lost. The original room ID is retired;
+            // only the database can decide whether a refund is due.
+            refundInterruptedStart(gameCode, usernames[0], usernames[1], entryFee, "charge outcome unknown");
+            sendToRoom(room, { type: "room-error", error: "Match start cancelled. Any committed entry fee will be checked for refund; create a new room." });
+            deleteRoom(room);
             return;
           }
           if (chargeResult.ok === false) {
@@ -749,7 +849,14 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       // Somebody may have vanished while the wallet call was in flight.
       if (!rosterIsCurrent()) {
         if (room.feesCharged && room.entryFeePerPlayer && !room.potSettled) {
-          settleWithRetry(room, { isDraw: true, winnerColor: null }, "refund (player left before start)", participants);
+          const white = participants.find((p) => p.color === "W");
+          const black = participants.find((p) => p.color === "B");
+          if (white && black) {
+            refundInterruptedStart(gameCode, white.username, black.username, room.entryFeePerPlayer, "roster changed before start");
+          }
+          sendToRoom(room, { type: "room-error", error: "Paid room cancelled; any entry fee will be refunded. Create a new room." });
+          deleteRoom(room); // never recycle a paid/refunded match receipt
+          return;
         }
         room.feesCharged = false;
         room.entryFeePerPlayer = undefined;
@@ -758,6 +865,29 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         return;
       }
 
+      // The authoritative one-game quota is claimed once, immediately
+      // before the first match starts (never just for creating a lobby).
+      // Durable RPC performs an atomic all-or-none claim for both guests.
+      if (participants.some(p => isOnlineGuest(p.username))) {
+        let admitted = false;
+        try {
+          admitted = await claimOnlineGuestTrials(participants.map(p => p.username));
+        } catch (err) {
+          console.error("[Guest] Admission service failure", err);
+          sendToRoom(room, { type: "room-error", error: "Guest trial service is unavailable. Try again shortly." });
+          return;
+        }
+        if (!admitted) {
+          for (const p of participants) {
+            if (isOnlineGuest(p.username) && isLive(p.seat.ws)) {
+              sendJson(p.seat.ws, { type: "guest-limit-reached", mode: "online", message: "Your one free online game is finished. Sign in to play more." });
+            }
+          }
+          sendToRoom(room, { type: "room-error", error: "A guest has used their free online match. Sign in to play again." });
+          return;
+        }
+        if (!rosterIsCurrent()) return;
+      }
       if (!room.seriesId) room.seriesId = `series_${gameCode}`;
       room.seriesGameNumber = 1;
       beginGame(room, gameCode, room.bestOf > 1 ? `Game 1 of ${room.bestOf}: ` : "");
@@ -804,6 +934,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     opts?: { forfeitWholeSeries?: boolean; recordReason?: string; abandonSeries?: boolean },
   ): boolean {
     if (room.resultRecorded || !isLivePhase(room)) return false;
+    room.terminalResult = { ...result, reason: opts?.recordReason ?? reason };
     room.resultRecorded = true;
     pauseClock(room.clock, now());
     clearFlagTimer(room);
@@ -818,6 +949,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     refreshLegacyTimes(room);
     if (room.gameState) room.gameState.statusMessage = statusMessage;
 
+    recordGameResultAndSettle(room, result, {
+      forfeitWholeSeries: opts?.forfeitWholeSeries,
+      reason: opts?.recordReason ?? reason,
+      abandonSeries: opts?.abandonSeries,
+    });
     sendToRoom(room, {
       type: "game-ended",
       reason,
@@ -826,11 +962,6 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       clock: clockOf(room),
       phase: room.phase,
       gameCode: room.gameCode,
-    });
-    recordGameResultAndSettle(room, result, {
-      forfeitWholeSeries: opts?.forfeitWholeSeries,
-      reason: opts?.recordReason ?? reason,
-      abandonSeries: opts?.abandonSeries,
     });
     if (room.players.every((p) => !isLive(p.ws))) armDeletionTimer(room);
     broadcastOpenRooms();
@@ -859,6 +990,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if ((room.potGeneration ?? 0) === generation) {
             room.potSettled = true;
             room.potSettling = false;
+            checkpoint();
           }
           console.log(`[Coins] Pot ${potId} settled (${label}) on attempt ${attempt + 1}.`);
           return;
@@ -893,11 +1025,20 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     }
 
     if (!opts?.skipRecord) {
+      const gameCode = room.gameCode;
       const moves = room.gameState?.moveHistory || [];
       recordGameEnd({
         gameCode: room.gameCode,
+        private: room.private,
+        participantUserIds: room.players.flatMap((p) => {
+          const id = p.userId;
+          return id ? [id] : [];
+        }),
         completeMoveHistory: moves,
         currentPosition: room.gameState?.board,
+        currentTurn: room.gameState?.turn,
+        startingPosition: room.startBoard,
+        startingTurn: room.startTurn,
         finalResult,
         resultReason: opts?.reason || (result.isDraw ? "Draw" : "Win"),
         winnerColor: result.winnerColor,
@@ -909,8 +1050,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         blackPlayer,
         seriesId: room.seriesId,
         seriesGameNumber: room.seriesGameNumber,
-      }).catch((err) => console.error("[GameRecord] Failed to record game end:", err));
+      }).then(() => notifyMatchEnded(gameCode, whitePlayer, blackPlayer, winner))
+        .catch((err) => console.error("[GameRecord/Notifications] Failed to save game result or send alert:", err));
     }
+
+    if (deps.onGameCompleted) void Promise.resolve().then(() => deps.onGameCompleted!({ gameCode: room.gameCode, white: whitePlayer, black: blackPlayer, winner: result.winnerColor, draw: result.isDraw, roomId: room.id, tournamentId: room.tournamentId })).catch(error => console.error('[Tournament] Result synchronization pending', error));
 
     // ---- Classic single game ----
     if (!room.bestOf || room.bestOf <= 1) {
@@ -921,7 +1065,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     // ---- Series bookkeeping ----
     if (room.seriesOver) return;
     for (const p of room.players) {
-      if (!(p.username in room.seriesScore)) room.seriesScore[p.username] = 0;
+      if (!Object.prototype.hasOwnProperty.call(room.seriesScore, p.username)) room.seriesScore[p.username] = 0;
     }
     const winnerPlayer = !result.isDraw && result.winnerColor
       ? room.players.find((p) => p.color === result.winnerColor) ?? null
@@ -1127,7 +1271,12 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     // Spectators never touch the game.
     const specIdx = room.spectators.findIndex((s) => s.ws === ws || s.key === player.key);
     if (specIdx >= 0) {
-      room.spectators.splice(specIdx, 1);
+      if (reason === "close") {
+        room.spectators[specIdx].ws = null;
+        room.spectators[specIdx].disconnectedAt = now();
+      } else {
+        room.spectators.splice(specIdx, 1);
+      }
       player.roomId = null;
       pruneSpectators(room);
       sendRoomInfo(room);
@@ -1264,8 +1413,14 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         if (!best || rank > best.rank) best = { room, seat, spectator: null, rank };
         continue;
       }
+      const spectator = room.spectators.find((s) => s.key === key &&
+        (s.ws !== currentWs || !isLive(s.ws)) &&
+        (isLive(s.ws) || (s.disconnectedAt !== null && now() - s.disconnectedAt < SPECTATOR_GRACE_MS)));
+      if (spectator && !room.private && isLivePhase(room) && (!best || best.rank < 0)) {
+        best = { room, seat: null, spectator, rank: 0 };
+      }
     }
-    return best ? { room: best.room, seat: best.seat, spectator: null } : null;
+    return best ? { room: best.room, seat: best.seat, spectator: best.spectator } : null;
   }
 
   /** A seat of `key` is in disconnect grace (live game or series pause). */
@@ -1279,6 +1434,13 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
 
   function attachToSeat(room: Room, seat: Seat, player: OnlinePlayer): void {
     const ws = player.ws;
+    if (room.awaitingFirstJoin) {
+      room.awaitingFirstJoin = false;
+      for (const other of room.players) if (other !== seat && !isLive(other.ws)) {
+        other.disconnectedAt = now();
+        other.forfeitTimer = setTimeout(() => safeTimer('tournament join deadline', () => onGraceExpired(room, other)), 120_000);
+      }
+    }
     seat.ws = ws;
     seat.disconnectedAt = null;
     seat.graceExpired = false;
@@ -1317,6 +1479,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     sendDirect(room, player.ws, {
       type: "spectate-joined",
       roomId: room.id,
+      private: room.private,
       players: playersPayload(room),
       gameState: room.gameState,
       gameTime: room.gameTime,
@@ -1344,7 +1507,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         const seat = seatOf(room, oldWs);
         if (seat) seat.ws = null;
         const sp = room.spectators.find((s) => s.ws === oldWs);
-        if (sp) sp.ws = null;
+        if (sp) { sp.ws = null; sp.disconnectedAt = now(); }
       }
     }
     try { oldWs.close(4000, "session-replaced"); } catch {}
@@ -1585,7 +1748,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     room.potSettled = false;
     room.potSettling = false;
     room.seriesGameNumber = 1;
-    room.seriesScore = {};
+    room.seriesScore = Object.create(null);
     for (const p of room.players) room.seriesScore[p.username] = 0;
     room.seriesDraws = 0;
     room.seriesOver = false;
@@ -1630,13 +1793,13 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     ws.on("message", (raw: any) => {
       ws.isAlive = true;
       (ws as any).missedPings = 0;
-      handleMessage(ws, raw).catch((err) => {
+      return handleMessage(ws, raw).then(() => checkpoint()).catch((err) => {
         console.error("[WS] Error processing msg:", err);
       });
     });
 
     function handleClose(ws: WS): void {
-      if (ws.__replaced) return; // takeover already moved everything to the new socket
+      if (shuttingDown || ws.__replaced) return; // shutdown/takeover owns cleanup
       const player = onlinePlayers.get(ws);
       if (!player) return;
       console.log(`[WS] Player disconnected: ${player.username}`);
@@ -1646,9 +1809,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
       if (session && session.ws === ws) sessions.detach(session);
       onCallPartyDisconnected(player.key);
       broadcastOnlineUsers();
+      checkpoint();
     }
 
     async function handleMessage(ws: WS, raw: any): Promise<void> {
+      if (shuttingDown || !isLive(ws) || storageFailed) { if (storageFailed) ws.close(1011, "room storage unavailable"); return; }
       // Flood protection: max 75 messages per 3 s window per socket.
       const t = now();
       if (t > windowReset) {
@@ -1706,10 +1871,39 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           const presentedToken: string | null = typeof data.sessionToken === "string" ? data.sessionToken : null;
 
           let userId: string | null = null;
+          const verificationRevision = authRevision;
           if (supabaseConfigured() && typeof data.accessToken === "string" && data.accessToken) {
-            try { userId = await verifyAccessToken(data.accessToken); } catch { userId = null; }
+            try {
+              const db = getSupabaseAdmin();
+              const { data: verified, error } = await db.auth.getUser(data.accessToken);
+              if (!error && verified?.user) {
+                // Auth user_metadata is self-editable. Only the canonical,
+                // owner-protected profile can bind a wallet/room username.
+                const { data: profile, error: profileError } = await db.from("profiles")
+                  .select("username, usernameLower, ownerId, banned, suspendedUntil")
+                  .eq("ownerId", verified.user.id).maybeSingle();
+                if (!profileError && profile?.ownerId === verified.user.id &&
+                    keyOf(String(profile.usernameLower || "")) === key &&
+                    keyOf(String(profile.username || "").trim()) === key && key !== "kentro_house" &&
+                    (authRevocations.get(verified.user.id) ?? 0) <= verificationRevision &&
+                    profile.banned !== true && !(Number(profile.suspendedUntil) > now())) {
+                  userId = verified.user.id;
+                  cleanedName = sanitizeInputString(profile.username || cleanedName, 32);
+                }
+              }
+            } catch { userId = null; }
           }
           if (!isLive(ws)) return; // closed while we were verifying
+          // Guests use distinct reserved names. Production and partially configured
+          // environments require verified accounts even when auth is unavailable.
+          if (accountAuthRequired()) {
+            if (isOnlineGuest(cleanedName) ? !!userId : !userId) {
+              sendError(ws, "not-logged-in", supabaseConfigured()
+                ? "Sign in to use your account, or choose Continue as Guest."
+                : "Account sign-in is unavailable. Choose Continue as Guest.");
+              return;
+            }
+          }
 
           const already = onlinePlayers.get(ws);
           if (already) {
@@ -1727,7 +1921,8 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           // session was bound to. The second path is what lets a player who
           // lost the token (new phone, cleared storage) get their seat back
           // instead of being locked out for the rest of the game.
-          const tokenMatches = !!existing && (
+          const ownsTournamentSeat = [...rooms.values()].some(room => room.tournamentId && room.players.some(seat => seat.key === key && (userId ? seat.userId === userId : !accountAuthRequired())));
+          const tokenMatches = ownsTournamentSeat || !!existing && (
             (!!presentedToken && presentedToken === existing.token) ||
             (!!userId && !!existing.userId && userId === existing.userId)
           );
@@ -1751,17 +1946,33 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             session.userId = userId ?? session.userId;
             sessions.attach(session, ws);
           } else {
+            if (existing) forgetUserSession(existing);
             session = sessions.create(cleanedName, userId);
             sessions.attach(session, ws);
             // A token-less login never inherits old seats.
             cleanupGhostSeats(key);
+          }
+          if (session.userId) {
+            const bound = userSessions.get(session.userId) ?? new Set<Session>();
+            bound.add(session);
+            userSessions.set(session.userId, bound);
           }
           const dcTimer = callDisconnectTimers.get(key);
           if (dcTimer) { clearTimeout(dcTimer); callDisconnectTimers.delete(key); }
 
           const player: OnlinePlayer = { ws, username: cleanedName, key, roomId: null, token: session.token };
           onlinePlayers.set(ws, player);
+          checkpoint();
           sendJson(ws, { type: "login-success", username: cleanedName, sessionToken: session.token, serverNow: now(), onlineUsers: onlineUsernames() });
+          if (isOnlineGuest(cleanedName)) {
+            try {
+              const available = await guestHasOnlineTrial(cleanedName);
+              if (isLive(ws)) sendJson(ws, { type: "guest-quota", onlineRemaining: available ? 1 : 0 });
+            } catch (err) {
+              console.error("[Guest] Unable to load online allowance", err);
+              if (isLive(ws)) sendJson(ws, { type: "guest-quota", onlineRemaining: 0 });
+            }
+          }
           console.log(`[WS] Player logged in: ${cleanedName}${tokenMatches ? " (session resumed)" : ""}`);
 
           if (tokenMatches) {
@@ -1787,7 +1998,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
 
         case "list-live-rooms": {
           const liveRooms = Array.from(rooms.values())
-            .filter((r) => isLivePhase(r) && r.gameState)
+            .filter((r) => !r.private && isLivePhase(r) && r.gameState)
             .map((r) => ({
               roomId: r.id,
               white: r.players.find((p) => p.color === "W")?.username ?? "?",
@@ -1829,6 +2040,23 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         case "create-room": {
           const player = requirePlayer(ws);
           if (!player) return;
+          if (rooms.size >= 1000) { sendError(ws, "busy", "The game server is at room capacity. Try again shortly."); return; }
+          const previousRoomId = player.roomId;
+          if (isOnlineGuest(player.username)) {
+            try {
+              if (!await guestHasOnlineTrial(player.username)) {
+                sendJson(ws, { type: "guest-limit-reached", mode: "online", message: "Your free online game has been used. Sign in to keep playing." });
+                return;
+              }
+            } catch (err) {
+              console.error("[Guest] Failed to check room entitlement", err);
+              sendJson(ws, { type: "room-error", error: "Guest online play is temporarily unavailable. Try again shortly." });
+              return;
+            }
+          }
+          // Entitlement checks are asynchronous: a closed/replaced socket or
+          // another room action must not leave a new orphan lobby behind.
+          if (!isLive(ws) || onlinePlayers.get(ws) !== player || player.roomId !== previousRoomId) return;
 
           let userOpenCount = 0;
           for (const r of rooms.values()) {
@@ -1850,18 +2078,24 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           const hostTime = typeof data.hostTime === "number" ? data.hostTime : gameTime;
           const guestTime = typeof data.guestTime === "number" ? data.guestTime : gameTime;
           const incrementSec = typeof data.increment === "number" ? Math.max(0, Math.round(data.increment)) : 0;
-          const wagerAmount = deps.sanitizeWagerAmount(data.wagerAmount) ?? undefined;
-          const bestOf = deps.sanitizeBestOf(data.bestOf);
+          // Guest matches are free and strictly one game per invitation.
+          if (!deps.coinsEnabled && typeof data.wagerAmount === "number" && data.wagerAmount > 0) {
+            sendJson(ws, { type: "room-error", error: "Kentro Coins are unavailable. Create a free match instead." });
+            return;
+          }
+          const wagerAmount = isOnlineGuest(player.username) ? 0 : deps.sanitizeWagerAmount(data.wagerAmount) ?? undefined;
+          const bestOf = isOnlineGuest(player.username) ? 1 : deps.sanitizeBestOf(data.bestOf);
           const customBoard = deps.sanitizeCustomBoard(data.customBoard) ?? undefined;
           const customTurn = customBoard && (data.customTurn === "W" || data.customTurn === "B") ? data.customTurn : undefined;
           const color: Color = Math.random() > 0.5 ? "W" : "B";
 
           const newRoom: Room = {
             id: roomId,
+            private: data.private === true,
             seq: 0,
             phase: "lobby",
             players: [{
-              ws, username: player.username, key: player.key, color, ready: false,
+              ws, username: player.username, key: player.key, userId: sessions.get(player.key)?.userId ?? null, color, ready: false,
               awayStrikes: 0, awayMs: 0, awaySince: null, awayForfeitTimer: null,
               disconnectedAt: null, forfeitTimer: null, graceExpired: false,
             }],
@@ -1929,6 +2163,11 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             room.players.find((p) => p.ws === ws);
 
           if (existingSeat) {
+            const other = player.roomId && player.roomId !== room.id ? rooms.get(player.roomId) : null;
+            if (other && (isLivePhase(other) || isSeriesUnderway(other)) && seatByKey(other, player.key)) {
+              sendJson(ws, { type: "room-error", error: "Finish or leave your current match before joining another game." }); return;
+            }
+            if (other) abandonRoom(player, "leave");
             attachToSeat(room, existingSeat, player);
             player.roomId = room.id;
             sendJson(ws, { type: "join-success", yourColor: existingSeat.color, roomId: room.id });
@@ -1956,12 +2195,71 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             return;
           }
 
+          if (!requirePhase(ws, room, ["lobby"], "join as a new player")) return;
+          const previousRoomId = player.roomId;
+
           // 2. If the user joining is actually the host:
           if (host.key === player.key || (player.username && isSameUser(host.username, player.username))) {
             attachToSeat(room, host, player);
             player.roomId = room.id;
             sendJson(ws, { type: "join-success", yourColor: host.color, roomId: room.id });
             sendDirect(room, ws, { ...roomInfoPayload(room), yourColor: host.color });
+            return;
+          }
+
+          // Guests can join only free, single-game rooms. Check the server
+          // quota before seating them; startRoomMatch checks again atomically.
+          if (isOnlineGuest(player.username) || room.players.some(p => isOnlineGuest(p.username))) {
+            if (room.bestOf !== 1 || (room.wagerAmount ?? 0) > 0) {
+              sendJson(ws, { type: "room-error", error: "Guests can only play free single matches. Choose a free room or sign in." });
+              return;
+            }
+          }
+          if (isOnlineGuest(player.username)) {
+            try {
+              if (!await guestHasOnlineTrial(player.username)) {
+                sendJson(ws, { type: "guest-limit-reached", mode: "online", message: "Your free online game has been used. Sign in to continue." });
+                return;
+              }
+            } catch (err) {
+              console.error("[Guest] Failed to check join entitlement", err);
+              sendJson(ws, { type: "room-error", error: "Guest online play is temporarily unavailable. Try again shortly." });
+              return;
+            }
+          }
+          if (!isLive(ws) || onlinePlayers.get(ws) !== player || player.roomId !== previousRoomId) return;
+          if (rooms.get(roomId) !== room) { sendJson(ws, { type: "room-error", error: "Room is no longer available." }); return; }
+          if (!requirePhase(ws, room, ["lobby"], "join as a new player")) return;
+
+          // Looking up an invite is a preview, never consent to leave the
+          // current room, consume a guest trial, or debit either wallet.
+          if (data.type === "join-room") {
+            if (room.players.length >= 2 && !room.players.some((p, index) => index > 0 && !isLive(p.ws))) {
+              sendJson(ws, { type: "room-error", error: "Room is already full with 2 active players." });
+              return;
+            }
+            let entryFee = 0;
+            if (deps.coinsEnabled && !isOnlineGuest(player.username) && !room.players.some(p => isOnlineGuest(p.username))) {
+              try {
+                const settings = await deps.getCoinSettings();
+                if (settings) entryFee = deps.resolveEntryFee(room, settings);
+              } catch (err) {
+                console.error("[WS] Failed to price room preview:", err);
+                sendJson(ws, { type: "room-error", error: "Match pricing is unavailable. Try again shortly." });
+                return;
+              }
+            }
+            if (!isLive(ws) || onlinePlayers.get(ws) !== player || player.roomId !== previousRoomId) return;
+            if (rooms.get(roomId) !== room || room.players[0] !== host || room.phase !== "lobby") {
+              sendJson(ws, { type: "room-error", error: "Room is no longer available." });
+              return;
+            }
+            sendJson(ws, {
+              type: "room-preview", roomId, hostName: host.username,
+              private: room.private, gameTime: room.gameTime, increment: room.incrementSec,
+              specialRule: room.specialRule, hostTime: room.hostTime, guestTime: room.guestTime,
+              wagerAmount: room.wagerAmount ?? 0, bestOf: room.bestOf, entryFee,
+            });
             return;
           }
 
@@ -1983,7 +2281,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           clearDeletionTimer(room);
           const color = otherColor(host.color);
           room.players.push({
-            ws, username: player.username, key: player.key, color, ready: true,
+            ws, username: player.username, key: player.key, userId: sessions.get(player.key)?.userId ?? null, color, ready: true,
             awayStrikes: 0, awayMs: 0, awaySince: null, awayForfeitTimer: null,
             disconnectedAt: null, forfeitTimer: null, graceExpired: false,
           });
@@ -1992,7 +2290,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           room.seriesGameNumber = 1;
           room.seriesDraws = 0;
           room.seriesOver = false;
-          room.seriesScore = {};
+          room.seriesScore = Object.create(null);
           for (const pl of room.players) room.seriesScore[pl.username] = 0;
           player.roomId = roomId;
 
@@ -2086,6 +2384,8 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             room.setupPhase = null;
             room.phase = "playing";
             room.startBoard = normalizeBoard(board); // the crowned setup IS the starting position
+            try { recordGameStartingPosition(room.gameCode, room.startBoard); }
+            catch (err) { console.error("[GameRecord] Failed to save crowned starting position:", err); }
             room.gameState.statusMessage = "Crown Crown setup complete! Clocks are active. White to play.";
             syncClock(room);
             sendToRoom(room, { type: "crown-crown-complete", gameState: room.gameState, clock: clockOf(room), phase: room.phase });
@@ -2235,6 +2535,10 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!seat) return;
           if (!requirePhase(ws, room, ["ended"], "start a new game")) return;
           if (isSeriesUnderway(room)) { sendError(ws, "game-in-progress", "The series is still in progress — the next game starts automatically."); return; }
+          if (room.players.some(p => isOnlineGuest(p.username))) {
+            sendToRoom(room, { type: "room-error", error: "The guest free online game is complete. Sign in to play another match." });
+            return;
+          }
           resetRoomForRematch(room);
           sendToRoom(room, { type: "game-reset-by-opponent", players: playersPayload(room), phase: room.phase });
           sendRoomInfo(room);
@@ -2247,10 +2551,15 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!player) return;
           const room = requireRoom(ws, player);
           if (!room) return;
+          if (room.tournamentId) { sendError(ws, "busy", "Tournament rematches are scheduled by the server."); return; }
           const seat = requireSeat(ws, room);
           if (!seat) return;
           if (!requirePhase(ws, room, ["ended"], "request a rematch")) return;
           if (isSeriesUnderway(room)) { sendError(ws, "game-in-progress", "The series is still in progress — the next game starts automatically."); return; }
+          if (room.players.some(p => isOnlineGuest(p.username))) {
+            sendToRoom(room, { type: "room-error", error: "Guests can play one free online match. Sign in before requesting a rematch." });
+            return;
+          }
           const opp = opponentOf(room, seat);
           if (!opp || !isLive(opp.ws)) { sendError(ws, "not-in-room", "Your opponent has left the room."); return; }
           if (room.pendingRematch) { sendError(ws, "busy", "A rematch request is already pending."); return; }
@@ -2279,6 +2588,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!player) return;
           const room = requireRoom(ws, player);
           if (!room) return;
+          if (room.tournamentId) { sendError(ws, "busy", "Tournament games are paired by the server."); return; }
           const seat = requireSeat(ws, room);
           if (!seat) return;
           if (!requirePhase(ws, room, ["ended"], "answer a rematch")) return;
@@ -2296,6 +2606,10 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
             return;
           }
           if (isSeriesUnderway(room)) { sendError(ws, "game-in-progress", "The series is still in progress."); return; }
+          if (room.players.some(p => isOnlineGuest(p.username))) {
+            sendToRoom(room, { type: "room-error", error: "Guests get one free online game. Sign in before playing a rematch." });
+            return;
+          }
           const previousGameCode = room.gameCode;
           resetRoomForRematch(room);
           const newGameCode = allocateGameCode(room);
@@ -2320,7 +2634,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!seat) return;
           if (!requirePhase(ws, room, ["playing"], "resign")) return;
           if (room.pendingEndOffer) { sendError(ws, "busy", "There is already an offer waiting for an answer."); return; }
-          room.pendingEndOffer = { type: "resign", fromUsername: seat.username };
+          room.pendingEndOffer = { type: "resign", fromUsername: seat.username, expiresAt: now() + 30000 };
           syncClock(room);
           sendToRoom(room, { type: "resign-requested", from: seat.username, clock: clockOf(room), phase: room.phase }, ws);
           sendClockSync(room, ws);
@@ -2377,7 +2691,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           if (!seat) return;
           if (!requirePhase(ws, room, ["playing"], "offer a draw")) return;
           if (room.pendingEndOffer) { sendError(ws, "busy", "There is already an offer waiting for an answer."); return; }
-          room.pendingEndOffer = { type: "draw", fromUsername: seat.username };
+          room.pendingEndOffer = { type: "draw", fromUsername: seat.username, expiresAt: now() + 30000 };
           syncClock(room);
           sendToRoom(room, { type: "draw-offered", from: seat.username, clock: clockOf(room), phase: room.phase }, ws);
           sendClockSync(room, ws);
@@ -2485,6 +2799,7 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
           const targetRoomId = cleanRoomCode(data.roomId);
           const room = rooms.get(targetRoomId);
           if (!room || !isLivePhase(room)) { sendJson(ws, { type: "room-error", error: "That game isn't live right now." }); return; }
+          if (room.private) { sendError(ws, "busy", "This game is private. Spectating is disabled."); return; }
           if (seatByKey(room, player.key)) { sendError(ws, "busy", "You are a player in that room — log in with your session to rejoin it."); return; }
           if (player.roomId && player.roomId !== room.id) abandonRoom(player, "switch");
           if (rooms.get(targetRoomId) !== room) { sendJson(ws, { type: "room-error", error: "That game isn't live right now." }); return; }
@@ -2502,16 +2817,18 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
         case "leave-spectate": {
           const player = requirePlayer(ws);
           if (!player) return;
+          let leftRoomId: string | null = null;
           for (const room of rooms.values()) {
             const specIdx = room.spectators.findIndex((s) => s.ws === ws || s.key === player.key);
             if (specIdx >= 0) {
+              leftRoomId = room.id;
               room.spectators.splice(specIdx, 1);
               pruneSpectators(room);
               sendRoomInfo(room);
               if (room.players.every((p) => !isLive(p.ws)) && !room.spectators.some((s) => isLive(s.ws)) && !isLivePhase(room)) armDeletionTimer(room);
             }
           }
-          player.roomId = null;
+          if (player.roomId === leftRoomId) player.roomId = null;
           sendJson(ws, { type: "left-room-success" });
           break;
         }
@@ -2559,6 +2876,76 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
     }
   });
 
+  // Restore durable seats before admitting connections. Clocks freeze during
+  // the outage; each player receives a fresh bounded reconnect window.
+  const saved = recovery.read();
+  if (saved) {
+    if (!Array.isArray(saved.rooms) || !Array.isArray(saved.sessions) || saved.rooms.length > 1000) throw new Error('Invalid saved multiplayer state');
+    restoreGuestTrials(saved.guestTrials || []);
+    for (const raw of saved.rooms) {
+      if (!/^\d{7,10}$/.test(raw.id) || !Array.isArray(raw.players) || raw.players.length > 2 || !['lobby','setup','playing','ended'].includes(raw.phase)) throw new Error('Invalid saved room');
+      const room = raw as Room;
+      if (room.gameState?.board && room.phase !== 'setup') {
+        const replay = replayForAnalysis(room.gameState.moveHistory, room.startBoard, room.startTurn);
+        const board = replay.boards.at(-1)!;
+        if (JSON.stringify(normalizeBoard(board)) !== JSON.stringify(normalizeBoard(room.gameState.board)) || replay.turns.at(-1) !== room.gameState.turn) throw new Error('Saved room history does not match its board');
+      }
+      if (room.clock) {
+        for (const value of [room.clock.whiteMs, room.clock.blackMs, room.clock.turnStartedAt, room.clock.incrementMs]) if (!Number.isFinite(value) || value < 0) throw new Error('Invalid saved clock');
+        // The snapshot stores a wall-clock turn anchor. Bound elapsed to the
+        // last persisted event by saving remaining time during checkpoint.
+        room.clock.running = null;
+      }
+      room.flagTimer = room.deletionTimer = room.seriesNextGameTimer = null;
+      room.starting = room.potSettling = false;
+      room.spectators = []; // spectators must explicitly re-authorize discovery
+      for (const seat of room.players) {
+        seat.ws = null; seat.forfeitTimer = seat.awayForfeitTimer = null;
+        seat.disconnectedAt = now(); seat.awaySince = null; seat.graceExpired = false;
+      }
+      if (room.pendingEndOffer && !room.pendingEndOffer.expiresAt) room.pendingEndOffer.expiresAt = now() + 30000;
+      rooms.set(room.id, room);
+    }
+    sessions.restore(saved.sessions);
+    for (const session of sessions.snapshot()) {
+      const live = sessions.get(session.key)!;
+      if (live.userId) { const bound = userSessions.get(live.userId) || new Set<Session>(); bound.add(live); userSessions.set(live.userId, bound); }
+    }
+    for (const room of rooms.values()) {
+      if (room.awaitingFirstJoin) { /* Unclaimed pairings wait for the first competitor. */ }
+      else if (isLivePhase(room) || isSeriesUnderway(room)) for (const seat of room.players) {
+        seat.forfeitTimer = setTimeout(() => safeTimer('restart grace', () => onGraceExpired(room, seat)), 120_000);
+      } else armDeletionTimer(room);
+      if (room.terminalResult) {
+        const result = room.terminalResult;
+        const white = room.players.find(p => p.color === 'W')?.username || '';
+        const black = room.players.find(p => p.color === 'B')?.username || '';
+        void recordGameEnd({ gameCode: room.gameCode, completeMoveHistory: room.gameState?.moveHistory || [], currentPosition: room.gameState?.board, currentTurn: room.gameState?.turn, startingPosition: room.startBoard, startingTurn: room.startTurn, private: room.private, participantUserIds: room.players.flatMap(p => p.userId ? [p.userId] : []), winnerColor: result.winnerColor, winnerUsername: result.isDraw ? null : result.winnerColor === 'W' ? white : black, loserUsername: result.isDraw ? null : result.winnerColor === 'W' ? black : white, isDraw: result.isDraw, finalResult: result.isDraw ? '½–½' : result.winnerColor === 'W' ? '1–0' : '0–1', resultReason: result.reason }).catch(error => console.error('[Recovery] Terminal sync pending', error));
+        if (deps.onGameCompleted) void Promise.resolve().then(() => deps.onGameCompleted!({ gameCode: room.gameCode, white, black, winner: result.winnerColor, draw: result.isDraw, roomId: room.id, tournamentId: room.tournamentId })).catch(error => console.error('[Recovery] Tournament sync pending', error));
+        if (room.bestOf <= 1) settleWithRetry(room, result, 'restart recovery');
+        else if (room.seriesOver) {
+          const ranked = room.players.slice().sort((a,b) => (room.seriesScore[b.username] || 0) - (room.seriesScore[a.username] || 0));
+          const tied = !ranked[1] || room.seriesScore[ranked[0].username] === room.seriesScore[ranked[1].username];
+          settleWithRetry(room, { isDraw: tied, winnerColor: tied ? null : ranked[0].color }, 'restart series recovery');
+        }
+      }
+    }
+    console.log(`[WS] Restored ${rooms.size} durable rooms; clocks await reconnection.`);
+  }
+
+  const recoveryHeartbeat = setInterval(() => safeTimer("durable clock", () => {
+    for (const room of rooms.values()) {
+      const offer = room.pendingEndOffer;
+      if (offer?.expiresAt && now() >= offer.expiresAt) {
+        room.pendingEndOffer = null;
+        syncClock(room);
+        sendToRoom(room, { type: offer.type === 'draw' ? 'draw-cancelled' : 'resign-cancelled', from: offer.fromUsername, expired: true, clock: clockOf(room), phase: room.phase });
+      }
+    }
+    checkpoint(true);
+  }), 1000);
+  recoveryHeartbeat.unref();
+
   // Periodic WebSocket heartbeat every 20s to prune dead/stale connections safely
   const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((wsClient: any) => {
@@ -2577,16 +2964,66 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   }, 20000);
 
   wss.on("close", () => {
-    clearInterval(heartbeatInterval);
+    shutdown();
   });
+
+  /** Stop transport timers on process shutdown without adjudicating games. */
+  function shutdown(): void {
+    if (shuttingDown) return;
+    checkpoint(true);
+    shuttingDown = true;
+    clearInterval(heartbeatInterval);
+    clearInterval(recoveryHeartbeat);
+    onlineUsersBroadcast.cancel();
+    openRoomsBroadcast.cancel();
+    for (const room of rooms.values()) {
+      clearFlagTimer(room);
+      if (room.seriesNextGameTimer) clearTimeout(room.seriesNextGameTimer);
+      if (room.deletionTimer) clearTimeout(room.deletionTimer);
+      for (const seat of room.players) clearSeatTimers(seat);
+    }
+    for (const call of activeCalls.values()) if (call.timer) clearTimeout(call.timer);
+    for (const timer of callDisconnectTimers.values()) clearTimeout(timer);
+    for (const buffer of signalBuffers.values()) clearTimeout(buffer.timer);
+    sessions.dispose();
+    userSessions.clear();
+    onlinePlayers.clear();
+    rooms.clear();
+    recovery.close();
+    activeCalls.clear();
+    callDisconnectTimers.clear();
+    signalBuffers.clear();
+    for (const ws of wss.clients) {
+      try { ws.close(1012, "server restarting"); } catch { /* caller owns deadline termination */ }
+    }
+  }
 
   console.log(`[WS] Online play attached (maxPayload ${MAX_WS_PAYLOAD_BYTES} bytes, coins ${deps.coinsEnabled && supabaseConfigured() ? "enabled" : "disabled — no SUPABASE_SECRET_KEY"}).`);
 
+  function ensureTournamentRoom(spec: { id: string; tournamentId: string; matchId: string; white: { username: string; uid: string }; black: { username: string; uid: string }; private: boolean; minutes: number; specialRule: string }): void {
+    const existing = rooms.get(spec.id);
+    if (existing) { if (existing.tournamentId !== spec.tournamentId || existing.tournamentMatchId !== spec.matchId) throw new Error('Room identity conflict'); return; }
+    if (rooms.size >= 1000) throw new Error('Game server room capacity reached');
+    if (!/^\d{7,10}$/.test(spec.id) || spec.white.username.toLowerCase() === spec.black.username.toLowerCase()) throw new Error('Invalid tournament room');
+    const seat = (player: { username: string; uid: string }, color: Color): Seat => ({ ws: null, username: player.username, key: keyOf(player.username), userId: player.uid, color, ready: true, awayStrikes: 0, awayMs: 0, awaySince: null, awayForfeitTimer: null, disconnectedAt: now(), forfeitTimer: null, graceExpired: false });
+    const room: Room = { id: spec.id, tournamentId: spec.tournamentId, tournamentMatchId: spec.matchId, awaitingFirstJoin: true, private: spec.private, seq: 0, phase: 'lobby', players: [seat(spec.white,'W'),seat(spec.black,'B')], spectators: [], gameState: null, started: false,
+      clockLimitType: clockLimitTypeFor(spec.minutes), clock: untimedClock(), flagTimer: null, incrementSec: 0, startBoard: null, startTurn: 'W', deletionTimer: null, gameTime: spec.minutes, specialRule: spec.specialRule as SpecialRule,
+      hostTime: spec.minutes, guestTime: spec.minutes, creator: spec.white.username, bestOf: 1, seriesGameNumber: 1, seriesScore: {}, seriesDraws: 0, seriesOver: false, seriesNextGameTimer: null, setupPhase: null,
+      feesCharged: true, potSettled: true, potSettling: false, potId: spec.id, starting: false, resultRecorded: false, gamesStarted: 0, pendingEndOffer: null, previousGameCode: null, gameCode: spec.id, seriesId: 'tournament:'+spec.tournamentId, gameStartTime: 0, pendingRematch: null, chatTail: [] };
+    rooms.set(room.id, room);beginGame(room, room.id, 'Tournament: ');
+    checkpoint();
+  }
+
   return {
     wss,
+    ensureTournamentRoom,
+    shutdown,
+    revokeUser,
     /** Live room map (read-only use: /api/games/next-code avoids codes of live rooms). */
     rooms: rooms as ReadonlyMap<string, unknown> as Map<string, unknown>,
     /** Test/diagnostic hooks -- not used by the app itself. */
+    checkpoint,
+    storageHealthy: () => !storageFailed,
     stats: () => ({ players: onlinePlayers.size, rooms: rooms.size, sessions: sessions.size, calls: activeCalls.size }),
   };
 }

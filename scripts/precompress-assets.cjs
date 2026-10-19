@@ -1,0 +1,41 @@
+// Build-time Brotli + gzip compression. Both the Go edge and Node static
+// server can serve these files without doing compression on a live request.
+const fs = require('node:fs');
+const path = require('node:path');
+const { gzipSync, brotliCompressSync, constants } = require('node:zlib');
+const root = process.env.KENTRO_DIST_DIR || path.resolve(__dirname, '..', 'dist');
+const counts = { gzip: 0, brotli: 0 };
+function walk(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) { walk(file); continue; }
+    if (!entry.isFile()) continue;
+    // A repeated build may remove a source asset without cleaning dist first.
+    if (/\.(?:js|css|html|json|svg|txt|wasm)\.(?:gz|br)$/.test(entry.name)) {
+      if (!fs.existsSync(file.replace(/\.(?:gz|br)$/, ''))) fs.rmSync(file);
+      continue;
+    }
+    if (!/\.(?:js|css|html|json|svg|txt|wasm)$/.test(entry.name)) continue;
+    const data = fs.readFileSync(file);
+    if (data.length < 1024) {
+      for (const ext of ['.gz', '.br']) fs.rmSync(file + ext, { force: true });
+      continue;
+    }
+    const variants = [
+      ['gzip', '.gz', gzipSync(data, { level: 8 })],
+      ['brotli', '.br', brotliCompressSync(data, { params: { [constants.BROTLI_PARAM_QUALITY]: 9 } })],
+    ];
+    for (const [name, ext, compressed] of variants) {
+      if (compressed.length < data.length) {
+        fs.writeFileSync(file + ext, compressed);
+        counts[name]++;
+      } else {
+        // Never serve compressed bytes from an earlier, different source.
+        fs.rmSync(file + ext, { force: true });
+      }
+    }
+  }
+}
+if (!fs.existsSync(root)) throw new Error('dist missing; run npm run build first');
+walk(root);
+console.log(`[Kentro] Precompressed ${counts.gzip} gzip and ${counts.brotli} Brotli files at build time`);

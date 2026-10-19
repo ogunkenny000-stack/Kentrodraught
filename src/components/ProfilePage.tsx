@@ -15,29 +15,6 @@ interface ProfilePageProps {
   onSignOut?: () => void;
 }
 
-function useComingSoonCountdown(key: string) {
-  const [remaining, setRemaining] = useState("");
-  useEffect(() => {
-    const storageKey = `kentro_coming_soon_v10_${key}`;
-    let target = localStorage.getItem(storageKey);
-    if (!target) {
-      target = String(Date.now() + 10 * 24 * 60 * 60 * 1000);
-      localStorage.setItem(storageKey, target);
-    }
-    const targetMs = parseInt(target, 10);
-    const tick = () => {
-      const diff = Math.max(0, targetMs - Date.now());
-      const days = Math.floor(diff / 86400000);
-      const hours = Math.floor((diff % 86400000) / 3600000);
-      setRemaining(diff <= 0 ? "Coming very soon" : `${days}d ${hours}h`);
-    };
-    tick();
-    const interval = setInterval(tick, 60_000);
-    return () => clearInterval(interval);
-  }, [key]);
-  return remaining;
-}
-
 export function ProfilePage({ username, profileStats, coinBalance, memberSince, onClose, onSaveAvatar, onSignOut }: ProfilePageProps) {
   const [lifetimeCoinsPurchased, setLifetimeCoinsPurchased] = useState<number | null>(null);
   const [loadingWallet, setLoadingWallet] = useState(true);
@@ -86,7 +63,6 @@ export function ProfilePage({ username, profileStats, coinBalance, memberSince, 
       setAvatarBusy(false);
     }
   };
-  const withdrawCountdown = useComingSoonCountdown("withdrawals");
 
   useEffect(() => {
     let cancelled = false;
@@ -109,9 +85,9 @@ export function ProfilePage({ username, profileStats, coinBalance, memberSince, 
     : null;
 
   return (
-    <div className="fixed inset-0 bg-slate-950/95 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label="Player profile" className="k-profile-overlay fixed inset-0 bg-slate-950/95 z-50 flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-5 relative my-4">
-        <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 transition">
+        <button onClick={onClose} aria-label="Close profile" className="absolute top-4 right-4 text-slate-500 hover:text-slate-300 transition">
           <X className="w-5 h-5" />
         </button>
 
@@ -214,7 +190,7 @@ export function ProfilePage({ username, profileStats, coinBalance, memberSince, 
             <span className="text-[11px] text-slate-400 font-sans flex items-center gap-1.5">
               <Banknote className="w-3.5 h-3.5 text-slate-500" /> Total Withdrawn
             </span>
-            <span className="text-[10px] font-bold text-amber-400 font-sans">Instant Transfers</span>
+            <span className="text-[10px] font-bold text-slate-400 font-sans">Unavailable</span>
           </div>
         </div>
 

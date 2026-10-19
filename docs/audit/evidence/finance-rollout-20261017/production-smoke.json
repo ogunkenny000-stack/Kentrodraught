@@ -1,0 +1,28 @@
+{
+  "mode": "local production bundle without hosted credentials",
+  "checks": [
+    {
+      "route": "/api/health",
+      "status": 200
+    },
+    {
+      "route": "/api/coins/settings",
+      "status": 200
+    },
+    {
+      "route": "/api/coins/wallet/alice",
+      "status": 503
+    },
+    {
+      "route": "/",
+      "status": 200
+    },
+    {
+      "route": "/server.cjs",
+      "status": 404
+    }
+  ],
+  "productionAcceptance": false,
+  "status": "PASS",
+  "checkedAt": "2026-10-18T05:44:41.141Z"
+}

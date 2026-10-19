@@ -1,0 +1,215 @@
+
+> kentro-draughts@0.0.0 test:multiplayer
+> tsx scripts/audit/multiplayer-smoke.ts
+
+[GameRecords] Initialized with sequence #1, 0 records, 0 series.
+[WS] Online play attached (maxPayload 65536 bytes, coins disabled — no SUPABASE_SECRET_KEY).
+Disposable WebSocket fixture: no hosted authentication, wallets, database or media transport.
+[WS] New client connected
+[WS] Player logged in: smokeA2572
+  ✓ smokeA2572: login-success carries a 32-hex sessionToken
+  ✓ smokeA2572: login-success carries serverNow
+[WS] New client connected
+[WS] Player logged in: smokeB2572
+  ✓ smokeB2572: login-success carries a 32-hex sessionToken
+  ✓ smokeB2572: login-success carries serverNow
+
+== 1. Room creation with wager + Best of 3 ==
+[WS] Room 26100001 created by smokeA2572 (Settings: 5m, none, best of 3)
+  ✓ room code created: 26100001
+  ✓ room-info carries bestOf=3
+  ✓ series starts at game 1
+  ✓ room-info carries phase, seq and clock
+  ✓ clockLimitType derived from gameTime (5 min = Blitz)
+
+== 2. Join preview shows the match terms ==
+  ✓ preview references the right room
+  ✓ preview shows Best of 3
+  ✓ preview shows FREE entry (wager 0)
+
+== 3. Accept -> game 1 starts ==
+[WS] Room 26100001: game 26100001 started (playing, smokeA2572 vs smokeB2572, series game 1/3).
+  ✓ game 1 labelled: "Game 1 of 3: Multiplayer game started! White to play."
+  ✓ both players received the starting board
+  ✓ game-started carries phase=playing and a running server clock (White, 300000 ms)
+  ✓ legacy whiteTime/blackTime seconds derived from the clock
+  ✓ colors assigned: A=W, B=B
+
+== 4. Legal moves relay both ways; client clock values are ignored ==
+[WS] Player smokeB2572 joined room 26100001 as B
+  ✓ turn passed to Black after White's move
+  ✓ move-made ignores client clock (whiteTime=300), clock now runs for Black, seq=5
+  ✓ second move relayed with moveIndex 2
+
+== 5. Chat + emoji relay ==
+  ✓ chat relayed with sender name
+  ✓ emoji relayed with sender only (no arbitrary fields)
+
+== 6. Draw offer -> accept = drawn series game, series continues ==
+  ✓ clock pauses while a draw offer is pending
+  ✓ game-ended carries phase=ended and clock
+[GameRecords] SUPABASE_SECRET_KEY not set -- game records are kept locally only.
+  ✓ draw counted as a played series game
+  ✓ series continues after a draw
+  ✓ next game scheduled automatically
+
+== 7. Auto-start of game 2 with colors SWAPPED ==
+[WS] Room 26100001: game 26100002 started (playing, smokeB2572 vs smokeA2572, series game 2/3).
+  ✓ A's color swapped to B
+  ✓ B's color swapped to W
+  ✓ series game 2 has its own game code (26100002)
+
+== 8. Resign game 2 (two-party) -> score 1-0, game 3 auto-starts; NO Supabase keys ==
+  ✓ A leads 1-0 (draws 1)
+  ✓ series not over at 1-0 in Bo3 with a draw used
+[WS] Room 26100001: game 26100003 started (playing, smokeA2572 vs smokeB2572, series game 3/3).
+
+== 9. Resign game 3 -> A wins the series 2-0 ==
+  ✓ series winner announced: smokeA2572
+  ✓ final score 2 wins for A
+
+== 10. game-reset (phase ended) resets the series to the lobby ==
+  ✓ series score wiped for the rematch
+  ✓ room is back in the lobby phase
+
+== 11. Leave-room works cleanly post-series ==
+  ✓ leaver acknowledged and opponent notified
+[WS] Room 26100001 deleted.
+
+== 12. Mid-game exit forfeits (single game room) ==
+[WS] Room 26100004 created by smokeA2572 (Settings: 5m, none, best of 1)
+[WS] Room 26100004: game 26100004 started (playing, smokeA2572 vs smokeB2572).
+[WS] Player smokeB2572 joined room 26100004 as B
+  ✓ the staying player is awarded the win on abandonment
+
+== 13. Live-rooms list + spectate ==
+[WS] Room 26100004 deleted.
+[WS] Room 26100005 created by smokeA2572 (Settings: 5m, none, best of 1)
+[WS] Room 26100005: game 26100005 started (playing, smokeA2572 vs smokeB2572).
+[WS] Player smokeB2572 joined room 26100005 as B
+[WS] New client connected
+[WS] Player logged in: smokeS2572
+  ✓ smokeS2572: login-success carries a 32-hex sessionToken
+  ✓ smokeS2572: login-success carries serverNow
+  ✓ live game appears in the live-rooms list
+  ✓ spectator receives the live board with clock/phase/seq
+  ✓ spectator receives live moves in real time
+[WS] Player disconnected: smokeS2572
+[WS] New client connected
+[WS] Player logged in: smokeS2572 (session resumed)
+  ✓ smokeS2572: login-success carries a 32-hex sessionToken
+  ✓ smokeS2572: login-success carries serverNow
+  ✓ spectator token reconnect restores the full public game without another watch request
+  ✓ spectator cannot submit player moves
+
+== 14. Sessions: duplicate name refused without token, takeover with token ==
+[WS] New client connected
+  ✓ second login with the same name and no token -> error name-taken
+[WS] New client connected
+[WS] Player logged in: smokeA2572 (session resumed)
+  ✓ login with the matching token succeeds and reuses the token
+  ✓ old socket received session-replaced
+  ✓ room-rejoined carries roomId/phase/seq/clock/yourColor (W)
+[WS] Player reconnected: smokeA2572 -> room 26100005 (playing)
+  ✓ room-rejoined carries chatTail, pendingOffer and opponentConnected
+
+== 15. Reconnect mid-game after a dropped socket (token) ==
+[WS] Player disconnected: smokeB2572
+  ✓ clock pauses while the opponent is in disconnect grace
+[WS] New client connected
+[WS] Player logged in: smokeB2572 (session resumed)
+  ✓ smokeB2572: login-success carries a 32-hex sessionToken
+  ✓ smokeB2572: login-success carries serverNow
+[WS] Player reconnected: smokeB2572 -> room 26100005 (playing)
+  ✓ reconnecting player gets the full room state back
+  ✓ clock resumes for the side to move after reconnect
+
+== 16. game-reset during playing is refused ==
+  ✓ error { code: game-in-progress } returned
+
+== 17. Spectator leave-room is treated as leave-spectate ==
+  ✓ the game continued untouched after the spectator left
+
+== 18. Resign (two-party) ends a single game without Supabase keys ==
+  ✓ resignation awards the game to the opponent
+[WS] Room 26100005 deleted.
+
+== 19. Server-authoritative flag: 3-second clock ends with reason timeout ==
+[WS] Room 26100006 created by smokeA2572 (Settings: 0.05m, none, best of 1)
+[WS] Room 26100006: game 26100006 started (playing, smokeB2572 vs smokeA2572).
+  ✓ 3 s clock starts running for White
+[WS] Player smokeB2572 joined room 26100006 as W
+  ✓ White flagged: Black wins on time, clock shows 0 ms
+
+== 20. Rematch flow: request -> decline, request -> accept (colors swapped) ==
+  ✓ decline relayed to the requester
+[WS] Room 26100006: game 26100007 started (playing, smokeA2572 vs smokeB2572).
+  ✓ rematch gets a fresh game code (26100007)
+  ✓ colors swapped for the rematch
+  ✓ rematch game started with a running clock
+[WS] Room 26100006 deleted.
+
+== 21. ping -> pong ==
+  ✓ pong echoes t and carries serverNow
+
+== 22. Malformed / illegal moves never crash the server ==
+[WS] Room 26100008 created by smokeA2572 (Settings: 5m, none, best of 1)
+[WS] Room 26100008: game 26100008 started (playing, smokeB2572 vs smokeA2572).
+[WS] Player smokeB2572 joined room 26100008 as W
+  ✓ move with a malformed shape -> error invalid-payload
+  ✓ illegal move without caps -> move-rejected with full gameState
+  ✓ out-of-turn move -> move-rejected not-your-turn
+  ✓ a legal move still relays afterwards (server alive)
+  ✓ resync returns full state with clock/phase/seq
+
+== 23. Calls: relay between the two players, call-busy for a third party ==
+[WS] New client connected
+[WS] Player logged in: smokeC2572
+  ✓ smokeC2572: login-success carries a 32-hex sessionToken
+  ✓ smokeC2572: login-success carries serverNow
+  ✓ call-request relayed to the room opponent
+  ✓ third party calling a busy user gets call-busy
+  ✓ call-end relayed with reason
+  ✓ lounge user cannot call a seated player (call-unavailable)
+[WS] Room 26100008 deleted.
+
+== 24. Flooding gets an explicit rate-limited error ==
+  ✓ error { code: rate-limited } returned instead of a silent drop
+
+== 25. Guests receive exactly one free online game ==
+[WS] New client connected
+  ✓ KGuest_7ce1ef7946f08e8e3807: login-success carries a 32-hex sessionToken
+  ✓ KGuest_7ce1ef7946f08e8e3807: login-success carries serverNow
+[WS] Player logged in: KGuest_7ce1ef7946f08e8e3807
+[WS] Room 26100009 created by smokeA2572 (Settings: 5m, none, best of 1)
+[WS] Room 26100009: game 26100009 started (playing, KGuest_7ce1ef7946f08e8e3807 vs smokeA2572).
+  ✓ guest joins and starts a free single game
+[WS] Player KGuest_7ce1ef7946f08e8e3807 joined room 26100009 as W
+[WS] Room 26100009 deleted.
+  ✓ guest cannot create another game or play a rematch after completion
+
+== 26. Private rooms never appear in discovery and cannot be watched by code ==
+[WS] New client connected
+[WS] Player disconnected: KGuest_7ce1ef7946f08e8e3807
+  ✓ smokePrivate2572: login-success carries a 32-hex sessionToken
+  ✓ smokePrivate2572: login-success carries serverNow
+[WS] Player logged in: smokePrivate2572
+[WS] Room 26100010 created by smokeA2572 (Settings: 5m, none, best of 1)
+[WS] Room 26100010: game 26100010 started (playing, smokeB2572 vs smokeA2572).
+  ✓ both players receive the private game flag
+[WS] Player smokeB2572 joined room 26100010 as W
+  ✓ private match is absent from Kentro TV discovery
+  ✓ knowing a private room code does not permit spectating
+  ✓ unauthorized socket cannot fetch private game state through resync
+[WS] Room 26100010 deleted.
+
+✅ ALL PVP SMOKE TESTS PASSED
+
+[WS] Player disconnected: smokeC2572
+[WS] Player disconnected: smokeA2572
+[WS] Player disconnected: smokePrivate2572
+npm notice
+npm notice New major version of npm available! 11.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice

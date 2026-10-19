@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { LucideIcon, ArrowLeft } from "lucide-react";
 
 interface ComingSoonPaneProps {
@@ -9,32 +9,7 @@ interface ComingSoonPaneProps {
   onBackToHome?: () => void;
 }
 
-function useComingSoonCountdown(key: string) {
-  const [remaining, setRemaining] = useState("");
-  useEffect(() => {
-    const storageKey = `kentro_coming_soon_v10_${key}`;
-    let target = localStorage.getItem(storageKey);
-    if (!target) {
-      target = String(Date.now() + 10 * 24 * 60 * 60 * 1000);
-      localStorage.setItem(storageKey, target);
-    }
-    const targetMs = parseInt(target, 10);
-    const tick = () => {
-      const diff = Math.max(0, targetMs - Date.now());
-      const days = Math.floor(diff / 86400000);
-      const hours = Math.floor((diff % 86400000) / 3600000);
-      const mins = Math.floor((diff % 3600000) / 60000);
-      setRemaining(diff <= 0 ? "Coming very soon" : `${days}d ${hours}h ${mins}m`);
-    };
-    tick();
-    const interval = setInterval(tick, 60_000);
-    return () => clearInterval(interval);
-  }, [key]);
-  return remaining;
-}
-
 export function ComingSoonPane({ icon: Icon, title, description, featureKey, onBackToHome }: ComingSoonPaneProps) {
-  const countdown = useComingSoonCountdown(featureKey);
   return (
     <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] p-6 relative">
       {onBackToHome && (
@@ -53,7 +28,7 @@ export function ComingSoonPane({ icon: Icon, title, description, featureKey, onB
         <h2 className="text-lg font-extrabold text-white font-sans">{title}</h2>
         <p className="text-xs text-slate-500 font-sans leading-relaxed">{description}</p>
         <div className="mt-2 bg-slate-900 border border-amber-500/30 rounded-full px-4 py-1.5 text-xs font-bold text-amber-400 font-sans">
-          {countdown}
+          In development
         </div>
         {onBackToHome && (
           <button

@@ -1,8 +1,30 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X } from "lucide-react";
 import { MenuSidebar } from "../MenuSidebar";
 import { PlayMode, BoardTheme } from "../../types";
+import { isTopmostDialog } from "../../lib/dialogFocus";
+
+function useDrawerFocus(open: boolean, ref: { current: HTMLDivElement | null }) {
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => ref.current?.focus());
+    const onTab = (event: KeyboardEvent) => {
+      const panel = ref.current;
+      if (!panel || event.key !== "Tab") return;
+      if (!isTopmostDialog(panel)) return;
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),[tabindex]:not([tabindex="-1"])'))
+        .filter(element => element.getClientRects().length > 0 && element.tabIndex >= 0);
+      if (!controls.length) { event.preventDefault(); panel.focus(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onTab);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("keydown", onTab); previous?.focus(); };
+  }, [open, ref]);
+}
 
 export interface MobileDrawersProps {
   isLeftDrawerOpen: boolean;
@@ -11,9 +33,9 @@ export interface MobileDrawersProps {
   setIsRightDrawerOpen: React.Dispatch<React.SetStateAction<boolean>>;
   playMode: PlayMode;
   handleModeChange: (mode: PlayMode) => void;
-  setShowFriendsPage: React.Dispatch<React.SetStateAction<boolean>>;
-  setShowProfilePage: React.Dispatch<React.SetStateAction<boolean>>;
-  setShowPurchaseModal: React.Dispatch<React.SetStateAction<boolean>>;
+  onOpenFriends: () => void;
+  onOpenProfile: () => void;
+  onOpenStore: () => void;
   setShowPlayerDirectory: React.Dispatch<React.SetStateAction<boolean>>;
   fetchPlayersDirectory: () => void;
   unreadLoungeCount: number;
@@ -26,6 +48,7 @@ export interface MobileDrawersProps {
   setClockLimitType: React.Dispatch<React.SetStateAction<"Blitz" | "Rapid" | "Classical" | "Untimed">>;
   kenLevelId: number;
   setKenLevelId: React.Dispatch<React.SetStateAction<number>>;
+  onSelectKenLevel?: (id: number) => void;
   boardScale: number;
   setBoardScale: React.Dispatch<React.SetStateAction<number>>;
   /** Arena Desk content for the right drawer */
@@ -38,14 +61,29 @@ export interface MobileDrawersProps {
  * device safe areas so nothing hides behind Android gesture bars.
  */
 export function MobileDrawers(props: MobileDrawersProps) {
+  const leftRef = useRef<HTMLDivElement>(null);
+  const rightRef = useRef<HTMLDivElement>(null);
+  useDrawerFocus(props.isLeftDrawerOpen, leftRef);
+  useDrawerFocus(props.isRightDrawerOpen, rightRef);
   const {
     isLeftDrawerOpen, setIsLeftDrawerOpen, isRightDrawerOpen, setIsRightDrawerOpen,
-    playMode, handleModeChange, setShowFriendsPage, setShowProfilePage,
-    setShowPurchaseModal, setShowPlayerDirectory, fetchPlayersDirectory,
+    playMode, handleModeChange, onOpenFriends, onOpenProfile,
+    onOpenStore, setShowPlayerDirectory, fetchPlayersDirectory,
     unreadLoungeCount, muted, setMuted, setShowRules,
     boardTheme, setBoardTheme, clockLimitType, setClockLimitType,
-    kenLevelId, setKenLevelId, boardScale, setBoardScale, sidebarContent,
+    kenLevelId, setKenLevelId, onSelectKenLevel, boardScale, setBoardScale, sidebarContent,
   } = props;
+
+  useEffect(() => {
+    if (!isLeftDrawerOpen && !isRightDrawerOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (leftRef.current && isTopmostDialog(leftRef.current)) setIsLeftDrawerOpen(false);
+      else if (rightRef.current && isTopmostDialog(rightRef.current)) setIsRightDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [isLeftDrawerOpen, isRightDrawerOpen, setIsLeftDrawerOpen, setIsRightDrawerOpen]);
 
   return (
     <>
@@ -57,18 +95,22 @@ export function MobileDrawers(props: MobileDrawersProps) {
             onClick={() => setIsLeftDrawerOpen(false)}
           >
             <motion.div
+              ref={leftRef}
+              tabIndex={-1}
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="w-80 max-w-[85vw] h-full bg-[#070913] border-r border-slate-800 flex flex-col shadow-2xl relative"
+              role="dialog" aria-modal="true" aria-label="Navigation menu"
+              className="k-drawer-panel w-80 max-w-[85vw] h-full bg-[#070913] border-r border-slate-800 flex flex-col shadow-2xl relative"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drawer header close button */}
               <div className="flex justify-between items-center p-4 pt-[max(1rem,env(safe-area-inset-top))] border-b border-slate-900 shrink-0 bg-slate-950/50">
-                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Game Controls</span>
+                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Navigation</span>
                 <button
                   onClick={() => setIsLeftDrawerOpen(false)}
+                  aria-label="Close navigation"
                   className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -84,9 +126,9 @@ export function MobileDrawers(props: MobileDrawersProps) {
                     handleModeChange(mode);
                     setIsLeftDrawerOpen(false); // Auto-close on selection
                   }}
-                  onOpenFriends={() => { setShowFriendsPage(true); setIsLeftDrawerOpen(false); }}
-                  onOpenProfile={() => { setShowProfilePage(true); setIsLeftDrawerOpen(false); }}
-                  onOpenStore={() => { setShowPurchaseModal(true); setIsLeftDrawerOpen(false); }}
+                  onOpenFriends={() => { onOpenFriends(); setIsLeftDrawerOpen(false); }}
+                  onOpenProfile={() => { onOpenProfile(); setIsLeftDrawerOpen(false); }}
+                  onOpenStore={() => { onOpenStore(); setIsLeftDrawerOpen(false); }}
                   onOpenPlayers={() => { setShowPlayerDirectory(true); fetchPlayersDirectory(); setIsLeftDrawerOpen(false); }}
                   unreadLoungeCount={unreadLoungeCount}
                   muted={muted}
@@ -100,7 +142,7 @@ export function MobileDrawers(props: MobileDrawersProps) {
                   clockLimitType={clockLimitType}
                   onSelectClockLimit={setClockLimitType}
                   kenLevelId={kenLevelId}
-                  onSelectKenLevel={setKenLevelId}
+                  onSelectKenLevel={onSelectKenLevel || setKenLevelId}
                   boardScale={boardScale}
                   onSelectBoardScale={setBoardScale}
                 />
@@ -118,18 +160,22 @@ export function MobileDrawers(props: MobileDrawersProps) {
             onClick={() => setIsRightDrawerOpen(false)}
           >
             <motion.div
+              ref={rightRef}
+              tabIndex={-1}
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="w-80 max-w-[85vw] h-full bg-[#070913] border-l border-slate-800 flex flex-col shadow-2xl ml-auto relative"
+              role="dialog" aria-modal="true" aria-label="Match details"
+              className="k-drawer-panel w-80 max-w-[85vw] h-full bg-[#070913] border-l border-slate-800 flex flex-col shadow-2xl ml-auto relative"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drawer header close button */}
               <div className="flex justify-between items-center p-4 pt-[max(1rem,env(safe-area-inset-top))] border-b border-slate-900 shrink-0 bg-slate-950/50">
-                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Desk & Scorecard</span>
+                <span className="text-xs font-black uppercase tracking-wider text-slate-300">Match details</span>
                 <button
                   onClick={() => setIsRightDrawerOpen(false)}
+                  aria-label="Close match details"
                   className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />

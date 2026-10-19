@@ -1,0 +1,6 @@
+
+> kentro-draughts@0.0.0 test:perf
+> node scripts/performance-smoke.cjs && node --experimental-strip-types scripts/engine-mutex-smoke.mjs
+
+Startup + nearby caching: PASS (TV remains lazy); gzip + Brotli byte-perfect: PASS (raw 33000, gzip 142, Brotli 34)
+Engine queue: cancellation, bounded pressure, prioritization and release: PASS

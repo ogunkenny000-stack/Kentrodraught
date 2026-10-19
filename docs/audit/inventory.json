@@ -1,0 +1,775 @@
+{
+  "generatedAt": "2026-10-15T11:55:12.811Z",
+  "branch": "codex-audit-recovery-20261014",
+  "sourceHead": "cf900f3c7c043f1ae2fa17e4603687d67e074a06",
+  "components": [
+    "src/components/BestMoveArrow.tsx",
+    "src/components/ChessClock.tsx",
+    "src/components/ComingSoonPane.tsx",
+    "src/components/EnginePanel.tsx",
+    "src/components/ErrorBoundary.tsx",
+    "src/components/EvaluationBar.tsx",
+    "src/components/FriendsPage.tsx",
+    "src/components/GlobalChatLounge.tsx",
+    "src/components/HomeLobby.tsx",
+    "src/components/InstallAppCard.tsx",
+    "src/components/KentroTV.tsx",
+    "src/components/LobbyDashboard.tsx",
+    "src/components/MatchResultPair.tsx",
+    "src/components/MenuSidebar.tsx",
+    "src/components/NotificationCenter.tsx",
+    "src/components/OpeningExplorer.tsx",
+    "src/components/ProfilePage.tsx",
+    "src/components/TournamentDashboard.tsx",
+    "src/components/admin/AdminUserProfileModal.tsx",
+    "src/components/admin/GamesTab.tsx",
+    "src/components/admin/Ken8TrainingLabTab.tsx",
+    "src/components/admin/ModerationTab.tsx",
+    "src/components/admin/PuzzleCreatorTab.tsx",
+    "src/components/admin/TournamentsTab.tsx",
+    "src/components/game/FloatingVideoCall.tsx",
+    "src/components/game/GameScreen.tsx",
+    "src/components/game/MobileBoardDock.tsx",
+    "src/components/game/NetworkQualityBadge.tsx",
+    "src/components/game/OfflineNearby.tsx",
+    "src/components/layout/MobileDrawers.tsx",
+    "src/components/layout/MobileTabBar.tsx",
+    "src/components/layout/TopNav.tsx",
+    "src/components/lounge/ChatArea.tsx",
+    "src/components/lounge/ConversationList.tsx",
+    "src/components/lounge/CreateGroupModal.tsx",
+    "src/components/lounge/ForwardModal.tsx",
+    "src/components/lounge/GroupInfoModal.tsx",
+    "src/components/lounge/LoungeHeader.tsx",
+    "src/components/lounge/NewChatModal.tsx",
+    "src/components/lounge/RecentGamesModal.tsx",
+    "src/components/lounge/ReportModal.tsx",
+    "src/components/lounge/UserProfileModal.tsx",
+    "src/components/lounge/VoiceCallModal.tsx",
+    "src/components/lounge/VoicePlayer.tsx",
+    "src/components/modals/ActionMenuSheet.tsx",
+    "src/components/modals/AnalysisLabModal.tsx",
+    "src/components/modals/AnalysisSetupModal.tsx",
+    "src/components/modals/AppGuideModal.tsx",
+    "src/components/modals/CoinsPurchaseModal.tsx",
+    "src/components/modals/ComputerConfigModal.tsx",
+    "src/components/modals/DrawOfferModal.tsx",
+    "src/components/modals/GameOverModal.tsx",
+    "src/components/modals/GameResultDetailModal.tsx",
+    "src/components/modals/GameSearchModal.tsx",
+    "src/components/modals/PastGamesModal.tsx",
+    "src/components/modals/PdnImportModal.tsx",
+    "src/components/modals/PlayerDirectoryModal.tsx",
+    "src/components/modals/ResignConfirmModal.tsx",
+    "src/components/modals/RulesModal.tsx",
+    "src/components/modals/SandboxPlayChoiceModal.tsx",
+    "src/components/modals/SettingsModal.tsx",
+    "src/components/panels/AnalysisSidebar.tsx",
+    "src/components/panels/GameSidebar.tsx",
+    "src/components/panels/MultiplayerPanel.tsx",
+    "src/components/panels/PuzzlesPane.tsx",
+    "src/components/splash/KentroSplashScreen.tsx",
+    "src/components/ui/Avatar.tsx",
+    "src/components/ui/KentroCoin.tsx",
+    "src/components/ui/ModalShell.tsx"
+  ],
+  "frontendRoots": [
+    "src/main.tsx",
+    "src/App.tsx",
+    "src/AuthScreen.tsx",
+    "src/AdminPanel.tsx"
+  ],
+  "frontendLibraries": [
+    "src/lib/adminProfileContext.tsx",
+    "src/lib/analysis.ts",
+    "src/lib/analysisReplay.ts",
+    "src/lib/arenaDiscovery.ts",
+    "src/lib/audio.ts",
+    "src/lib/avatarCache.ts",
+    "src/lib/callSignalling.ts",
+    "src/lib/callStateMachine.ts",
+    "src/lib/completedMatches.ts",
+    "src/lib/constants.ts",
+    "src/lib/dialogFocus.ts",
+    "src/lib/fastResume.ts",
+    "src/lib/friendRequests.ts",
+    "src/lib/gameSocket.ts",
+    "src/lib/geminiKenTrainingLab.ts",
+    "src/lib/guestTrial.ts",
+    "src/lib/highlightVideo.ts",
+    "src/lib/kenEngine.ts",
+    "src/lib/kentroTv.ts",
+    "src/lib/loungeProtocol.ts",
+    "src/lib/offlineMatch.ts",
+    "src/lib/pushSubscription.ts",
+    "src/lib/puzzles.ts",
+    "src/lib/roomInvite.ts",
+    "src/lib/roomState.ts",
+    "src/lib/safeStorage.ts",
+    "src/lib/smartNotifications.ts",
+    "src/lib/useServerClock.ts",
+    "src/lib/useWebRTCCall.ts",
+    "src/lib/voiceNoteMime.ts"
+  ],
+  "backend": [
+    "src/server/accountAuth.ts",
+    "src/server/authoritativeRatings.ts",
+    "src/server/bodyParsing.ts",
+    "src/server/durableState.ts",
+    "src/server/engineAccess.ts",
+    "src/server/engineMutex.ts",
+    "src/server/engineRequest.ts",
+    "src/server/gameEnd.ts",
+    "src/server/gameRecordsManager.ts",
+    "src/server/guestQuota.ts",
+    "src/server/httpAuth.ts",
+    "src/server/mediaConfig.ts",
+    "src/server/nativeEngine.ts",
+    "src/server/notifications.ts",
+    "src/server/onlinePlay.ts",
+    "src/server/roomClock.ts",
+    "src/server/securityMiddleware.ts",
+    "src/server/sessions.ts",
+    "src/server/staticAssets.ts",
+    "src/server/tournamentEngine.ts",
+    "src/server/tournamentInvites.ts",
+    "src/server/tournamentRuntime.ts",
+    "src/server/webPush.ts",
+    "src/server/wsValidation.ts"
+  ],
+  "httpRoutes": [
+    {
+      "method": "GET",
+      "path": "/api/health"
+    },
+    {
+      "method": "POST",
+      "path": "/api/engine/move"
+    },
+    {
+      "method": "GET",
+      "path": "/api/engine/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notifications/push-config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/push-subscribe"
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/push-unsubscribe"
+    },
+    {
+      "method": "POST",
+      "path": "/api/notifications/challenge"
+    },
+    {
+      "method": "GET",
+      "path": "/api/games/code/:gameCode"
+    },
+    {
+      "method": "GET",
+      "path": "/api/games/recent"
+    },
+    {
+      "method": "GET",
+      "path": "/api/games/series/:seriesId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/games/next-code"
+    },
+    {
+      "method": "POST",
+      "path": "/api/games/record"
+    },
+    {
+      "method": "POST",
+      "path": "/api/engine/analyze-game"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coins/wallet/:username"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coins/unlock-ai-level"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coins/tournament-entry"
+    },
+    {
+      "method": "POST",
+      "path": "/api/coins/withdraw-request"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/resolve-withdrawal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/pending-withdrawals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coins/settings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/whoami"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/permissions-list"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/set-admin"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/remove-admin"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/list-admins"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/user-detail"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/user-action"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/resolve-purchase"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/pay-tournament-prize"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/tournaments"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tournaments"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tournaments/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/refund-tournament"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/adjust-coins"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/coin-settings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/audit-log"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/pending-purchases"
+    },
+    {
+      "method": "GET",
+      "path": "/api/puzzles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/puzzles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/puzzles/bulk-delete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/puzzles/bulk"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/puzzles/sql-file"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/puzzles/generate-from-games"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/games"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/games/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/games/delete-all"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/simulate-ken8-batch"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/house-revenue"
+    },
+    {
+      "method": "GET",
+      "path": "/api/site-config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/announcement"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/maintenance"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/chat"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/chat/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/password-reset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tournaments/invite"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tournaments/start"
+    },
+    {
+      "method": "POST",
+      "path": "/api/tournaments/join-match"
+    },
+    {
+      "method": "GET",
+      "path": "/api/media/ice"
+    }
+  ],
+  "websocketEvents": [
+    "cancel-draw",
+    "cancel-resign",
+    "cancel-room",
+    "chat",
+    "create-room",
+    "draw-response",
+    "emoji-reaction",
+    "focus-lost",
+    "focus-regained",
+    "game-reset",
+    "get-open-rooms",
+    "join-room",
+    "join-room-accept",
+    "join-room-refuse",
+    "leave-room",
+    "leave-spectate",
+    "list-live-rooms",
+    "login",
+    "make-move",
+    "offer-draw",
+    "ping",
+    "place-starting-king",
+    "ready",
+    "rematch-cancel",
+    "rematch-request",
+    "rematch-response",
+    "remove-front-row-piece",
+    "resign",
+    "resign-response",
+    "resync",
+    "set-clock",
+    "spectate-room",
+    "split-screen-detected",
+    "start-game"
+  ],
+  "databaseTables": [
+    {
+      "file": "scripts/audit/supabase-fixture.sql",
+      "name": "auth"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "withdrawal_requests"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "puzzles"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_notifications"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_push_subscriptions"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_security_policy_backup"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_match_settlements"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_rated_matches"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_tournament_invites"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_groups"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_group_members"
+    },
+    {
+      "file": "supabase/all_migrations_combined.sql",
+      "name": "kentro_group_messages"
+    },
+    {
+      "file": "supabase/guest_trials.sql",
+      "name": "guest_online_trials"
+    },
+    {
+      "file": "supabase/migrations/2026-07-24_withdrawal_requests.sql",
+      "name": "withdrawal_requests"
+    },
+    {
+      "file": "supabase/migrations/2026-07-27_puzzles.sql",
+      "name": "puzzles"
+    },
+    {
+      "file": "supabase/migrations/20261011_kentro_tv_notifications.sql",
+      "name": "kentro_notifications"
+    },
+    {
+      "file": "supabase/migrations/20261011_kentro_tv_notifications.sql",
+      "name": "kentro_push_subscriptions"
+    },
+    {
+      "file": "supabase/migrations/20261014_security_authorization.sql",
+      "name": "kentro_security_policy_backup"
+    },
+    {
+      "file": "supabase/migrations/20261014_wallet_transactions.sql",
+      "name": "kentro_match_settlements"
+    },
+    {
+      "file": "supabase/migrations/20261015_authoritative_ratings.sql",
+      "name": "kentro_rated_matches"
+    },
+    {
+      "file": "supabase/migrations/20261015_tournament_privacy.sql",
+      "name": "kentro_tournament_invites"
+    },
+    {
+      "file": "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
+      "name": "kentro_groups"
+    },
+    {
+      "file": "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
+      "name": "kentro_group_members"
+    },
+    {
+      "file": "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
+      "name": "kentro_group_messages"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "profiles"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "completed_games"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "admins"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "tournaments"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "friends"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "private_messages"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "global_chat"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "coin_wallets"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "coin_transactions"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "audit_logs"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "purchase_requests"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "withdrawal_requests"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "reports"
+    },
+    {
+      "file": "supabase/schema.sql",
+      "name": "app_config"
+    }
+  ],
+  "sqlFiles": [
+    "scripts/audit/supabase-fixture.sql",
+    "supabase/all_migrations_combined.sql",
+    "supabase/guest_trials.sql",
+    "supabase/migrations/2026-07-22_tournament_admin_gate.sql",
+    "supabase/migrations/2026-07-23_signup_profile_fix.sql",
+    "supabase/migrations/2026-07-24_reserve_house_wallet.sql",
+    "supabase/migrations/2026-07-24_tournament_prize_pool.sql",
+    "supabase/migrations/2026-07-24_withdrawal_requests.sql",
+    "supabase/migrations/2026-07-25_profile_avatar_column.sql",
+    "supabase/migrations/2026-07-27_puzzles.sql",
+    "supabase/migrations/2026-07-27_tournament_hardening.sql",
+    "supabase/migrations/2026-07-28_fix_debit_wallet_ambiguous.sql",
+    "supabase/migrations/20261011_kentro_tv_notifications.sql",
+    "supabase/migrations/20261014_security_authorization.sql",
+    "supabase/migrations/20261014_wallet_transactions.sql",
+    "supabase/migrations/20261015_account_email_privacy.sql",
+    "supabase/migrations/20261015_authoritative_ratings.sql",
+    "supabase/migrations/20261015_tournament_privacy.sql",
+    "supabase/migrations/20261016_groups_and_tournament_runtime.sql",
+    "supabase/reset_all_data.sql",
+    "supabase/rollback/20261014_security_authorization.sql",
+    "supabase/rollback/20261014_wallet_transactions.sql",
+    "supabase/rollback/20261015_authoritative_ratings.sql",
+    "supabase/rollback/20261015_tournament_privacy.sql",
+    "supabase/rollback/20261016_groups_and_tournament_runtime.sql",
+    "supabase/schema.sql"
+  ],
+  "environmentVariableNames": [
+    "APP_URL",
+    "AUDIT_PG_URL",
+    "BENCH_CLIENTS",
+    "BENCH_SERVER_PID",
+    "BENCH_URL",
+    "BOOTSTRAP_ADMIN_UID",
+    "CHROME_NO_SANDBOX",
+    "CHROME_PATH",
+    "CXX",
+    "DEV",
+    "DISABLE_HMR",
+    "E2E_APP_URL",
+    "E2E_SKIP_MEDIA",
+    "E2E_SUPABASE_REF",
+    "ENGINE_AUDIT_URL",
+    "ENGINE_DEBUG",
+    "GEMINI_API_KEY",
+    "HOST",
+    "KENTRO_DATA_DIR",
+    "KENTRO_DIST_DIR",
+    "NATIVE_RULES_SANITIZE",
+    "NODE_ENV",
+    "PORT",
+    "SKIP_DB_MIGRATION",
+    "SMOKE_URL",
+    "SUPABASE_DB_URL",
+    "SUPABASE_SECRET_KEY",
+    "SUPABASE_STAGING_ALICE_TOKEN",
+    "SUPABASE_STAGING_BOB_TOKEN",
+    "SUPABASE_STAGING_EXPECTED_REF",
+    "SUPABASE_STAGING_PUBLISHABLE_KEY",
+    "SUPABASE_STAGING_TEST_CONFIRM",
+    "SUPABASE_STAGING_TEST_URL",
+    "SUPABASE_URL",
+    "TRUST_PROXY",
+    "VITE_GEMINI_API_KEY",
+    "VITE_SUPABASE_PUBLISHABLE_KEY",
+    "VITE_SUPABASE_URL",
+    "WEB_PUSH_CONTACT",
+    "WEB_PUSH_VAPID_PRIVATE_KEY",
+    "WEB_PUSH_VAPID_PUBLIC_KEY"
+  ],
+  "tests": [
+    "scripts/arena-discovery-smoke.mjs",
+    "scripts/audit/container-smoke.ts",
+    "scripts/audit/multiplayer-smoke.ts",
+    "scripts/audit/tournament-smoke.ts",
+    "scripts/board-style-smoke.cjs",
+    "scripts/e2e/fixtures/groups.html",
+    "scripts/e2e/fixtures/groups.tsx",
+    "scripts/e2e/frontend.e2e.ts",
+    "scripts/e2e/groups.e2e.ts",
+    "scripts/e2e/harness.ts",
+    "scripts/e2e/nearby.e2e.ts",
+    "scripts/e2e/offline.e2e.ts",
+    "scripts/e2e/pvp.e2e.ts",
+    "scripts/e2e/recovery.e2e.ts",
+    "scripts/e2e/surfaces.e2e.ts",
+    "scripts/e2e/tv.e2e.ts",
+    "scripts/engine-benchmark.mjs",
+    "scripts/engine-mutex-smoke.mjs",
+    "scripts/perf-smoke.cjs",
+    "scripts/performance-smoke.cjs",
+    "scripts/pvp-smoke.ts",
+    "scripts/screen-audit-smoke.mjs",
+    "scripts/static-serving-smoke.mjs",
+    "scripts/ws-bench.ts",
+    "src/engineBuild.audit.test.ts",
+    "src/lib/analysis.test.ts",
+    "src/lib/callSignalling.test.ts",
+    "src/lib/callStateMachine.test.ts",
+    "src/lib/completedMatches.test.ts",
+    "src/lib/fastResume.test.ts",
+    "src/lib/friendRequests.test.ts",
+    "src/lib/gameSocket.test.ts",
+    "src/lib/guestTrial.test.ts",
+    "src/lib/kenEngine.test.ts",
+    "src/lib/kentroTv.test.ts",
+    "src/lib/loungeProtocol.test.ts",
+    "src/lib/offlineMatch.test.ts",
+    "src/lib/offlinePrecache.test.ts",
+    "src/lib/pushSubscription.test.ts",
+    "src/lib/roomInvite.test.ts",
+    "src/lib/roomState.test.ts",
+    "src/lib/serviceWorker.test.ts",
+    "src/lib/useServerClock.test.ts",
+    "src/lib/useWebRTCCall.test.ts",
+    "src/lib/voiceNoteMime.test.ts",
+    "src/nativeRules.audit.test.ts",
+    "src/rules.audit.test.ts",
+    "src/rules.regression.test.ts",
+    "src/rules.test.ts",
+    "src/server/accountAuth.test.ts",
+    "src/server/adminService.test.ts",
+    "src/server/authoritativeRatings.test.ts",
+    "src/server/bodyParsing.test.ts",
+    "src/server/coinsService.test.ts",
+    "src/server/durableState.test.ts",
+    "src/server/engineAccess.test.ts",
+    "src/server/engineRequest.test.ts",
+    "src/server/gameRecordsManager.restart.test.ts",
+    "src/server/gameRecordsManager.test.ts",
+    "src/server/httpAuth.test.ts",
+    "src/server/infrastructure.test.ts",
+    "src/server/mediaConfig.test.ts",
+    "src/server/nativeEngine.integration.test.ts",
+    "src/server/nativeEngine.test.ts",
+    "src/server/onlinePlay.regression.test.ts",
+    "src/server/securityMiddleware.test.ts",
+    "src/server/serverReliability.test.ts",
+    "src/server/staticAssets.test.ts",
+    "src/server/supabaseAdmin.test.ts",
+    "src/server/tournamentEngine.test.ts",
+    "src/server/tournamentInvites.test.ts",
+    "src/server/tournamentRuntime.test.ts",
+    "src/server/webPush.test.ts"
+  ],
+  "nativeSources": [
+    "nd_upgraded/bb_base.cpp",
+    "nd_upgraded/bb_base.hpp",
+    "nd_upgraded/bb_comp.cpp",
+    "nd_upgraded/bb_comp.hpp",
+    "nd_upgraded/bb_index.cpp",
+    "nd_upgraded/bb_index.hpp",
+    "nd_upgraded/bit.cpp",
+    "nd_upgraded/bit.hpp",
+    "nd_upgraded/book.cpp",
+    "nd_upgraded/book.hpp",
+    "nd_upgraded/common.cpp",
+    "nd_upgraded/common.hpp",
+    "nd_upgraded/eval.cpp",
+    "nd_upgraded/eval.hpp",
+    "nd_upgraded/fen.cpp",
+    "nd_upgraded/fen.hpp",
+    "nd_upgraded/game.cpp",
+    "nd_upgraded/game.hpp",
+    "nd_upgraded/gen.cpp",
+    "nd_upgraded/gen.hpp",
+    "nd_upgraded/hash.cpp",
+    "nd_upgraded/hash.hpp",
+    "nd_upgraded/hub.cpp",
+    "nd_upgraded/hub.hpp",
+    "nd_upgraded/libmy.cpp",
+    "nd_upgraded/libmy.hpp",
+    "nd_upgraded/list.cpp",
+    "nd_upgraded/list.hpp",
+    "nd_upgraded/main.cpp",
+    "nd_upgraded/move.cpp",
+    "nd_upgraded/move.hpp",
+    "nd_upgraded/pos.cpp",
+    "nd_upgraded/pos.hpp",
+    "nd_upgraded/score.cpp",
+    "nd_upgraded/score.hpp",
+    "nd_upgraded/search.cpp",
+    "nd_upgraded/search.hpp",
+    "nd_upgraded/sort.cpp",
+    "nd_upgraded/sort.hpp",
+    "nd_upgraded/thread.cpp",
+    "nd_upgraded/thread.hpp",
+    "nd_upgraded/tt.cpp",
+    "nd_upgraded/tt.hpp",
+    "nd_upgraded/util.cpp",
+    "nd_upgraded/util.hpp",
+    "nd_upgraded/var.cpp",
+    "nd_upgraded/var.hpp"
+  ],
+  "deployment": [
+    "Dockerfile",
+    "docker-compose.yml",
+    ".dockerignore",
+    "go-edge/go.mod",
+    "go-edge/main.go",
+    "scripts/start-go-edge.sh"
+  ]
+}

@@ -1,0 +1,34 @@
+// Runs with: node --experimental-strip-types scripts/engine-mutex-smoke.mjs
+import { strict as assert } from 'node:assert';
+import { Mutex } from '../src/server/engineMutex.ts';
+const lock = new Mutex(3, 2);
+const releaseFirst = await lock.acquire(true, 'playing');
+let stopped = 0;
+lock.registerCurrentStop(() => { stopped++; });
+const oldPending = lock.acquire(false, 'analysis').then(() => 'unexpected', e => e.message);
+assert.equal(lock.waiting, 1);
+const newPending = lock.acquire(false, 'analysis');
+assert.equal(await oldPending, 'Superseded');
+assert.equal(lock.waiting, 1);
+const high = lock.acquire(true, 'priority');
+const overflowing = lock.acquire(false, 'other');
+await assert.rejects(lock.acquire(false, 'overflow'), /Engine queue busy/);
+assert.equal(lock.waiting, 3);
+releaseFirst();
+const releaseHigh = await high;
+releaseFirst(); // Double release must not move the queue twice.
+assert.equal(lock.waiting, 2);
+releaseHigh();
+const releaseNew = await newPending;
+releaseNew();
+const releaseLast = await overflowing;
+releaseLast();
+assert.equal(lock.waiting, 0);
+const firstStop = await lock.acquire(true, 'repeat');
+lock.registerCurrentStop(() => stopped++);
+const nextSame = lock.acquire(true, 'repeat');
+assert.equal(stopped, 1, 'running job receives a stop request');
+firstStop();
+(await nextSame)();
+assert.equal(lock.waiting, 0);
+console.log('Engine queue: cancellation, bounded pressure, prioritization and release: PASS');

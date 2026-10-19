@@ -1,9 +1,0 @@
-Command: node node_modules/esbuild/bin/esbuild server.ts --bundle --platform=node --packages=external --format=cjs --sourcemap --outfile=dist/server.cjs
-Exit: 0
-
-
-
-  dist/server.cjs      254.4kb
-  dist/server.cjs.map  522.9kb
-
-⚡ Done in 32ms
