@@ -1,5 +1,5 @@
 /* Kentro 2026: rebuilt product language. No gameplay logic lives in this file. */
-:root { color-scheme: dark; --k-bg:#0d1218; --k-panel:#191f27; --k-panel-raised:#212832; --k-border:#303945; --k-copy:#f5f2eb; --k-muted:#a5adb8; --k-muted-2:#778493; --k-gold:#e6b768; --k-gold-ink:#241d14; --k-green:#62c4a3; --k-red:#ee8b8b; --k-radius:20px; }
+:root { color-scheme: dark; --k-bg:#0d1218; --k-panel:#191f27; --k-panel-raised:#212832; --k-border:#303945; --k-copy:#f5f2eb; --k-muted:#a5adb8; --k-muted-2:#8b98a7; --k-gold:#e6b768; --k-gold-ink:#241d14; --k-green:#62c4a3; --k-red:#ee8b8b; --k-radius:20px; }
 html { background:var(--k-bg); }
 body { background:var(--k-bg); color:var(--k-copy); }
 button,a,[role="button"] { -webkit-tap-highlight-color:transparent; }
@@ -227,7 +227,7 @@ button:disabled { cursor:not-allowed; }
 .k-guest-cta { width:100%;min-height:51px;background:#ead0a4;color:#292117;font-size:14px;font-weight:850;border:1px solid #f6e4c5;border-radius:12px;transition:background .15s; }
 .k-guest-cta:hover { background:#f4dfbc; }
 .k-guest-subtitle { text-align:center;font-size:11px;color:#a9b5c0;margin-top:8px; }
-.k-auth-divider { display:flex;align-items:center;gap:12px;margin:20px 0;color:#7d8997;font-size:11px; }
+.k-auth-divider { display:flex;align-items:center;gap:12px;margin:20px 0;color:#a5adb8;font-size:11px; }
 .k-auth-divider:before,.k-auth-divider:after {content:"";height:1px;background:#414b56;flex:1;}
 /* Shared surfaces for secondary experiences, respecting existing interaction logic. */
 .k-nearby-page,.k-puzzles-page,.k-lounge { background:var(--k-bg)!important; }

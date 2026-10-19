@@ -170,7 +170,7 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
             <Crown className="w-7 h-7 text-slate-950 stroke-[2.5]" />
           </div>
           <h1 className="text-2xl font-extrabold text-white font-sans tracking-tight uppercase">Kentro Draught</h1>
-          <p className="text-[11px] text-amber-500/80 font-sans tracking-[0.2em] uppercase mt-1">Play. Learn. Analyze. Win.</p>
+          <p className="text-[11px] text-amber-300 font-sans tracking-[0.2em] uppercase mt-1">Play. Learn. Analyze. Win.</p>
         </div>
 
         {typeof window !== "undefined" && getRoomCodeFromUrl(window.location.search) && (
@@ -216,25 +216,25 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
           <button
             type="button"
             onClick={() => { setMode("signin"); setError(null); }}
-            className="text-xs text-slate-500 hover:text-slate-300 font-sans mb-4 transition"
+            className="text-xs text-slate-400 hover:text-slate-300 font-sans mb-4 transition"
           >
             ← Back to sign in
           </button>
         )}
 
         {mode === "reset" && (
-          <p className="text-xs text-slate-500 font-sans mb-4 -mt-2">
+          <p className="text-xs text-slate-400 font-sans mb-4 -mt-2">
             Enter your username and we'll email a link to reset your password.
           </p>
         )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div>
-            <label htmlFor="auth-username" className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
+            <label htmlFor="auth-username" className="text-[11px] text-slate-400 font-bold uppercase tracking-wide font-sans mb-1.5 block">
               Username
             </label>
             <div className="relative">
-              <User className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 id="auth-username"
                 type="text"
@@ -242,18 +242,18 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder={mode === "signup" ? "How opponents will see you" : "Your username"}
                 autoComplete="username"
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-600 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-400 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
               />
             </div>
           </div>
 
           {mode === "signup" && (
             <div>
-              <label htmlFor="auth-email" className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans mb-1.5 block">
+              <label htmlFor="auth-email" className="text-[11px] text-slate-400 font-bold uppercase tracking-wide font-sans mb-1.5 block">
                 Email
               </label>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   id="auth-email"
                   type="email"
@@ -261,7 +261,7 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
                   autoComplete="email"
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-600 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-slate-400 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
                 />
               </div>
             </div>
@@ -270,21 +270,21 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
           {mode !== "reset" && (
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label htmlFor="auth-password" className="text-[11px] text-slate-500 font-bold uppercase tracking-wide font-sans">
+              <label htmlFor="auth-password" className="text-[11px] text-slate-400 font-bold uppercase tracking-wide font-sans">
                 Password
               </label>
               {mode === "signin" && (
                 <button
                   type="button"
                   onClick={() => { setMode("reset"); setError(null); setPassword(""); }}
-                  className="text-[11px] text-amber-500/80 hover:text-amber-400 font-sans transition"
+                  className="text-[11px] text-amber-300 hover:text-amber-400 font-sans transition"
                 >
                   Forgot password?
                 </button>
               )}
             </div>
             <div className="relative">
-              <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 id="auth-password"
                 type={showPassword ? "text" : "password"}
@@ -292,7 +292,7 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="At least 8 characters"
                 autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder:text-slate-600 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white placeholder:text-slate-400 font-sans focus:outline-none focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/40 transition"
               />
               <button
                 type="button"
@@ -333,7 +333,7 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
         {onPlayKenOffline && <button type="button" onClick={onPlayKenOffline} className="w-full mt-4 py-3 rounded-xl border border-amber-500/40 text-amber-300 bg-amber-500/10 text-sm font-bold">Play Ken Offline · Full Strength</button>}
         {onPlayOffline && <button type="button" onClick={onPlayOffline} className="w-full mt-4 py-3 rounded-xl border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-sm font-bold hover:bg-emerald-500/20">Play Nearby Offline — No Sign In</button>}
 
-        <div className="flex items-center justify-center gap-1.5 mt-6 text-[11px] text-slate-600 font-sans">
+        <div className="flex items-center justify-center gap-1.5 mt-6 text-[11px] text-slate-400 font-sans">
           <ShieldCheck className="w-3.5 h-3.5" />
           Your rating, coins, and match history are tied to this account.
         </div>

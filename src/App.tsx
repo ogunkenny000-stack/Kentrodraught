@@ -852,11 +852,11 @@ export default function App() {
   const [withdrawSubmitted, setWithdrawSubmitted] = useState<{ nairaAmount: number } | null>(null);
 
   useEffect(() => {
+    let active = true;
     const fetchStats = async () => {
       const uname = username || "player";
       const cleanUname = uname.toLowerCase().trim();
-      if (!isSupabaseConfigured || !authUser) {
-        setProfileStats({
+      setProfileStats({
           username: uname,
           elo: 1500,
           wins: 0,
@@ -866,9 +866,8 @@ export default function App() {
           totalPlayTime: 0,
           averageDuration: 0,
           maxUnlockedKenLevel: 3
-        });
-        return;
-      }
+      });
+      if (!isSupabaseConfigured || !authUser) return;
       try {
         await authReady; // RLS now requires auth.uid() to be set (see supabase/schema.sql)
         let data: any = null;
@@ -880,6 +879,7 @@ export default function App() {
           handleSupabaseError(err, OperationType.GET, `profiles/${cleanUname}`);
           return;
         }
+        if (!active) return;
         if (data) {
           setProfileStats({
             ...data,
@@ -916,7 +916,8 @@ export default function App() {
       }
     };
     fetchStats();
-  }, [username, authUser]);
+    return () => { active = false; };
+  }, [username, authUser?.id]);
 
   // The frontend build flag alone cannot authorize payments: the backend
   // must also have passed its schema and RPC preflight after boot.
@@ -935,19 +936,36 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  const walletIdentity = `${authUser?.id || ""}:${username || ""}:${guestMode}`;
+  const walletIdentityRef = useRef(walletIdentity);
+  walletIdentityRef.current = walletIdentity;
   const refreshCoinBalance = async () => {
+    const owner = walletIdentity;
     if (!username || guestMode) return;
     try {
       const data = await apiGet(`/api/coins/wallet/${encodeURIComponent(username.toLowerCase().trim())}`);
-      setCoinBalance(data.balance || 0);
+      if (walletIdentityRef.current === owner) setCoinBalance(data.balance || 0);
     } catch {
       // not signed in yet / wallet doesn't exist yet -- balance stays 0
     }
   };
 
   useEffect(() => {
+    setCoinBalance(0);
+    setShowPurchaseModal(false);
+    setPurchaseReceiptRef("");
+    setPurchaseSubmitted(false);
+    setPurchaseSubmitting(false);
+    setPurchaseError(null);
+    setWithdrawCoins("");
+    setWithdrawAccountName("");
+    setWithdrawAccountNumber("");
+    setWithdrawBankName("");
+    setWithdrawError(null);
+    setWithdrawSubmitted(null);
+    setWithdrawSubmitting(false);
     refreshCoinBalance();
-  }, [username, guestMode]);
+  }, [walletIdentity]);
 
   // --- Admin permission check (silent -- this is NOT the Admin Panel gate,
   // just enough info for the rest of the UI to know whether to show
@@ -957,16 +975,19 @@ export default function App() {
   const isTournamentAdmin = adminPermissions.includes("manage_tournaments");
 
   useEffect(() => {
-    if (!username || guestMode) { setAdminPermissions([]); return; }
+    let active = true;
+    setAdminPermissions([]);
+    if (!username || guestMode) return;
     (async () => {
       try {
         const res = await apiPost("/api/admin/whoami", {});
-        setAdminPermissions(res.isAdmin ? (res.permissions || []) : []);
+        if (active) setAdminPermissions(res.isAdmin ? (res.permissions || []) : []);
       } catch {
-        setAdminPermissions([]);
+        if (active) setAdminPermissions([]);
       }
     })();
-  }, [username, guestMode]);
+    return () => { active = false; };
+  }, [walletIdentity]);
 
   // --- Check game over states to update stats & play sounds ---
   useEffect(() => {
@@ -3702,6 +3723,7 @@ export default function App() {
   // server debits the wallet AND sets maxUnlockedKenLevel atomically -- see
   // /api/coins/unlock-ai-level in server.ts.
   const handleUnlockKenLevel = async (level: number | "all") => {
+    const owner = walletIdentity;
     if (!coinBackendReady) {
       setStatusMessage("Kentro Coin spending is unavailable until the wallet database is ready.");
       return;
@@ -3709,11 +3731,13 @@ export default function App() {
     if (!username) return;
     try {
       const result = await apiPost("/api/coins/unlock-ai-level", { username: username.toLowerCase().trim(), level });
+      if (walletIdentityRef.current !== owner) return;
       setCoinBalance(result.balance);
       setProfileStats((prev) => ({ ...prev, maxUnlockedKenLevel: result.maxUnlockedKenLevel }));
       setStatusMessage(level === "all" ? "All AI levels unlocked!" : `Ken Level ${level} unlocked!`);
       playClickSound(muted);
     } catch (err: any) {
+      if (walletIdentityRef.current !== owner) return;
       if (err?.status === 402) {
         setStatusMessage(`Not enough Kentro Coins (need ${err.data?.cost ?? "more"}). You have ${err.data?.balance ?? coinBalance}.`);
       } else {
@@ -3723,6 +3747,7 @@ export default function App() {
   };
 
   const handleSubmitPurchaseReceipt = async () => {
+    const owner = walletIdentity;
     if (!coinBackendReady) {
       setPurchaseError("Purchases are temporarily unavailable. Do not send a bank transfer yet.");
       return;
@@ -3741,6 +3766,7 @@ export default function App() {
     setPurchaseError(null);
     try {
       await authReady;
+      if (walletIdentityRef.current !== owner) return;
       const { error } = await supabase.from("purchase_requests").insert({
         username: uname,
         item: "kentro_coins",
@@ -3752,26 +3778,29 @@ export default function App() {
         submittedAt: Date.now(),
         ownerId: authUser?.id || null,
       });
+      if (walletIdentityRef.current !== owner) return;
       if (error) throw error;
       setPurchaseSubmitted(true);
       setShowPurchaseModal(false);
       setStatusMessage(`Receipt submitted. ${pkg.coins} Kentro Coins will be added once confirmed.`);
     } catch (err) {
+      if (walletIdentityRef.current !== owner) return;
       handleSupabaseError(err, OperationType.WRITE, "purchase_requests");
       setPurchaseError("Couldn't submit right now. Please try again in a moment.");
     } finally {
-      setPurchaseSubmitting(false);
+      if (walletIdentityRef.current === owner) setPurchaseSubmitting(false);
     }
   };
 
   const handleSubmitWithdrawal = async () => {
+    const owner = walletIdentity;
     if (!coinBackendReady) {
       setWithdrawError("Coin withdrawals are unavailable until the wallet service is ready.");
       return;
     }
     const uname = (username || "player").toLowerCase().trim();
-    const coins = parseInt(withdrawCoins, 10);
-    if (!Number.isFinite(coins) || coins <= 0) {
+    const coins = Number(withdrawCoins.trim());
+    if (!/^\d+$/.test(withdrawCoins.trim()) || !Number.isSafeInteger(coins) || coins <= 0) {
       setWithdrawError("Enter how many coins you want to withdraw.");
       return;
     }
@@ -3789,6 +3818,7 @@ export default function App() {
         accountNumber: withdrawAccountNumber.trim(),
         bankName: withdrawBankName.trim() || undefined,
       });
+      if (walletIdentityRef.current !== owner) return;
       setCoinBalance(result.balance);
       setWithdrawSubmitted({ nairaAmount: result.nairaAmount });
       setWithdrawCoins("");
@@ -3796,9 +3826,10 @@ export default function App() {
       setWithdrawAccountNumber("");
       setWithdrawBankName("");
     } catch (err: any) {
+      if (walletIdentityRef.current !== owner) return;
       setWithdrawError(err?.data?.error || "Couldn't submit your withdrawal right now. Please try again in a moment.");
     } finally {
-      setWithdrawSubmitting(false);
+      if (walletIdentityRef.current === owner) setWithdrawSubmitting(false);
     }
   };
 

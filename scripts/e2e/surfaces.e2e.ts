@@ -8,10 +8,13 @@ const browser = await launchChrome();
 const page = await browser.newPage();
 const errors: string[] = [];
 async function click(text: string, exact = true) {
-  const handle = await page.evaluateHandle((text, exact) => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.getClientRects().length && (exact ? button.innerText.trim() === text : button.innerText.includes(text))) || null, text, exact);
+  await page.waitForFunction((text, exact) => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).some(button => button.getClientRects().length && (exact ? button.textContent?.trim().toLowerCase() === text.toLowerCase() : button.textContent?.toLowerCase().includes(text.toLowerCase()))), {}, text, exact);
+  const handle = await page.evaluateHandle((text, exact) => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.getClientRects().length && (exact ? button.textContent?.trim().toLowerCase() === text.toLowerCase() : button.textContent?.toLowerCase().includes(text.toLowerCase()))) || null, text, exact);
   const element = handle.asElement();
   if (!element) throw new Error(`Visible button missing: ${text}`);
-  await element.click(); await handle.dispose();
+  await element.evaluate(button => button.scrollIntoView({block:'center'}));
+  await page.waitForFunction(button => { const r = button.getBoundingClientRect(); const hit = document.elementFromPoint(r.x+r.width/2, r.y+r.height/2); return !!hit && button.contains(hit); }, {}, element);
+  await element.asLocator().click(); await handle.dispose();
 }
 try {
   await page.setViewport({ width: 1440, height: 1000 });
@@ -30,6 +33,7 @@ try {
   for (const target of ['Tournaments', 'The lounge']) {
     await click(target); await waitForText(page, 'Unlock more Kentro Draught');
     await click('Keep Exploring');
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]')); 
     assert(true, `${target} guest navigation requires an account`);
   }
   await click('Board editor'); await waitForText(page, 'Brush active');
@@ -48,7 +52,7 @@ try {
   await snapshot(page, 'surfaces-02-custom-ai');
   await click('Home');
   await click('Analysis lab'); await waitForText(page, 'Analysis Options');
-  await click('Blank Analysis Board'); await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+  await click('Explore a New Position', false); await page.waitForFunction(() => !document.querySelector('[role="dialog"]'));
   await page.waitForSelector('#square-31');
   const move = generateLegalMoves(createInitialBoard(), 'W')[0];
   await page.click(`#square-${move.from}`); await page.click(`#square-${move.to}`);

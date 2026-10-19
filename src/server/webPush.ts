@@ -15,9 +15,14 @@ export function vapidSettings() {
   const publicKey = process.env.WEB_PUSH_VAPID_PUBLIC_KEY || "";
   const privateKey = process.env.WEB_PUSH_VAPID_PRIVATE_KEY || "";
   const contact = process.env.WEB_PUSH_CONTACT || "";
-  if (!publicKey || !privateKey || !/^mailto:.+@.+|^https:\/\/.+/.test(contact)) return null;
+  if (!/^[A-Za-z0-9_-]{87}$/.test(publicKey) || !/^[A-Za-z0-9_-]{43}$/.test(privateKey) || /[\s\u0000-\u001f\u007f]/.test(contact)) return null;
   try {
+    const subject = new URL(contact);
+    if (subject.protocol === 'mailto:') {
+      if (!/^[^@?]+@[^@?]+\.[^@?]+$/.test(subject.pathname) || subject.search || subject.hash) return null;
+    } else if (subject.protocol !== 'https:' || !subject.hostname || subject.username || subject.password || subject.hash) return null;
     const d = unb64(privateKey), pub = unb64(publicKey);
+    if (b64(d) !== privateKey || b64(pub) !== publicKey) return null;
     if (d.length !== 32 || pub.length !== 65 || pub[0] !== 4) return null;
     const ecdh = createECDH("prime256v1"); ecdh.setPrivateKey(d);
     if (!ecdh.getPublicKey().equals(pub)) return null;

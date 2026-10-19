@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createECDH, createHmac, createPublicKey, verify, createDecipheriv } from "node:crypto";
-import { encryptPushPayload, createVapidAuthorization, safePushEndpoint, validateSubscription } from "./webPush";
+import { encryptPushPayload, createVapidAuthorization, safePushEndpoint, validateSubscription, vapidSettings } from "./webPush";
 
 const b64 = (buffer: Buffer) => buffer.toString("base64url");
 const hkdf = (key: Buffer, info: string | Buffer, len: number) =>
@@ -64,4 +64,21 @@ describe("Web Push security and cryptography", () => {
     const key = createPublicKey({key:{kty:"EC",crv:"P-256",x:b64(point.subarray(1,33)),y:b64(point.subarray(33))},format:"jwk"});
     expect(verify("sha256",Buffer.from(`${head}.${body}`),{key,dsaEncoding:"ieee-p1363"},Buffer.from(sig,"base64url"))).toBe(true);
   });
+});
+
+it("accepts matching VAPID keys and rejects malformed contacts and key encodings", () => {
+  const pair = createECDH("prime256v1"); pair.generateKeys();
+  try {
+    vi.stubEnv("WEB_PUSH_VAPID_PUBLIC_KEY", b64(pair.getPublicKey()));
+    vi.stubEnv("WEB_PUSH_VAPID_PRIVATE_KEY", b64(pair.getPrivateKey()));
+    vi.stubEnv("WEB_PUSH_CONTACT", "mailto:admin@example.com");
+    expect(vapidSettings()).not.toBeNull();
+    for (const contact of ["mailto:a@b\nInjected", "mailto:invalid", "https://user:password@example.com", "http://example.com"]) {
+      vi.stubEnv("WEB_PUSH_CONTACT", contact); expect(vapidSettings()).toBeNull();
+    }
+    vi.stubEnv("WEB_PUSH_CONTACT", "https://example.com/contact");
+    expect(vapidSettings()).not.toBeNull();
+    vi.stubEnv("WEB_PUSH_VAPID_PUBLIC_KEY", b64(pair.getPublicKey()) + "!");
+    expect(vapidSettings()).toBeNull();
+  } finally { vi.unstubAllEnvs(); }
 });

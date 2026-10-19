@@ -4,7 +4,7 @@ import { disableBackgroundPush, enableBackgroundPush } from "./pushSubscription"
 
 vi.mock("../supabase", () => ({ supabase: { auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "local-fixture-token" } } }) } } }));
 
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 function browser(registration?: Record<string, unknown>) {
   const getRegistration = vi.fn().mockResolvedValue(registration);
@@ -57,4 +57,36 @@ describe("background push registration", () => {
     await expect(disableBackgroundPush()).rejects.toThrow(failure === "server failure" ? "server" : "Offline");
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
+});
+
+const prefs = { challenge:true, friend:true, tournament:true, result:true, system:true } as any;
+
+function rotationBrowser(subscription: any) {
+  const manager = {getSubscription: vi.fn(async () => subscription), subscribe: vi.fn(async () => ({toJSON:()=>({endpoint:'new-fixture'})}))};
+  vi.stubGlobal('window', {Notification:{}, PushManager:{}, isSecureContext:true});
+  vi.stubGlobal('Notification', {requestPermission:async ()=>'granted'});
+  vi.stubGlobal('navigator', {serviceWorker:{getRegistration:async ()=>({active:{},pushManager:manager})}});
+  return manager;
+}
+it('revokes the browser endpoint even when server removal times out', async () => {
+  const unsubscribe = vi.fn(async () => true); rotationBrowser({endpoint:'fixture',unsubscribe});
+  const controller = new AbortController();
+  const timeout = vi.spyOn(AbortSignal,'timeout').mockReturnValue(controller.signal);
+  vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve,reject) => {
+    options.signal.addEventListener('abort',()=>reject(new DOMException('Timed out','TimeoutError')));
+    queueMicrotask(()=>controller.abort());
+  })));
+  await expect(disableBackgroundPush()).rejects.toMatchObject({name:'TimeoutError'});
+  expect(timeout).toHaveBeenCalledWith(8000);
+  expect(unsubscribe).toHaveBeenCalledOnce();
+});
+it('replaces a subscription bound to an old VAPID key before saving it', async () => {
+  const unsubscribe = vi.fn(async () => true);
+  const manager = rotationBrowser({options:{applicationServerKey:new Uint8Array([9,8]).buffer},unsubscribe});
+  const fetcher=vi.fn(async (url: string) => url.endsWith('push-config') ? {ok:true,json:async()=>({publicKey:'AQID'})} : {ok:true});
+  vi.stubGlobal('fetch',fetcher);
+  await expect(enableBackgroundPush(prefs)).resolves.toBe('background');
+  expect(unsubscribe).toHaveBeenCalledOnce();
+  expect(manager.subscribe).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[1][0]).toBe('/api/notifications/push-subscribe');
 });
