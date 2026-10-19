@@ -41,7 +41,9 @@
     "test:ken-proof": "node --import tsx --test scripts/audit/ken-victory-progress.test.mjs",
     "test:finance-rehearsal": "node scripts/audit/finance-rehearsal.mjs --pglite",
     "test:finance-db": "node scripts/audit/finance-rehearsal.mjs",
-    "test:production-bundle": "node scripts/audit/production-bundle-smoke.mjs"
+    "test:production-bundle": "node scripts/audit/production-bundle-smoke.mjs",
+    "build:puzzle-creator": "esbuild tools/puzzle-creator/cli.ts --bundle --platform=node --format=cjs --target=node22 --outfile=tools/puzzle-creator/bin/kentro-puzzles.cjs",
+    "test:puzzle-creator": "node --import tsx --test tools/puzzle-creator/proof.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.17.1",

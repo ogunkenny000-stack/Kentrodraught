@@ -1,0 +1,1168 @@
+[
+  {
+    "id": "39d05b9ff2ae1733668bb6cf40736a5e3c8c43966f41b7644eea0f6b01b192a2",
+    "title": "Easy: Sacrifice and capture",
+    "difficulty": "Easy",
+    "theme": "Sacrifice and capture",
+    "description": "Find the unique first move forcing a win within 2 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "fen": "Beeeeeeeeeeeeeeweeeebeeeeeeebeeeeeeeeeeeweebeeeeeee",
+    "solution": [
+      {
+        "from": 43,
+        "to": 47,
+        "caps": [],
+        "text": "43-47",
+        "role": "solver"
+      },
+      {
+        "from": 11,
+        "to": 22,
+        "caps": [
+          16
+        ],
+        "path": [
+          22
+        ],
+        "text": "11x22x16",
+        "role": "reply"
+      },
+      {
+        "from": 47,
+        "to": 17,
+        "caps": [
+          36,
+          22
+        ],
+        "path": [
+          31,
+          17
+        ],
+        "text": "47x17x36x22",
+        "role": "solver"
+      }
+    ],
+    "explanation": "Find the unique first move forcing a win within 2 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "source": "Kentro server creator",
+    "positionHash": "39d05b9ff2ae1733668bb6cf40736a5e3c8c43966f41b7644eea0f6b01b192a2",
+    "proof": {
+      "fen": "Beeeeeeeeeeeeeeweeeebeeeeeeebeeeeeeeeeeeweebeeeeeee",
+      "solver": "B",
+      "difficulty": "Easy",
+      "maxPlies": 3,
+      "line": [
+        {
+          "from": 43,
+          "to": 47,
+          "caps": []
+        },
+        {
+          "from": 11,
+          "to": 22,
+          "caps": [
+            16
+          ],
+          "path": [
+            22
+          ]
+        },
+        {
+          "from": 47,
+          "to": 17,
+          "caps": [
+            36,
+            22
+          ],
+          "path": [
+            31,
+            17
+          ]
+        }
+      ],
+      "nodes": 43,
+      "certificate": {
+        "edges": [
+          {
+            "move": {
+              "from": 43,
+              "to": 47,
+              "caps": []
+            },
+            "next": {
+              "edges": [
+                {
+                  "move": {
+                    "from": 11,
+                    "to": 22,
+                    "caps": [
+                      16
+                    ],
+                    "path": [
+                      22
+                    ]
+                  },
+                  "next": {
+                    "edges": [
+                      {
+                        "move": {
+                          "from": 47,
+                          "to": 17,
+                          "caps": [
+                            36,
+                            22
+                          ],
+                          "path": [
+                            31,
+                            17
+                          ]
+                        },
+                        "next": {
+                          "edges": []
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "theme": "Sacrifice and capture",
+      "description": "Find the unique first move forcing a win within 2 of your turns. All legal defensive replies are covered under Nigerian rules."
+    }
+  },
+  {
+    "id": "c4d1a3f98ee5fc2b5cf2a53d11b30b28abca5d6d8da44752859217b866c99c75",
+    "title": "Easy: King trap",
+    "difficulty": "Easy",
+    "theme": "King trap",
+    "description": "Find the unique first move forcing a win within 2 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "fen": "WeeeeeeeeeeeWweeeeeeeeeeeeeeeeeeeweeeeebeeeeBbeeeee",
+    "solution": [
+      {
+        "from": 14,
+        "to": 19,
+        "caps": [],
+        "text": "14-19",
+        "role": "solver"
+      },
+      {
+        "from": 37,
+        "to": 28,
+        "caps": [
+          33
+        ],
+        "path": [
+          28
+        ],
+        "text": "37x28x33",
+        "role": "reply"
+      },
+      {
+        "from": 19,
+        "to": 46,
+        "caps": [
+          28,
+          42
+        ],
+        "path": [
+          33,
+          46
+        ],
+        "text": "19x46x28x42",
+        "role": "solver"
+      }
+    ],
+    "explanation": "Find the unique first move forcing a win within 2 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "source": "Kentro server creator",
+    "positionHash": "c4d1a3f98ee5fc2b5cf2a53d11b30b28abca5d6d8da44752859217b866c99c75",
+    "proof": {
+      "fen": "WeeeeeeeeeeeWweeeeeeeeeeeeeeeeeeeweeeeebeeeeBbeeeee",
+      "solver": "W",
+      "difficulty": "Easy",
+      "maxPlies": 3,
+      "line": [
+        {
+          "from": 14,
+          "to": 19,
+          "caps": []
+        },
+        {
+          "from": 37,
+          "to": 28,
+          "caps": [
+            33
+          ],
+          "path": [
+            28
+          ]
+        },
+        {
+          "from": 19,
+          "to": 46,
+          "caps": [
+            28,
+            42
+          ],
+          "path": [
+            33,
+            46
+          ]
+        }
+      ],
+      "nodes": 186,
+      "certificate": {
+        "edges": [
+          {
+            "move": {
+              "from": 14,
+              "to": 19,
+              "caps": []
+            },
+            "next": {
+              "edges": [
+                {
+                  "move": {
+                    "from": 37,
+                    "to": 28,
+                    "caps": [
+                      33
+                    ],
+                    "path": [
+                      28
+                    ]
+                  },
+                  "next": {
+                    "edges": [
+                      {
+                        "move": {
+                          "from": 19,
+                          "to": 46,
+                          "caps": [
+                            28,
+                            42
+                          ],
+                          "path": [
+                            33,
+                            46
+                          ]
+                        },
+                        "next": {
+                          "edges": []
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "theme": "King trap",
+      "description": "Find the unique first move forcing a win within 2 of your turns. All legal defensive replies are covered under Nigerian rules."
+    }
+  },
+  {
+    "id": "d569ed70a9f85d4a57dceecdff14f0a8d3500d051b16c9e91be7913e11bcdaa1",
+    "title": "Medium: Sacrifice and capture",
+    "difficulty": "Medium",
+    "theme": "Sacrifice and capture",
+    "description": "Find the unique first move forcing a win within 3 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "fen": "BeeeeeeeBbweeeeebebeeeeeeeeweeeweewbeeeeeeeeeeeeeee",
+    "solution": [
+      {
+        "from": 7,
+        "to": 12,
+        "caps": [],
+        "text": "7-12",
+        "role": "solver"
+      },
+      {
+        "from": 6,
+        "to": 17,
+        "caps": [
+          12
+        ],
+        "path": [
+          17
+        ],
+        "text": "6x17x12",
+        "role": "reply"
+      },
+      {
+        "from": 8,
+        "to": 30,
+        "caps": [
+          17,
+          32,
+          35
+        ],
+        "path": [
+          26,
+          48,
+          30
+        ],
+        "text": "8x30x17x32x35",
+        "role": "solver"
+      },
+      {
+        "from": 29,
+        "to": 24,
+        "caps": [],
+        "text": "29-24",
+        "role": "reply"
+      },
+      {
+        "from": 18,
+        "to": 29,
+        "caps": [
+          24
+        ],
+        "path": [
+          29
+        ],
+        "text": "18x29x24",
+        "role": "solver"
+      }
+    ],
+    "explanation": "Find the unique first move forcing a win within 3 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "source": "Kentro server creator",
+    "positionHash": "d569ed70a9f85d4a57dceecdff14f0a8d3500d051b16c9e91be7913e11bcdaa1",
+    "proof": {
+      "fen": "BeeeeeeeBbweeeeebebeeeeeeeeweeeweewbeeeeeeeeeeeeeee",
+      "solver": "B",
+      "difficulty": "Medium",
+      "maxPlies": 5,
+      "line": [
+        {
+          "from": 7,
+          "to": 12,
+          "caps": []
+        },
+        {
+          "from": 6,
+          "to": 17,
+          "caps": [
+            12
+          ],
+          "path": [
+            17
+          ]
+        },
+        {
+          "from": 8,
+          "to": 30,
+          "caps": [
+            17,
+            32,
+            35
+          ],
+          "path": [
+            26,
+            48,
+            30
+          ]
+        },
+        {
+          "from": 29,
+          "to": 24,
+          "caps": []
+        },
+        {
+          "from": 18,
+          "to": 29,
+          "caps": [
+            24
+          ],
+          "path": [
+            29
+          ]
+        }
+      ],
+      "nodes": 2435,
+      "certificate": {
+        "edges": [
+          {
+            "move": {
+              "from": 7,
+              "to": 12,
+              "caps": []
+            },
+            "next": {
+              "edges": [
+                {
+                  "move": {
+                    "from": 6,
+                    "to": 17,
+                    "caps": [
+                      12
+                    ],
+                    "path": [
+                      17
+                    ]
+                  },
+                  "next": {
+                    "edges": [
+                      {
+                        "move": {
+                          "from": 8,
+                          "to": 30,
+                          "caps": [
+                            17,
+                            32,
+                            35
+                          ],
+                          "path": [
+                            26,
+                            48,
+                            30
+                          ]
+                        },
+                        "next": {
+                          "edges": [
+                            {
+                              "move": {
+                                "from": 29,
+                                "to": 24,
+                                "caps": []
+                              },
+                              "next": {
+                                "edges": [
+                                  {
+                                    "move": {
+                                      "from": 18,
+                                      "to": 29,
+                                      "caps": [
+                                        24
+                                      ],
+                                      "path": [
+                                        29
+                                      ]
+                                    },
+                                    "next": {
+                                      "edges": []
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "move": {
+                                "from": 29,
+                                "to": 25,
+                                "caps": []
+                              },
+                              "next": {
+                                "edges": [
+                                  {
+                                    "move": {
+                                      "from": 20,
+                                      "to": 29,
+                                      "caps": [
+                                        25
+                                      ],
+                                      "path": [
+                                        29
+                                      ]
+                                    },
+                                    "next": {
+                                      "edges": []
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "theme": "Sacrifice and capture",
+      "description": "Find the unique first move forcing a win within 3 of your turns. All legal defensive replies are covered under Nigerian rules."
+    }
+  },
+  {
+    "id": "7dfc12b377dcf239d88731370acf9239bf08a992f351df20f63ea0f897e15206",
+    "title": "Medium: Sacrifice and capture",
+    "difficulty": "Medium",
+    "theme": "Sacrifice and capture",
+    "description": "Find the unique first move forcing a win within 4 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "fen": "Weeeeeweeeeeeeeeeebeewebeeeebweeeeeeeeeeeeeeeeeeeee",
+    "solution": [
+      {
+        "from": 10,
+        "to": 5,
+        "caps": [],
+        "text": "10-5",
+        "role": "solver"
+      },
+      {
+        "from": 23,
+        "to": 32,
+        "caps": [
+          27
+        ],
+        "path": [
+          32
+        ],
+        "text": "23x32x27",
+        "role": "reply"
+      },
+      {
+        "from": 5,
+        "to": 34,
+        "caps": [
+          18,
+          28
+        ],
+        "path": [
+          23,
+          34
+        ],
+        "text": "5x34x18x28",
+        "role": "solver"
+      },
+      {
+        "from": 32,
+        "to": 36,
+        "caps": [],
+        "text": "32-36",
+        "role": "reply"
+      },
+      {
+        "from": 34,
+        "to": 28,
+        "caps": [],
+        "text": "34-28",
+        "role": "solver"
+      },
+      {
+        "from": 36,
+        "to": 41,
+        "caps": [],
+        "text": "36-41",
+        "role": "reply"
+      },
+      {
+        "from": 28,
+        "to": 46,
+        "caps": [],
+        "text": "28-46",
+        "role": "solver"
+      }
+    ],
+    "explanation": "Find the unique first move forcing a win within 4 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "source": "Kentro server creator",
+    "positionHash": "7dfc12b377dcf239d88731370acf9239bf08a992f351df20f63ea0f897e15206",
+    "proof": {
+      "fen": "Weeeeeweeeeeeeeeeebeewebeeeebweeeeeeeeeeeeeeeeeeeee",
+      "solver": "W",
+      "difficulty": "Medium",
+      "maxPlies": 7,
+      "line": [
+        {
+          "from": 10,
+          "to": 5,
+          "caps": []
+        },
+        {
+          "from": 23,
+          "to": 32,
+          "caps": [
+            27
+          ],
+          "path": [
+            32
+          ]
+        },
+        {
+          "from": 5,
+          "to": 34,
+          "caps": [
+            18,
+            28
+          ],
+          "path": [
+            23,
+            34
+          ]
+        },
+        {
+          "from": 32,
+          "to": 36,
+          "caps": []
+        },
+        {
+          "from": 34,
+          "to": 28,
+          "caps": []
+        },
+        {
+          "from": 36,
+          "to": 41,
+          "caps": []
+        },
+        {
+          "from": 28,
+          "to": 46,
+          "caps": []
+        }
+      ],
+      "nodes": 1015,
+      "certificate": {
+        "edges": [
+          {
+            "move": {
+              "from": 10,
+              "to": 5,
+              "caps": []
+            },
+            "next": {
+              "edges": [
+                {
+                  "move": {
+                    "from": 23,
+                    "to": 32,
+                    "caps": [
+                      27
+                    ],
+                    "path": [
+                      32
+                    ]
+                  },
+                  "next": {
+                    "edges": [
+                      {
+                        "move": {
+                          "from": 5,
+                          "to": 34,
+                          "caps": [
+                            18,
+                            28
+                          ],
+                          "path": [
+                            23,
+                            34
+                          ]
+                        },
+                        "next": {
+                          "edges": [
+                            {
+                              "move": {
+                                "from": 32,
+                                "to": 36,
+                                "caps": []
+                              },
+                              "next": {
+                                "edges": [
+                                  {
+                                    "move": {
+                                      "from": 34,
+                                      "to": 28,
+                                      "caps": []
+                                    },
+                                    "next": {
+                                      "edges": [
+                                        {
+                                          "move": {
+                                            "from": 36,
+                                            "to": 41,
+                                            "caps": []
+                                          },
+                                          "next": {
+                                            "edges": [
+                                              {
+                                                "move": {
+                                                  "from": 28,
+                                                  "to": 46,
+                                                  "caps": []
+                                                },
+                                                "next": {
+                                                  "edges": []
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "move": {
+                                            "from": 36,
+                                            "to": 42,
+                                            "caps": []
+                                          },
+                                          "next": {
+                                            "edges": [
+                                              {
+                                                "move": {
+                                                  "from": 28,
+                                                  "to": 46,
+                                                  "caps": [
+                                                    42
+                                                  ],
+                                                  "path": [
+                                                    46
+                                                  ]
+                                                },
+                                                "next": {
+                                                  "edges": []
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "move": {
+                                "from": 32,
+                                "to": 37,
+                                "caps": []
+                              },
+                              "next": {
+                                "edges": [
+                                  {
+                                    "move": {
+                                      "from": 34,
+                                      "to": 47,
+                                      "caps": []
+                                    },
+                                    "next": {
+                                      "edges": [
+                                        {
+                                          "move": {
+                                            "from": 37,
+                                            "to": 42,
+                                            "caps": []
+                                          },
+                                          "next": {
+                                            "edges": [
+                                              {
+                                                "move": {
+                                                  "from": 47,
+                                                  "to": 36,
+                                                  "caps": [
+                                                    42
+                                                  ],
+                                                  "path": [
+                                                    36
+                                                  ]
+                                                },
+                                                "next": {
+                                                  "edges": []
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "move": {
+                                            "from": 37,
+                                            "to": 43,
+                                            "caps": []
+                                          },
+                                          "next": {
+                                            "edges": [
+                                              {
+                                                "move": {
+                                                  "from": 47,
+                                                  "to": 38,
+                                                  "caps": [
+                                                    43
+                                                  ],
+                                                  "path": [
+                                                    38
+                                                  ]
+                                                },
+                                                "next": {
+                                                  "edges": []
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "theme": "Sacrifice and capture",
+      "description": "Find the unique first move forcing a win within 4 of your turns. All legal defensive replies are covered under Nigerian rules."
+    }
+  },
+  {
+    "id": "50497409ee75ce5fae5469cfbe2530a640557af0a7ec4d9c03e478d3cbe751ff",
+    "title": "Hard: Sacrifice and capture",
+    "difficulty": "Hard",
+    "theme": "Sacrifice and capture",
+    "description": "Find the unique first move forcing a win within 5 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "fen": "BeeeeewewbBbeeeeeeeeeeeeeeeeeeeeeeeeeeweeeeeweeeeee",
+    "solution": [
+      {
+        "from": 6,
+        "to": 1,
+        "caps": [],
+        "text": "6-1",
+        "role": "solver"
+      },
+      {
+        "from": 10,
+        "to": 19,
+        "caps": [
+          15
+        ],
+        "path": [
+          19
+        ],
+        "text": "10x19x15",
+        "role": "reply"
+      },
+      {
+        "from": 7,
+        "to": 13,
+        "caps": [],
+        "text": "7-13",
+        "role": "solver"
+      },
+      {
+        "from": 8,
+        "to": 17,
+        "caps": [
+          13
+        ],
+        "path": [
+          17
+        ],
+        "text": "8x17x13",
+        "role": "reply"
+      },
+      {
+        "from": 1,
+        "to": 36,
+        "caps": [
+          17,
+          38,
+          42
+        ],
+        "path": [
+          34,
+          47,
+          36
+        ],
+        "text": "1x36x17x38x42",
+        "role": "solver"
+      },
+      {
+        "from": 19,
+        "to": 15,
+        "caps": [],
+        "text": "19-15",
+        "role": "reply"
+      },
+      {
+        "from": 36,
+        "to": 32,
+        "caps": [],
+        "text": "36-32",
+        "role": "solver"
+      },
+      {
+        "from": 15,
+        "to": 9,
+        "caps": [],
+        "text": "15-9",
+        "role": "reply"
+      },
+      {
+        "from": 32,
+        "to": 5,
+        "caps": [
+          9
+        ],
+        "path": [
+          5
+        ],
+        "text": "32x5x9",
+        "role": "solver"
+      }
+    ],
+    "explanation": "Find the unique first move forcing a win within 5 of your turns. All legal defensive replies are covered under Nigerian rules.",
+    "source": "Kentro server creator",
+    "positionHash": "50497409ee75ce5fae5469cfbe2530a640557af0a7ec4d9c03e478d3cbe751ff",
+    "proof": {
+      "fen": "BeeeeewewbBbeeeeeeeeeeeeeeeeeeeeeeeeeeweeeeeweeeeee",
+      "solver": "B",
+      "difficulty": "Hard",
+      "maxPlies": 9,
+      "line": [
+        {
+          "from": 6,
+          "to": 1,
+          "caps": []
+        },
+        {
+          "from": 10,
+          "to": 19,
+          "caps": [
+            15
+          ],
+          "path": [
+            19
+          ]
+        },
+        {
+          "from": 7,
+          "to": 13,
+          "caps": []
+        },
+        {
+          "from": 8,
+          "to": 17,
+          "caps": [
+            13
+          ],
+          "path": [
+            17
+          ]
+        },
+        {
+          "from": 1,
+          "to": 36,
+          "caps": [
+            17,
+            38,
+            42
+          ],
+          "path": [
+            34,
+            47,
+            36
+          ]
+        },
+        {
+          "from": 19,
+          "to": 15,
+          "caps": []
+        },
+        {
+          "from": 36,
+          "to": 32,
+          "caps": []
+        },
+        {
+          "from": 15,
+          "to": 9,
+          "caps": []
+        },
+        {
+          "from": 32,
+          "to": 5,
+          "caps": [
+            9
+          ],
+          "path": [
+            5
+          ]
+        }
+      ],
+      "nodes": 62844,
+      "certificate": {
+        "edges": [
+          {
+            "move": {
+              "from": 6,
+              "to": 1,
+              "caps": []
+            },
+            "next": {
+              "edges": [
+                {
+                  "move": {
+                    "from": 10,
+                    "to": 19,
+                    "caps": [
+                      15
+                    ],
+                    "path": [
+                      19
+                    ]
+                  },
+                  "next": {
+                    "edges": [
+                      {
+                        "move": {
+                          "from": 7,
+                          "to": 13,
+                          "caps": []
+                        },
+                        "next": {
+                          "edges": [
+                            {
+                              "move": {
+                                "from": 8,
+                                "to": 17,
+                                "caps": [
+                                  13
+                                ],
+                                "path": [
+                                  17
+                                ]
+                              },
+                              "next": {
+                                "edges": [
+                                  {
+                                    "move": {
+                                      "from": 1,
+                                      "to": 36,
+                                      "caps": [
+                                        17,
+                                        38,
+                                        42
+                                      ],
+                                      "path": [
+                                        34,
+                                        47,
+                                        36
+                                      ]
+                                    },
+                                    "next": {
+                                      "edges": [
+                                        {
+                                          "move": {
+                                            "from": 19,
+                                            "to": 14,
+                                            "caps": []
+                                          },
+                                          "next": {
+                                            "edges": [
+                                              {
+                                                "move": {
+                                                  "from": 36,
+                                                  "to": 9,
+                                                  "caps": [
+                                                    14
+                                                  ],
+                                                  "path": [
+                                                    9
+                                                  ]
+                                                },
+                                                "next": {
+                                                  "edges": []
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "move": {
+                                            "from": 19,
+                                            "to": 15,
+                                            "caps": []
+                                          },
+                                          "next": {
+                                            "edges": [
+                                              {
+                                                "move": {
+                                                  "from": 36,
+                                                  "to": 32,
+                                                  "caps": []
+                                                },
+                                                "next": {
+                                                  "edges": [
+                                                    {
+                                                      "move": {
+                                                        "from": 15,
+                                                        "to": 9,
+                                                        "caps": []
+                                                      },
+                                                      "next": {
+                                                        "edges": [
+                                                          {
+                                                            "move": {
+                                                              "from": 32,
+                                                              "to": 5,
+                                                              "caps": [
+                                                                9
+                                                              ],
+                                                              "path": [
+                                                                5
+                                                              ]
+                                                            },
+                                                            "next": {
+                                                              "edges": []
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    {
+                                                      "move": {
+                                                        "from": 15,
+                                                        "to": 10,
+                                                        "caps": []
+                                                      },
+                                                      "next": {
+                                                        "edges": [
+                                                          {
+                                                            "move": {
+                                                              "from": 32,
+                                                              "to": 5,
+                                                              "caps": []
+                                                            },
+                                                            "next": {
+                                                              "edges": []
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "theme": "Sacrifice and capture",
+      "description": "Find the unique first move forcing a win within 5 of your turns. All legal defensive replies are covered under Nigerian rules."
+    }
+  }
+]
