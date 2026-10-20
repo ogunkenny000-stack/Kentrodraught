@@ -1,0 +1,3 @@
+import React,{useEffect,useState} from 'react';
+import {WifiOff} from 'lucide-react';
+export function ConnectionNotice(){const [offline,setOffline]=useState(()=>!navigator.onLine);useEffect(()=>{const update=()=>setOffline(!navigator.onLine);window.addEventListener('online',update);window.addEventListener('offline',update);return()=>{window.removeEventListener('online',update);window.removeEventListener('offline',update);};},[]);return offline?<div className="k-connection-notice" role="status"><WifiOff size={16}/><span>You’re offline. Reconnect for online play and cloud saves. Keep your browser data until pending saves finish.</span></div>:null;}

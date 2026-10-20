@@ -18,7 +18,7 @@ const names: Partial<Record<PlayMode,string>> = {
   Home: "Home", Multiplayer: "Online arena", OfflineNearby: "Nearby play", KentroTV: "Kentro TV",
   Human_vs_AI: "Play vs Ken", AI_vs_Human: "Play vs Ken", AI_vs_AI: "Engine match",
   Tournament: "Tournaments", Analysis: "Analysis lab", Training: "Training", Editor: "Board editor",
-  Puzzles: "Puzzles", Learn: "Learn", Global_Chat: "Community",
+  Puzzles: "Puzzles", Learn: "Academy", Global_Chat: "Community",
 };
 export function TopNav({isMobile, playMode, isGameActive = false, moveHistory, muted, setMuted, handleModeChange, setIsLeftDrawerOpen, showAdmin, onOpenAdmin, setIsRightDrawerOpen, setShowAppGuideModal, setShowSettingsModal, showMobileDeskButton}:TopNavProps) {
   const isBoard = isGameActive || ["Human_vs_AI", "AI_vs_Human", "AI_vs_AI", "Analysis", "Training", "Editor", "Puzzles"].includes(playMode);

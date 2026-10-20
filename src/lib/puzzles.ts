@@ -22,26 +22,25 @@ export function msUntilPuzzleReset(now: Date = new Date()): number {
   return next.getTime() - d.getTime();
 }
 
-export function getSolvedPuzzleIds(): Set<string> {
-  try {
-    const raw = localStorage.getItem(currentPuzzleWeekKey());
-    const arr = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : []);
-  } catch {
-    return new Set();
-  }
+export function puzzleProgressKey(ownerId?: string): string {
+  return `${currentPuzzleWeekKey()}_${encodeURIComponent(ownerId || 'guest')}`;
 }
-
-export function markPuzzleSolved(id: string): void {
+export function getSolvedPuzzleIds(ownerId?: string): Set<string> {
   try {
-    const key = currentPuzzleWeekKey();
-    const solved = getSolvedPuzzleIds();
+    const raw = localStorage.getItem(puzzleProgressKey(ownerId));
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : []);
+  } catch { return new Set(); }
+}
+export function markPuzzleSolved(id: string, ownerId?: string): void {
+  try {
+    const key = puzzleProgressKey(ownerId), solved = getSolvedPuzzleIds(ownerId);
     solved.add(id);
     localStorage.setItem(key, JSON.stringify([...solved]));
-    // Prune previous weeks so localStorage never accumulates forever.
+    const suffix = `_${encodeURIComponent(ownerId || 'guest')}`;
     for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith("kentro_puzzles_solved_") && k !== key) localStorage.removeItem(k);
+      const old = localStorage.key(i);
+      if (old && old.startsWith('kentro_puzzles_solved_') && old.endsWith(suffix) && old !== key) localStorage.removeItem(old);
     }
-  } catch {}
+  } catch { /* Practice stays available when storage is blocked. */ }
 }

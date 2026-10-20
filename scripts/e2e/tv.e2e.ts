@@ -267,7 +267,7 @@ try {
   await waitForText(desktop,'Low data: updates every 30s');
   await snapshot(desktop,'tv-07-delayed-broadcast');
   const caster=await pageAt(390,844,true);await caster.goto(`${origin.origin}/?replay=${game.gameCode}`,{waitUntil:'domcontentloaded'});await waitForText(caster,'approved commentator');await clickText(caster,'Draw arrows on board');
-  await caster.click('[aria-label="Square 31 w"]');await caster.click('[aria-label="Square 26"]');
+  await caster.click('[aria-label="Square 31 White man"]');await caster.click('[aria-label="Square 26 empty"]');
   assert(!!await caster.$('[aria-label="Commentator arrows"] line'),'approved commentator draws arrows on the actual replay board');
   await caster.type('#tv-comment','Watch this diagonal');await clickText(caster,'Post');await waitForText(caster,'Posted.');
   assert(tvCommentPosts.some(p=>p.arrows.some((a:number[])=>a[0]===31&&a[1]===26)),'commentary publishes the selected arrow endpoints');

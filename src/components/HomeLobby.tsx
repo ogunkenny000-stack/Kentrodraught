@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ArrowRight, Bell, BookOpen, Check, ChevronDown, ChevronRight, CirclePlay, Clock3, Compass, Cpu, Crown, Eye, Gamepad2, Globe2, History, LogOut, Medal, MessageCircle, MonitorPlay, Radio, Settings2, Share2, ShieldCheck, Sparkles, Swords, Trophy, Users, Wifi, Zap } from "lucide-react";
+import { ArrowRight, Bell, BookOpen, Check, ChevronDown, ChevronRight, CirclePlay, Clock3, Compass, Cpu, Crown, Eye, Gamepad2, Globe2, GraduationCap, History, LogOut, Medal, MessageCircle, MonitorPlay, Radio, Settings2, Share2, ShieldCheck, Sparkles, Swords, Trophy, Users, Wifi, Zap } from "lucide-react";
 import { PlayMode, PlayerStats } from "../types";
 import { MatchResultPair } from "./MatchResultPair";
 import { uniqueCompletedMatches } from "../lib/completedMatches";
@@ -87,6 +87,7 @@ export function HomeLobby({
         </section>
       </div>
 
+      <section className="k-home-learning"><div className="k-learning-mark"><GraduationCap size={28}/></div><div><span className="k-overline">BUILD YOUR FOUNDATION</span><h3>See the pattern. Own the board.</h3><p>Six guided lessons, real board exercises and a clear path into Nigerian draughts.</p></div><button className="k-button k-button-outline" onClick={()=>onSelectMode("Learn")}>Open Academy <ArrowRight size={16}/></button></section>
       <section className="k-surface k-community-strip"><div><span className="k-overline">YOUR COMMUNITY</span><h3>Better together.</h3><p>Connect with fellow players, challenge friends, or solve your next puzzle.</p></div><div className="k-community-actions"><button onClick={() => onSelectMode("Global_Chat")}><MessageCircle size={19}/> Lounge</button><button onClick={onOpenPlayers}><Users size={19}/> Players</button><button onClick={() => onSelectMode("Puzzles")}><Zap size={19}/> Puzzles</button><button onClick={() => onSelectMode("Learn")}><BookOpen size={19}/> Learn</button></div></section>
       {latestGames.length > 0 && <section className="k-surface k-history-section"><div className="k-section-heading"><div><span className="k-overline">CONTINUE IMPROVING</span><h3>Recent results</h3></div><button className="k-text-button" onClick={() => onOpenPastGamesModal?.("All")}>All games <ChevronRight size={16}/></button></div><div className="k-recent-results">{latestGames.map(g => <button className="k-result-row" key={g.id} onClick={() => onAnalyzeGame(g)}><MatchResultPair game={g} compact/><ChevronRight size={17}/></button>)}</div></section>}
       <footer className="k-home-footer"><span>Kentro Draughts · Nigerian draughts, built for everyone</span><div><button onClick={onOpenStore}>Coins · {coinBalance}</button>{onSignOut && <button onClick={onSignOut}><LogOut size={14}/> Sign out</button>}</div></footer>

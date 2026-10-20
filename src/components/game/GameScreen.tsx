@@ -1039,6 +1039,7 @@ export function GameScreen(props: GameScreenProps) {
                           exit={{ scale: 0, opacity: 0 }}
                           transition={isCapturedAnim ? { duration: 0.35, ease: "easeIn" } : { duration: 0.12, ease: "easeOut" }}
                           className={`kentro-royal-piece ${piece === "w" || piece === "W" ? "kentro-royal-piece--gold" : "kentro-royal-piece--black"} ${isCapturedAnim ? "z-30 ring-2 ring-rose-500/80" : ""}`}
+                          role="img"
                           aria-label={`${piece === "W" || piece === "B" ? "King " : ""}${piece.toLowerCase() === "w" ? "Gold" : "Black"} piece`}
                         >
                           {(piece === "W" || piece === "B") && (

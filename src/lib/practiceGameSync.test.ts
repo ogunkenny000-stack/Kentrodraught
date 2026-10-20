@@ -1,11 +1,20 @@
-import {beforeEach,expect,it,vi} from 'vitest';
-const f=vi.hoisted(()=>({store:new Map<string,string>(),write:vi.fn(),session:vi.fn()}));
-vi.mock('./safeStorage',()=>({safeStorage:{getItem:(k:string)=>f.store.get(k)??null,setItem:(k:string,v:string)=>f.store.set(k,v)}}));
-vi.mock('../supabase',()=>({supabase:{auth:{getSession:f.session},from:()=>({upsert:f.write})}}));
-import {savePracticeGame,retryPracticeGames} from './practiceGameSync';
-beforeEach(()=>{f.store.clear();f.write.mockReset().mockResolvedValue({error:null});f.session.mockReset().mockResolvedValue({data:{session:{user:{id:'alice'}}}});});
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+const f=vi.hoisted(()=>({store:new Map<string,string>(),blocked:false,write:vi.fn(),session:vi.fn()}));
+vi.mock('./safeStorage',()=>({safeStorage:{getItem:(k:string)=>f.store.get(k)??null,setItem:(k:string,v:string)=>{if(!f.blocked)f.store.set(k,v);}}}));
+vi.mock('../supabase',()=>({supabase:{auth:{getSession:f.session},from:()=>({upsert:(...args:any[])=>({abortSignal:(signal:AbortSignal)=>Promise.race([f.write(...args),new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('Save request timed out')),{once:true}))])})})}}));
+import {savePracticeGame,retryPracticeGames,getPracticeSyncState} from './practiceGameSync';
+beforeEach(()=>{f.store.clear();f.blocked=false;f.write.mockReset().mockResolvedValue({error:null});f.session.mockReset().mockResolvedValue({data:{session:{user:{id:'alice'}}}});});
 it('keeps an offline game and retries using its stable ID with no duplicate insertion',async()=>{
  f.write.mockResolvedValueOnce({error:Error('offline')});await expect(savePracticeGame('alice',{gameId:'game-1',moveHistory:[]})).rejects.toThrow('offline');expect(f.store.get('kentro.pendingPracticeGames.alice')).toContain('game-1');expect(await retryPracticeGames('alice')).toBe(1);expect(f.write.mock.calls[1]).toEqual([{gameId:'game-1',moveHistory:[]},{onConflict:'gameId',ignoreDuplicates:true}]);expect(await retryPracticeGames('alice')).toBe(0);
 });
 it('never sends another signed-in account the pending games',async()=>{f.session.mockResolvedValue({data:{session:{user:{id:'bob'}}}});await expect(savePracticeGame('alice',{gameId:'game-2'})).rejects.toThrow('same account');expect(f.write).not.toHaveBeenCalled();expect(f.store.get('kentro.pendingPracticeGames.alice')).toContain('game-2');});
 it('serializes concurrent sends and drains games added during a send',async()=>{let finish:(value:unknown)=>void;f.write.mockImplementationOnce(()=>new Promise(r=>{finish=r;}));const one=savePracticeGame('alice',{gameId:'one'});await vi.waitFor(()=>expect(f.write).toHaveBeenCalledTimes(1));const two=savePracticeGame('alice',{gameId:'two'});finish!({error:null});await Promise.all([one,two]);expect(f.write.mock.calls.map(c=>c[0].gameId)).toEqual(['one','two']);});
+
+it('reports pending and saved states without exposing another owner queue',async()=>{f.write.mockResolvedValueOnce({error:Error('offline')});await expect(savePracticeGame('alice',{gameId:'status-game'})).rejects.toThrow();expect(getPracticeSyncState('alice')).toMatchObject({phase:'error',count:1});expect(getPracticeSyncState('unrelated')).toMatchObject({phase:'idle',count:0});await retryPracticeGames('alice');expect(getPracticeSyncState('alice')).toMatchObject({phase:'saved',count:0});});
+it('times out an unresponsive upload and preserves its retry record',async()=>{vi.useFakeTimers();try{f.write.mockImplementationOnce(()=>new Promise(()=>{}));const task=savePracticeGame('alice',{gameId:'timeout'});const assertion=expect(task).rejects.toThrow('timed out');await vi.advanceTimersByTimeAsync(15001);await assertion;expect(f.store.get('kentro.pendingPracticeGames.alice')).toContain('timeout');expect(getPracticeSyncState('alice').phase).toBe('error');}finally{vi.useRealTimers();}});
+
+afterEach(()=>vi.unstubAllGlobals());
+it('still saves when an embedded browser exposes Web Locks but denies access',async()=>{vi.stubGlobal('navigator',{locks:{request:vi.fn().mockRejectedValue(Object.assign(new Error('Denied'),{name:'SecurityError'}))}});expect(await savePracticeGame('alice',{gameId:'embedded'})).toBe(1);expect(f.write).toHaveBeenCalledTimes(1);});
+
+it('keeps a recording in the current window when storage is blocked and later confirms the cloud save',async()=>{f.blocked=true;f.session.mockResolvedValue({data:{session:{user:{id:'blocked-owner'}}}});f.write.mockResolvedValueOnce({error:Error('offline')});await expect(savePracticeGame('blocked-owner',{gameId:'volatile-game'})).rejects.toThrow('offline');expect(getPracticeSyncState('blocked-owner')).toMatchObject({phase:'error',count:1,durable:false});expect(await retryPracticeGames('blocked-owner')).toBe(1);expect(getPracticeSyncState('blocked-owner')).toMatchObject({phase:'saved',count:0});expect(f.write).toHaveBeenCalledTimes(2);});
+it('does not resend acknowledged durable entries forever if storage removal is blocked',async()=>{f.store.set('kentro.pendingPracticeGames.blocked-removal',JSON.stringify([{gameId:'old'}]));f.blocked=true;f.session.mockResolvedValue({data:{session:{user:{id:'blocked-removal'}}}});expect(await retryPracticeGames('blocked-removal')).toBe(1);expect(await retryPracticeGames('blocked-removal')).toBe(0);expect(f.write).toHaveBeenCalledTimes(1);});

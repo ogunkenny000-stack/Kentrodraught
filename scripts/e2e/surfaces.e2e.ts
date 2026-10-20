@@ -59,7 +59,8 @@ try {
   assert(await page.evaluate(sq => !!document.querySelector(`#square-${sq} .kentro-royal-piece`), move.to), 'analysis board accepts a legal move after leaving a custom position');
   await snapshot(page, 'surfaces-03-analysis');
   await click('Home'); await click('Academy');
-  await waitForText(page, 'Academy');
+  await page.waitForSelector('.k-academy-page');
+  await waitForText(page, 'Kentro Academy');
   assert(await page.evaluate(() => /fundamental|beginner|lesson|learn/i.test(document.body.innerText)), 'academy provides learning content');
   await snapshot(page, 'surfaces-04-academy');
   await click('Home'); await click('Puzzles');

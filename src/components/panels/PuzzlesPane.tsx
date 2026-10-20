@@ -7,6 +7,7 @@ export interface PuzzlesPaneProps {
   onStartPuzzle: (puzzle: Puzzle & { source?: string }) => void;
   /** bump to re-read solved-state after a puzzle is completed */
   solvedVersion: number;
+  ownerId?: string;
   onBackToHome?: () => void;
 }
 
@@ -20,30 +21,36 @@ const DIFF_STYLE: Record<string, string> = {
  * The weekly puzzle arena: admin-built traps plus tactics mined from real
  * community games. Progress restarts every 7 days (ISO week).
  */
-export function PuzzlesPane({ onStartPuzzle, solvedVersion, onBackToHome }: PuzzlesPaneProps) {
+export function PuzzlesPane({ onStartPuzzle, solvedVersion, ownerId, onBackToHome }: PuzzlesPaneProps) {
+  const [difficulty,setDifficulty]=useState("All");
+  const [unsolvedOnly,setUnsolvedOnly]=useState(false);
+  const [query,setQuery]=useState("");
   const [puzzles, setPuzzles] = useState<(Puzzle & { source?: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const solved = useMemo(() => getSolvedPuzzleIds(), [solvedVersion]);
+  const solved = useMemo(() => getSolvedPuzzleIds(ownerId), [solvedVersion,ownerId]);
 
   const load = async () => {
     setLoading(true);
     setError(null);
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
     try {
-      const res = await fetch("/api/puzzles");
+      const res = await fetch("/api/puzzles",{signal:controller.signal});
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to load");
       setPuzzles(Array.isArray(data.puzzles) ? data.puzzles : []);
     } catch (e: any) {
-      setError(e?.message || "Could not load puzzles.");
+      setError(e?.name==='AbortError'?"Puzzles are taking too long to load. Check your connection and try again.":e?.message || "Could not load puzzles.");
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   };
 
   useEffect(() => { load(); }, []);
 
+  const visiblePuzzles=puzzles.filter(p=>(difficulty==='All'||p.difficulty===difficulty)&&(!unsolvedOnly||!solved.has(p.id))&&`${p.title} ${p.theme}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>(['Easy','Medium','Hard'].indexOf(a.difficulty)-['Easy','Medium','Hard'].indexOf(b.difficulty)));
   const daysLeft = Math.max(1, Math.ceil(msUntilPuzzleReset() / 86400000));
   const solvedCount = puzzles.filter((p) => solved.has(p.id)).length;
 
@@ -69,7 +76,7 @@ export function PuzzlesPane({ onStartPuzzle, solvedVersion, onBackToHome }: Puzz
             <div>
               <h1 className="text-lg font-extrabold text-white font-sans uppercase tracking-tight leading-none">Weekly Puzzles</h1>
               <p className="text-[10px] text-amber-500/70 font-sans tracking-[0.12em] uppercase mt-0.5">
-                Traps &amp; tactics from real games
+                Studies, traps &amp; tactical challenges
               </p>
             </div>
           </div>
@@ -102,6 +109,7 @@ export function PuzzlesPane({ onStartPuzzle, solvedVersion, onBackToHome }: Puzz
           </span>
         </div>
 
+        <div className="k-puzzle-filters"><label>Difficulty<select aria-label="Puzzle difficulty" value={difficulty} onChange={e=>setDifficulty(e.target.value)}>{['All','Easy','Medium','Hard'].map(d=><option key={d}>{d}</option>)}</select></label><label className="k-puzzle-search">Find a challenge<input aria-label="Search puzzles" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search a theme or title"/></label><label className="k-puzzle-unsolved"><input type="checkbox" checked={unsolvedOnly} onChange={e=>setUnsolvedOnly(e.target.checked)}/> Unsolved only</label></div>
         {/* List */}
         {loading ? (
           <div className="text-center text-xs text-slate-500 italic py-12">Loading this week's puzzles...</div>
@@ -109,11 +117,12 @@ export function PuzzlesPane({ onStartPuzzle, solvedVersion, onBackToHome }: Puzz
           <div className="text-center text-xs text-rose-400 py-12">{error}</div>
         ) : puzzles.length === 0 ? (
           <div className="text-center text-xs text-slate-500 italic py-12">
-            No puzzles published yet. An admin can mine tactics from recent games in the Admin Panel.
+            New challenges will appear here when published. Please try again later.
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {puzzles.map((p) => {
+            {!visiblePuzzles.length&&<p role="status" className="text-sm text-slate-300 p-4">No challenges match these filters. Try another difficulty or clear your search.</p>}
+            {visiblePuzzles.map((p) => {
               const isSolved = solved.has(p.id);
               return (
                 <button

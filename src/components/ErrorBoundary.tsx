@@ -84,8 +84,8 @@ export class ErrorBoundary extends Component<Props, State> {
           <div>
             <div className="text-slate-100 font-extrabold text-base">Something went wrong</div>
             <p className="text-slate-400 text-xs mt-1 leading-relaxed">
-              An unexpected error interrupted the app. Your games are saved —
-              reloading will pick up where you left off.
+              An unexpected error interrupted the app. Reload to try again.
+              Completed games already saved to your account remain available.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2 w-full">

@@ -1,3 +1,5 @@
+import { ConnectionNotice } from "./components/ConnectionNotice";
+import { SaveStatus } from "./components/SaveStatus";
 import { savePracticeGame, retryPracticeGames } from './lib/practiceGameSync';
 import { canonicalGameMove, recordedGameData, savedGameStart } from './lib/gameRecording';
 import { saveKenVictory, retryPendingKenVictories } from "./lib/kenProgression";
@@ -67,6 +69,7 @@ import { GameScreen } from "./components/game/GameScreen";
 const OfflineKen = lazy(() => import("./components/game/OfflineKen").then(m => ({ default: m.OfflineKen })));
 const OfflineNearby = lazy(() => import("./components/game/OfflineNearby").then(m => ({ default: m.OfflineNearby })));
 const KentroTV = lazy(() => import("./components/KentroTV").then(m => ({ default: m.KentroTV })));
+const Academy = lazy(() => import("./components/Academy").then(m => ({default:m.Academy})));
 import { NotificationCenter, useKentroNotifications } from "./components/NotificationCenter";
 import { parseReplayLink } from "./lib/kentroTv";
 import { uniqueCompletedMatches } from "./lib/completedMatches";
@@ -4258,7 +4261,7 @@ export default function App() {
   // Record weekly progress the moment a puzzle is fully solved.
   useEffect(() => {
     if (puzzleCompleted && activePuzzleId) {
-      markPuzzleSolved(activePuzzleId);
+      markPuzzleSolved(activePuzzleId, authUser?.id);
       setPuzzleSolvedVersion((v) => v + 1);
     }
   }, [puzzleCompleted, activePuzzleId]);
@@ -4531,7 +4534,10 @@ export default function App() {
   return (
     <AdminProfileProvider permissions={adminPermissions}>
     <div className={`k-app-shell fixed inset-0 text-slate-100 flex flex-col font-sans select-none overflow-hidden w-full h-full ${focusMode && isBoardScreenActive ? "k-focus-active" : ""} ${reducedMotion ? "k-motion-reduced" : ""}`}>
+      <a className="k-skip-link" href="#kentro-main-content">Skip to main content</a>
       <InstallAppPrompt />
+      <ConnectionNotice/>
+      <SaveStatus ownerId={authUser?.id}/>
       {guestMode && (
         <div className="shrink-0 bg-emerald-500/10 border-b border-emerald-500/25 px-3 py-2 flex items-center justify-between gap-2 z-40">
           <div className="min-w-0 text-[11px] text-emerald-200 font-sans">
@@ -4766,7 +4772,7 @@ export default function App() {
         />
 
         {/* Center Screen: Game Board Section */}
-        <main className={`flex-1 min-h-0 min-w-0 flex flex-col ${isBoardScreenActive ? "items-center justify-center overflow-hidden" : playMode === "Global_Chat" ? "items-stretch justify-start overflow-hidden" : "items-stretch justify-start overflow-y-auto"} relative k-app-main w-full`}>
+        <main id="kentro-main-content" tabIndex={-1} className={`flex-1 min-h-0 min-w-0 flex flex-col ${isBoardScreenActive ? "items-center justify-center overflow-hidden" : playMode === "Global_Chat" ? "items-stretch justify-start overflow-hidden" : "items-stretch justify-start overflow-y-auto"} relative k-app-main w-full`}>
           <Suspense fallback={<div role="status" className="flex min-h-40 items-center justify-center text-xs text-slate-400">Loading…</div>}>
           {playMode === "Home" ? (
             <HomeLobby
@@ -4812,15 +4818,10 @@ export default function App() {
               initialReplay={initialReplay}
             />
           ) : playMode === "Learn" ? (
-            <ComingSoonPane
-              icon={GraduationCap}
-              title="Learn"
-              description="Guided lessons, opening theory, and tactics training for Nigerian draughts are on the way."
-              featureKey="learn"
-              onBackToHome={() => handleModeChange("Home")}
-            />
+            <Academy key={authUser?.id||"guest"} ownerId={authUser?.id} onHome={()=>handleModeChange("Home")} onPuzzles={()=>handleModeChange("Puzzles")} onPlay={()=>handleModeChange("Human_vs_AI")}/>
+
           ) : playMode === "Puzzles" && !activePuzzleId ? (
-            <PuzzlesPane onStartPuzzle={handleStartPuzzle} solvedVersion={puzzleSolvedVersion} onBackToHome={() => handleModeChange("Home")} />
+            <PuzzlesPane ownerId={authUser?.id} onStartPuzzle={handleStartPuzzle} solvedVersion={puzzleSolvedVersion} onBackToHome={() => handleModeChange("Home")} />
           ) : playMode === "Global_Chat" ? (
             <GlobalChatLounge
               username={username || "Player"}
