@@ -1,3 +1,5 @@
+import { savePracticeGame, retryPracticeGames } from './lib/practiceGameSync';
+import { canonicalGameMove, recordedGameData, savedGameStart } from './lib/gameRecording';
 import { saveKenVictory, retryPendingKenVictories } from "./lib/kenProgression";
 import React, { useState, useEffect, useRef, useReducer, useMemo, useCallback, lazy, Suspense } from "react";
 import { supabase, handleSupabaseError, OperationType, authReady, signOutUser, resendVerificationEmail, isSupabaseConfigured, isPasswordRecovery, subscribePasswordRecovery } from "./supabase";
@@ -1192,7 +1194,7 @@ export default function App() {
       }
 
       try {
-        const gameId = `game_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+        const gameId = `practice_${kenProgressionGameIdRef.current}`;
 
         let whiteName = "White";
         let blackName = "Black";
@@ -1220,16 +1222,15 @@ export default function App() {
           blackPlayer: blackName,
           winner: winnerName,
           moveHistoryStrings,
-          moveHistory,
-          moveEvaluations: moveEvaluations || {},
+          ...recordedGameData(moveHistory, initialPositionRef.current.board, initialPositionRef.current.turn, moveEvaluations || {}),
           playMode,
           timestamp: Date.now(),
         };
 
         (async () => {
           try {
-            const { error: insertError } = await supabase.from("completed_games").insert(completedGameData);
-            if (insertError) throw insertError;
+            if (!authUser) throw new Error("Sign in to save this game.");
+            await savePracticeGame(authUser.id, completedGameData);
             // Refresh "Recent Games" / "Your Matches" immediately so the just-finished
             // game shows up right away instead of waiting for an unrelated navigation
             // (e.g. opening Analysis) to happen to trigger the next fetch.
@@ -1246,10 +1247,12 @@ export default function App() {
             }
           } catch (err: unknown) {
             handleSupabaseError(err, OperationType.WRITE, `completed_games/${gameId}`);
+            setStatusMessage(err instanceof Error ? `Game save pending: ${err.message}` : "Game save is pending. Keep your browser data and reconnect with the same account to retry.");
           }
         })();
       } catch (saveError) {
         console.error("Failed to construct game data for save:", saveError);
+        setStatusMessage("This game recording could not be verified and was not uploaded. Your existing games are unchanged.");
       }
       }
 
@@ -2278,19 +2281,8 @@ export default function App() {
       // Navigation or a fresh game invalidates the position this request used.
       if (generation !== aiRequestGenerationRef.current) return;
       if (data && data.move) {
-        const currentLegals = generateLegalMoves(board, turn);
-        let matchedMove = currentLegals.find((m) => movesAreEquivalent(m, data.move));
-        if (!matchedMove && data.move) {
-          const moveFrom = data.move.from;
-          const moveTo = data.move.to;
-          matchedMove = currentLegals.find((m) => m && m.from === moveFrom && m.to === moveTo);
-        }
-        if (!matchedMove && data.move) {
-          const pieceAtFrom = board[data.move.from];
-          if (pieceAtFrom && getCol(pieceAtFrom) === turn) {
-            matchedMove = data.move as Move;
-          }
-        }
+        if (boardRef.current !== board) return;
+        const matchedMove = canonicalGameMove(board, turn, data.move);
         if (matchedMove) {
           executeMove(data.kenProof ? { ...matchedMove, kenProof: data.kenProof } : matchedMove);
         } else {
@@ -2342,7 +2334,12 @@ export default function App() {
     }
   };
 
-  const executeMove = (mv: Move, sourceBoard: Board = board, sourceTurn: "W" | "B" = turn) => {
+  const executeMove = (requestedMove: Move, sourceBoard: Board = boardRef.current, sourceTurn: "W" | "B" = turn) => {
+    const mv = canonicalGameMove(sourceBoard, sourceTurn, requestedMove);
+    if (!mv) {
+      setStatusMessage("That move is no longer legal. Select your piece again.");
+      return;
+    }
     premoveRef.current = null;
     setPremove(null);
     if (playMode === "Multiplayer") {
@@ -2981,6 +2978,16 @@ export default function App() {
     return () => window.removeEventListener("online", retry);
   }, [walletIdentity]);
 
+  useEffect(() => {
+    if (!authUser) return;
+    const owner = authUser.id;
+    const retry = () => { void retryPracticeGames(owner).then(saved => {
+      if (saved && walletIdentityRef.current === walletIdentity) { void fetchMyGames(); void fetchSavedGames(); }
+    }).catch(() => { /* Pending records remain bound to their owner for reconnect. */ }); };
+    retry(); window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, [authUser?.id, walletIdentity]);
+
   // Earned levels are saved on victory even if the player goes Home/Analysis.
   useEffect(() => {
     if (!authUser || !gameOverInfo || gameOverInfo.outcome !== "win" ||
@@ -3491,11 +3498,12 @@ export default function App() {
   };
 
   const handleLoadSavedGame = (savedGame: any) => {
-    const start = { board: savedGame.initialBoard || createInitialBoard(), turn: savedGame.initialTurn === "B" ? "B" as const : "W" as const };
+    const savedStart = savedGameStart(savedGame);
+    const start = { board: savedStart.board || createInitialBoard(), turn: savedStart.turn };
     const loadedMoves: Move[] = savedGame.moveHistory || [];
     let replay;
     try { replay = replayForAnalysis(loadedMoves, start.board, start.turn); }
-    catch (error) { setStatusMessage(error instanceof Error ? error.message : "Invalid saved game"); return; }
+    catch (error) { setStatusMessage(`This recording is incomplete or contains an invalid move. ${error instanceof Error ? error.message : "The starting position may be missing."}`); return; }
     initialPositionRef.current = start;
     const tempBoard = replay.boards[replay.boards.length - 1];
     const loadedEvals: Record<number, MoveEvalResult> = savedGame.moveEvaluations || {};
