@@ -57,6 +57,7 @@ const session = {
 
 const browser = await launchChrome();
 const errors: string[] = [];
+const tvCommentPosts: any[] = [];
 const requests = { recent: 0, replay: 0, blocked: 0 };
 let failed = false;
 
@@ -71,6 +72,15 @@ async function pageAt(width: number, height: number, signedIn = false) {
     if (["http:", "https:"].includes(url.protocol) && url.origin !== origin.origin) {
       requests.blocked++;
       void request.abort("blockedbyclient");
+    } else if (url.origin === origin.origin && url.pathname.startsWith('/api/tv/')) {
+      let payload:any={};
+      if(url.pathname==='/api/tv/me')payload={signedIn,canCommentate:signedIn,canModerate:signedIn};
+      else if(url.pathname==='/api/tv/live')payload={delaySeconds:30,rooms:[{roomId:'tv-public-room',gameCode:game.gameCode,white:game.whitePlayer,black:game.blackPlayer,whiteRating:1600,blackRating:1550,ready:true,delaySeconds:30,snapshot:{timed:false,board:createInitialBoard(),lastMove:null,ply:0,whiteTime:300,blackTime:280,spectatorCount:4,phase:'playing',score:{}}}]};
+      else if(url.pathname==='/api/tv/tournaments')payload={tournaments:[{id:'fixture-cup',name:'Kentro TV Cup',status:'active',standings:[{username:'Local Gold',points:2},{username:'Local Black',points:1}],matches:[{id:'m1',round:1,white:'Local Gold',black:'Local Black',status:'playing',roomId:'tv-public-room'}]}]};
+      else if(url.pathname==='/api/tv/follows')payload=request.method()==='POST'?{ok:true}:{follows:[]};
+      else if(url.pathname.startsWith('/api/tv/feed/')){if(request.method()==='POST')tvCommentPosts.push(JSON.parse(request.postData()||'{}'));payload=request.method()==='POST'?{ok:true}:{comments:[]};}
+      else if(url.pathname==='/api/tv/reports')payload={reports:[]};
+      void request.respond({status:200,contentType:'application/json',body:JSON.stringify(payload)});
     } else if (url.origin === origin.origin && url.pathname === "/api/games/recent") {
       requests.recent++;
       void request.respond({ status: 200, contentType: "application/json", body: JSON.stringify({ games: [game] }) });
@@ -243,6 +253,25 @@ try {
   await authenticated.waitForSelector(categorySelector);
   assert(await authenticated.$eval(categorySelector, element => !(element as HTMLInputElement).checked), "disabled category remains off after reloading the app");
 
+  await desktop.click('[aria-label="First move"]'); await expectPosition(desktop,0);
+  await desktop.select('[aria-label="Playback speed"]','2');
+  assert(await desktop.$eval('[aria-label="Playback speed"]',e=>(e as HTMLSelectElement).value)==='2','viewer controls replay speed');
+  await clickText(desktop,'Predict the next move');
+  const firstOptions=generateLegalMoves(createInitialBoard(),'W');const firstChoice=firstOptions.findIndex(m=>m.from===history[0].from&&m.to===history[0].to&&JSON.stringify(m.caps)===JSON.stringify(history[0].caps));
+  await desktop.select('[aria-label="Your next-move prediction"]',String(firstChoice));await clickText(desktop,'Reveal recorded move');await waitForText(desktop,'Correct!');
+  assert(await position(desktop)===0,'prediction reveals the recorded choice without altering rating or board position');
+  await desktop.click('[role="tab"]:last-child');await waitForText(desktop,'Kentro TV Cup');await clickText(desktop,'Watch featured board');await waitForText(desktop,'No live engine suggestions');await desktop.waitForSelector('[aria-label="10 by 10 Nigerian Draughts replay board"]');
+  assert((await desktop.evaluate(()=>document.body.innerText)).includes('1600'),'broadcast renders genuine supplied player ratings');
+  assert((await desktop.evaluate(()=>document.body.innerText)).includes('Untimed'),'untimed broadcasts never display a false expired clock');
+  await desktop.click('input[type="checkbox"]');
+  await waitForText(desktop,'Low data: updates every 30s');
+  await snapshot(desktop,'tv-07-delayed-broadcast');
+  const caster=await pageAt(390,844,true);await caster.goto(`${origin.origin}/?replay=${game.gameCode}`,{waitUntil:'domcontentloaded'});await waitForText(caster,'approved commentator');await clickText(caster,'Draw arrows on board');
+  await caster.click('[aria-label="Square 31 w"]');await caster.click('[aria-label="Square 26"]');
+  assert(!!await caster.$('[aria-label="Commentator arrows"] line'),'approved commentator draws arrows on the actual replay board');
+  await caster.type('#tv-comment','Watch this diagonal');await clickText(caster,'Post');await waitForText(caster,'Posted.');
+  assert(tvCommentPosts.some(p=>p.arrows.some((a:number[])=>a[0]===31&&a[1]===26)),'commentary publishes the selected arrow endpoints');
+  await snapshot(caster,'tv-08-commentary-mobile');
   assert(requests.recent >= 3 && requests.replay >= 3, "TV uses the explicit local replay and recent-game fixtures");
   assert(!errors.length, `no uncaught UI errors (${errors.join("; ")})`);
   log(`PASS TV browser journey. Fixture requests: recent=${requests.recent}, replay=${requests.replay}; blocked off-origin requests=${requests.blocked}.`);

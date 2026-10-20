@@ -198,7 +198,7 @@ export default function App() {
     try {
       if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("offline") === "1") return "OfflineNearby";
       if (typeof window !== "undefined" && getRoomCodeFromUrl(window.location.search)) return "Multiplayer";
-      if (typeof window !== "undefined" && parseReplayLink(window.location.search)) return "KentroTV";
+      if (typeof window !== "undefined" && (parseReplayLink(window.location.search) || new URLSearchParams(window.location.search).has("tvRoom"))) return "KentroTV";
       if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "tournament") return "Tournament";
       const active = loadActiveRoom();
       if (active && active.roomId) return "Multiplayer";
@@ -4476,7 +4476,7 @@ export default function App() {
         setGuestEnabled(true);
         setGuestAiUsed(getGuestAiUsed());
         setUsername(getGuestName());
-        if (!inviteRoomCode && !initialReplay) setPlayMode("Home");
+        if (!inviteRoomCode && !initialReplay && !new URLSearchParams(window.location.search).has("tvRoom")) setPlayMode("Home");
       }} />;
   }
 

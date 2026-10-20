@@ -415,3 +415,10 @@ describe('bounded end offers',()=>{
     expect(f.alice.messages.some(m=>m.expired===true)).toBe(true);expect(f.room.phase).toBe('playing');
   });
 });
+
+describe('TV room publication',()=>{
+ it('exports only public started rooms and never includes participant IDs or transport secrets',async()=>{
+  const f=await game(false);const snapshot=f.server.tvSnapshots()[0];expect(snapshot).toMatchObject({roomId:f.room.id,ply:0,turn:'W'});expect(snapshot).not.toHaveProperty('participantUserIds');expect(snapshot).not.toHaveProperty('players');expect(snapshot).not.toHaveProperty('clock');
+  f.room.private=true;expect(f.server.tvSnapshots()).toEqual([]);f.room.private=false;f.room.started=false;expect(f.server.tvSnapshots()).toEqual([]);
+ });
+});

@@ -3,7 +3,7 @@ import type { Board, Move } from "../gameLogic";
 import type { KentroGameRecord } from "../types/gameRecords";
 
 export interface ReplayFrame { board: Board; move: Move | null; ply: number; turn: "W" | "B" }
-export interface Highlight { from: number; to: number; title: string; kind: "capture" | "promotion" | "finale" }
+export interface Highlight { from: number; to: number; title: string; kind: "capture" | "promotion" | "finale" | "sacrifice" | "king-capture" }
 
 /** Deep links are bounded by the loaded record, not merely the URL's limit. */
 export function replayBounds(frameCount: number, requestedPly: number, clipEnd?: number): { ply: number; range: { from: number; to: number } | null } {
@@ -36,6 +36,8 @@ export function selectHighlights(frames: ReplayFrame[], max = 8): Highlight[] {
     const move = frame.move!;
     const promoted = (last[move.from] === "w" || last[move.from] === "b") && (frame.board[move.to] === "W" || frame.board[move.to] === "B");
     const capCount = move.caps?.length || 0;
+    if(move.caps.some(square=>last[square]==='W'||last[square]==='B'))candidates.push({from:Math.max(0,i-3),to:Math.min(frames.length-1,i+1),title:`King captured · Move ${Math.ceil(i/2)}`,kind:'king-capture',weight:35});
+    if(!capCount&&frames[i+1]?.move?.caps.length&&((frames[i+2]?.move?.caps.length||0)>=2))candidates.push({from:Math.max(0,i-1),to:Math.min(frames.length-1,i+3),title:`Sacrifice sequence · Move ${Math.ceil(i/2)}`,kind:'sacrifice',weight:40});
     if (capCount > 0) candidates.push({ from: Math.max(0, i - 2), to: Math.min(frames.length - 1, i + 2), title: `${capCount}-piece capture · Move ${Math.ceil(i / 2)}`, kind: "capture", weight: capCount * 10 });
     if (promoted) candidates.push({ from: Math.max(0, i - 2), to: Math.min(frames.length - 1, i + 2), title: `King crowned · Move ${Math.ceil(i / 2)}`, kind: "promotion", weight: 9 });
   }
@@ -56,7 +58,7 @@ export function replayLink(base: string, gameCode: string, ply = 0, clipEnd?: nu
 export function parseReplayLink(search: string): { gameCode: string; ply: number; clipEnd?: number } | null {
   const p = new URLSearchParams(search);
   const code = p.get("replay") || "";
-  if (!/^[a-zA-Z0-9_-]{3,40}$/.test(code)) return null;
+  if (!/^[a-zA-Z0-9_-]{3,80}$/.test(code)) return null;
   const raw = Number(p.get("ply") || 0);
   const ply = Number.isSafeInteger(raw) && raw >= 0 ? Math.min(2000, raw) : 0;
   const clip = Number(p.get("clipEnd"));

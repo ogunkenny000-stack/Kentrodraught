@@ -1,0 +1,12 @@
+import {beforeEach,it,expect,vi} from 'vitest';
+const f=vi.hoisted(()=>({follows:[] as any[],notify:vi.fn(),ranges:[] as number[]}));
+vi.mock('../../supabaseAdmin',()=>({verifyAccessToken:vi.fn(),getSupabaseAdmin:()=>({from:(table:string)=>{let offset=0;const q:any={select:()=>q,in:()=>q,order:()=>q,range:(at:number)=>{offset=at;f.ranges.push(at);return q;},then:(resolve:any)=>Promise.resolve({data:table==='profiles'?[{ownerId:'player-id',usernameLower:'newname'}]:f.follows.slice(offset,offset+500),error:null}).then(resolve)};return q;}})}));
+vi.mock('../../adminService',()=>({requirePermission:vi.fn()}));
+vi.mock('./gameRecordsManager',()=>({getGameRecordByCode:vi.fn()}));
+vi.mock('./notifications',()=>({insertNotification:f.notify}));
+import {notifyTVFollowers} from './tvRouter';
+import {TVBroadcastBuffer} from './tvBroadcast';
+const buffer=()=>{const b=new TVBroadcastBuffer();b.capture([{roomId:'room-123',gameCode:'game-123',white:'NewName',black:'Opponent',board:{31:'w'},turn:'W',lastMove:null,ply:0,whiteTime:300,blackTime:300,spectatorCount:0,phase:'playing',score:{},capturedAt:0}],0);return b;};
+beforeEach(()=>{f.notify.mockReset().mockResolvedValue(undefined);f.ranges=[];f.follows=[];});
+it('keeps follows linked to the player identity after a username changes',async()=>{f.follows=[{follower_id:'viewer',player_id:'player-id',player_name:'oldname'}];await notifyTVFollowers(buffer());expect(f.notify).toHaveBeenCalledWith('viewer','system',expect.any(String),'NewName vs Opponent','/?tvRoom=room-123','tv:game-123:player-id');});
+it('notifies followers beyond the first database page',async()=>{f.follows=Array.from({length:501},(_,i)=>({follower_id:`viewer-${i}`,player_id:'player-id'}));await notifyTVFollowers(buffer());expect(f.notify).toHaveBeenCalledTimes(501);expect(f.ranges).toEqual([0,500]);});

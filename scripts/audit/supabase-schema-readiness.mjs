@@ -8,7 +8,8 @@ export const REQUIRED_TABLES = Object.freeze([
   'coin_wallets','coin_transactions','guest_online_trials','kentro_notifications',
   'kentro_push_subscriptions','kentro_security_policy_backup','kentro_match_settlements','kentro_match_charges',
   'kentro_rated_matches','kentro_tournament_invites','kentro_groups',
-  'kentro_group_members','kentro_group_messages'
+  'kentro_group_members','kentro_group_messages',
+  'kentro_tv_follows','kentro_tv_comments','kentro_tv_reports','kentro_tv_mutes'
 ]);
 export const REQUIRED_COLUMNS = Object.freeze({
   profiles:['statsVersion'],

@@ -1,3 +1,5 @@
+import { TVBroadcastBuffer } from './src/server/tvBroadcast';
+import { createTVRouter, notifyTVFollowers } from './src/server/tvRouter';
 import { authorizeEngineRequest, EngineAccessError } from './src/server/engineAccess';
 import { createMediaRouter } from "./src/server/mediaConfig";
 import { TournamentRuntime, hostedTournamentRepository, createTournamentRuntimeRouter } from "./src/server/tournamentRuntime";
@@ -405,6 +407,9 @@ async function startServer() {
   app.use(compression());
   const PORT = Number(process.env.PORT) || 3000;
   installBodyParsing(app, async req => !!await requirePermission(requestAccessToken(req.headers), "manage_puzzles"));
+  const createTVWriteLimiter = createRateLimiter({windowMs:60000,max:12}, 'tv-write');
+  const tvBuffer = new TVBroadcastBuffer(Number(process.env.KENTRO_TV_DELAY_SECONDS || 30) * 1000);
+  app.use('/api/tv', createRateLimiter({windowMs:60000,max:120}, 'tv'), (req,res,next) => req.method === 'GET' ? next() : createTVWriteLimiter(req,res,next), createTVRouter(tvBuffer));
   app.use('/api/auth', createRateLimiter({ windowMs: 60_000, max: 12 }, 'account-auth'), createAccountAuthRouter());
   app.use('/api/tournaments', createRateLimiter({ windowMs: 60000, max: 30 }, 'tournament-runtime'), createTournamentRuntimeRouter(tournamentRuntime));
   app.use('/api/media', createRateLimiter({ windowMs: 60000, max: 12 }, 'media-configuration'), createMediaRouter());
@@ -2690,6 +2695,15 @@ async function startServer() {
     sanitizeCustomBoard,
     findLegalMatch,
   });
+  const tvCaptureTimer = setInterval(() => tvBuffer.capture(onlinePlay.tvSnapshots()), 1000);
+  tvCaptureTimer.unref();
+  let tvNotifying = false;
+  const tvNotificationTimer = setInterval(() => {
+    if (tvNotifying || !process.env.SUPABASE_SECRET_KEY) return;
+    tvNotifying = true;
+    void notifyTVFollowers(tvBuffer).catch(error => console.error('[TV] Follow notifications pending', error)).finally(() => {tvNotifying = false;});
+  }, 15000);
+  tvNotificationTimer.unref();
   const tournamentTimer = setInterval(() => { if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) void tournamentRuntime.reconcile().catch(error => console.error('[Tournament] Reconciliation pending', error)); }, 10000);
   tournamentTimer.unref();
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) void tournamentRuntime.reconcile().catch(error => console.error('[Tournament] Startup pending', error));
@@ -2698,6 +2712,8 @@ async function startServer() {
     shuttingDown = true;
     console.log(`[Server] ${signal}: draining connections (up to 5 seconds)`);
     clearInterval(tournamentTimer);
+    clearInterval(tvCaptureTimer);
+    clearInterval(tvNotificationTimer);
     onlinePlay.shutdown();
     let httpClosed = false;
     let websocketClosed = false;

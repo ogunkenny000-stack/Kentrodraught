@@ -3017,6 +3017,16 @@ export function attachOnlinePlay(server: HttpServer, deps: OnlinePlayDeps) {
   return {
     wss,
     ensureTournamentRoom,
+    tvSnapshots: () => [...rooms.values()].filter(room => !room.private && room.started && room.gameState?.board).slice(0, 100).map(room => ({
+      roomId: room.id, gameCode: room.gameCode || room.id,
+      white: room.players.find(p => p.color === 'W')?.username || 'White',
+      black: room.players.find(p => p.color === 'B')?.username || 'Black',
+      board: room.gameState!.board!, turn: room.gameState!.turn,
+      lastMove: room.gameState!.moveHistory.at(-1) || null, ply: room.gameState!.moveHistory.length,
+      timed: room.clock.timed, whiteTime: legacySeconds(room.clock, 'W', now()), blackTime: legacySeconds(room.clock, 'B', now()),
+      spectatorCount: liveSpectatorCount(room), phase: room.phase, score: { ...room.seriesScore },
+      ...(room.tournamentId ? { tournamentId: room.tournamentId } : {}), capturedAt: now(),
+    })),
     shutdown,
     revokeUser,
     /** Live room map (read-only use: /api/games/next-code avoids codes of live rooms). */

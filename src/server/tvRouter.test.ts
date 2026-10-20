@@ -1,0 +1,24 @@
+import {afterEach,beforeEach,describe,it,expect,vi} from 'vitest';
+import express from 'express';
+import type {Server} from 'node:http';
+const f=vi.hoisted(()=>({uid:null as string|null,admin:false,game:null as any,writes:[] as any[],reads:[] as string[],foreign:false,tournaments:[] as any[]}));
+vi.mock('../../supabaseAdmin',()=>({verifyAccessToken:async()=>f.uid,getSupabaseAdmin:()=>({from:(table:string)=>{f.reads.push(table);let action='read',payload:any;const chain:any={select:()=>chain,eq:()=>chain,in:()=>chain,order:()=>chain,limit:()=>chain,maybeSingle:()=>chain,single:()=>chain,insert:(p:any)=>{action='insert';payload=p;return chain;},upsert:(p:any)=>{action='upsert';payload=p;return chain;},delete:()=>{action='delete';return chain;},update:(p:any)=>{action='update';payload=p;return chain;},then:(resolve:any)=>{if(action!=='read')f.writes.push({table,action,payload});let data:any=null;if(table==='tournaments')data=f.tournaments;if(table==='profiles')data={username:'Alice',usernameLower:'alice',ownerId:'player-b'};if(table==='kentro_tv_comments'&&action==='read')data=f.foreign?null:{id:'comment',author_id:'author'};if(table==='kentro_tv_reports'&&action==='read')data={id:'report',comment_id:'comment'};return Promise.resolve({data,error:null}).then(resolve);}};return chain;}})}));
+vi.mock('../../adminService',()=>({requirePermission:async()=>f.admin?{uid:'moderator'}:null}));
+vi.mock('./gameRecordsManager',()=>({getGameRecordByCode:async()=>f.game}));
+vi.mock('./notifications',()=>({insertNotification:vi.fn()}));
+import {TVBroadcastBuffer} from './tvBroadcast';
+import {createTVRouter} from './tvRouter';
+let server:Server,base:string;
+beforeEach(async()=>{f.uid=null;f.admin=false;f.game=null;f.writes=[];f.reads=[];f.foreign=false;f.tournaments=[];const app=express();app.use(express.json());app.use('/tv',createTVRouter(new TVBroadcastBuffer()));server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));base=`http://127.0.0.1:${(server.address() as any).port}/tv`;});
+afterEach(async()=>{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
+const post=(path:string,body:any)=>fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+describe('TV account and moderation boundaries',()=>{
+ it('omits private and spectator-disabled tournaments from the public broadcast',async()=>{f.tournaments=[{id:'public',name:'Open',visibility:'public',players:[],matches:[]},{id:'private',visibility:'private'},{id:'disabled',spectatorPermission:false}];const r=await fetch(base+'/tournaments');expect(r.status).toBe(200);expect((await r.json()).tournaments.map((t:any)=>t.id)).toEqual(['public']);});
+ it('never returns chat attached to private or missing records',async()=>{f.game={private:true};expect((await fetch(base+'/feed/game-123')).status).toBe(404);expect(f.reads).toEqual([]);});
+ it('rejects anonymous writes and unauthorized moderation',async()=>{expect((await post('/follows',{player:'Bob'})).status).toBe(401);expect((await post('/feed/game-123',{body:'hello',ply:0})).status).toBe(401);expect((await post('/moderate',{reportId:'report',action:'mute'})).status).toBe(403);expect(f.writes).toEqual([]);});
+ it('binds follows to the verified owner, ignoring body identities',async()=>{f.uid='verified';expect((await post('/follows',{player:'Alice',follower_id:'attacker'})).status).toBe(200);expect(f.writes[0].payload).toMatchObject({follower_id:'verified',player_id:'player-b'});});
+ it('strips forged caster authority and arrows from ordinary viewers',async()=>{f.uid='verified';f.game={private:false};expect((await post('/feed/game-123',{body:'A quiet move',ply:2,caster:true,arrows:[[1,50]]})).status).toBe(200);expect(f.writes[0].payload).toMatchObject({author_id:'verified',caster:false,arrows:[]});});
+ it('allows approved commentary but filters invalid arrow coordinates',async()=>{f.uid='verified';f.admin=true;f.game={private:false};expect((await post('/feed/game-123',{body:'Watch this diagonal',ply:2,arrows:[[1,50],[0,12],[2,2],['x',20]]})).status).toBe(200);expect(f.writes[0].payload.arrows).toEqual([[1,50]]);});
+ it('rejects a report of a comment from another broadcast',async()=>{f.uid='verified';f.game={private:false};f.foreign=true;expect((await post('/reports',{key:'game-123',commentId:'other',reason:'Abuse'})).status).toBe(422);expect(f.writes).toEqual([]);});
+ it('writes moderator identity from the verified permission record',async()=>{f.uid='verified';f.admin=true;expect((await post('/moderate',{reportId:'report',action:'mute',moderator_id:'forged'})).status).toBe(200);expect(f.writes.find(w=>w.table==='kentro_tv_mutes').payload).toMatchObject({moderator_id:'moderator',user_id:'author'});});
+});

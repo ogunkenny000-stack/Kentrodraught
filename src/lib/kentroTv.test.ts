@@ -78,3 +78,8 @@ describe("Notification safety", () => {
     expect(unreadCount(example, { ...DEFAULT_NOTIFICATION_PREFERENCES, challenge: false })).toBe(1);
   });
 });
+
+it('accepts stable practice recording UUIDs in exact-move links',()=>{
+ const code='practice_85f3410b-628c-4f7b-92f5-f87e83e7af00';
+ expect(parseReplayLink(new URL(replayLink('https://kentrodraught.ai.studio',code,7)).search)).toEqual({gameCode:code,ply:7});
+});
