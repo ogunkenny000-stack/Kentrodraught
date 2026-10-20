@@ -1,8 +1,0 @@
-$ /workspace/.tools/go/bin/go version
-go version go1.27.2 linux/amd64
-Exit: 0
-$ /workspace/.tools/go/bin/go test -race -count=1 ./...
-ok  	kentro/edge	1.037s
-Exit: 0
-$ /workspace/.tools/go/bin/go vet ./...
-Exit: 0

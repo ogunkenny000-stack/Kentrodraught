@@ -1,4 +1,0 @@
-
-> kentro-draughts@0.0.0 migrations:check
-> node scripts/build-migrations.cjs --check
-

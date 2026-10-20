@@ -1,5 +1,0 @@
-
-> kentro-draughts@0.0.0 test:hosted
-> node scripts/audit/hosted-supabase.mjs
-
-PENDING: hosted Supabase integration was not executed. Configure explicit disposable staging bindings and confirmation first.

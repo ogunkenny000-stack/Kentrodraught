@@ -1,8 +1,0 @@
-npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
-
-> kentro-draughts@0.0.0 postinstall
-> node scripts/build-engine.cjs
-
-[build:engine] Native engine initialized and completed a search.
-
-added 299 packages in 5s
