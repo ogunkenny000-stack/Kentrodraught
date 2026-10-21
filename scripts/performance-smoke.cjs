@@ -14,11 +14,15 @@ try {
   const css = '/assets/index-abcd8765.css';
   const lazy = '/assets/KentroTV-beef9090.js';
   const nearby = '/assets/OfflineNearby-abcd1234.js';
+  const analysis = '/assets/AnalysisSidebar-abcd1234.js';
+  const wallet = '/assets/CoinsPurchaseModal-abcd1234.js';
   const payload = 'console.log("Kentro");'.repeat(1500);
   for (const [file, data] of [[entry, payload], [css, 'a{color:#fff}'.repeat(1500)], [lazy, payload]]) {
     fs.writeFileSync(path.join(dist, file.slice(1)), data);
   }
   fs.writeFileSync(path.join(dist, nearby.slice(1)), `import './index-abc12345.js'; import('/assets/KentroTV-beef9090.js');`);
+  fs.writeFileSync(path.join(dist, analysis.slice(1)), `import './index-abc12345.js';`);
+  fs.writeFileSync(path.join(dist, wallet.slice(1)), payload);
   fs.writeFileSync(path.join(dist, 'index.html'), `<html><link rel="stylesheet" href="${css}"><script type="module" src="${entry}"></script></html>`);
   fs.writeFileSync(path.join(dist, 'sw.js'), `const CACHE_VERSION = "kentro-old";\nconst PRECACHE_ASSETS = [];\n`);
   const env = { ...process.env, KENTRO_DIST_DIR: dist };
@@ -28,6 +32,8 @@ try {
   assert(sw.includes(css));
   assert(sw.includes(nearby), 'Nearby must work after offline preparation');
   assert(!sw.includes(lazy), 'lazy TV must NOT download during install');
+  assert(sw.includes(analysis), 'analysis must remain usable after offline preparation');
+  assert(!sw.includes(wallet), 'network-only wallet must remain lazy');
   execFileSync(process.execPath, [path.join(__dirname, 'precompress-assets.cjs')], { env });
   const raw = fs.readFileSync(path.join(dist, entry.slice(1)));
   const gz = fs.readFileSync(path.join(dist, entry.slice(1) + '.gz'));

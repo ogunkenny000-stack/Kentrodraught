@@ -31,6 +31,8 @@ try {
   });
   assert(cached.some(path => path.includes("/OfflineNearby-")), "production install precaches nearby before the user opens its mode");
   assert(!cached.some(path => path.includes("/KentroTV-")), "TV remains lazy and avoids additional first-load downloads");
+  assert(cached.some(path => path.includes("/AnalysisSidebar-")), "analysis sidebar is prepared for offline use");
+  assert(!cached.some(path => path.includes("/CoinsPurchaseModal-")), "network-only wallet does not add install traffic");
   await page.setOfflineMode(true);
   await page.goto(`${APP_URL}/?offline=1`, { waitUntil: "domcontentloaded" });
   await waitForText(page, "Nearby Offline Game");

@@ -34,23 +34,29 @@ export function getAvatarUrl(username: string | null | undefined): Promise<strin
     return found.promise;
   }
   if (found) cache.delete(key);
-  // Supabase builders are PromiseLike (thenable) without .catch -- wrap
-    // in a real async fn so failures resolve to null instead of throwing.
-    const p = (async () => {
-      try {
-        const { data } = await supabase
-          .from("profiles")
-          .select("avatarUrl")
-          .eq("usernameLower", key)
-          .maybeSingle();
-        return (data?.avatarUrl as string | undefined) ?? null;
-      } catch {
-        return null;
-      }
-    })();
-    // Avatar changes are primed by the profile editor immediately; the TTL
-    // bounds stale results when another player edits their profile.
-  retain(key, p, 45 * 60_000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  let failed = false;
+  const p = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("avatarUrl")
+        .eq("usernameLower", key)
+        .abortSignal(controller.signal)
+        .maybeSingle();
+      if (error) { failed = true; return null; }
+      return (data?.avatarUrl as string | undefined) ?? null;
+    } catch {
+      failed = true;
+      return null;
+    } finally { clearTimeout(timer); }
+  })();
+  retain(key, p, 8_000);
+  void p.then(() => {
+    // A profile edit may have primed a newer avatar while this read ran.
+    if (cache.get(key)?.promise === p) retain(key, p, failed ? 15_000 : 45 * 60_000);
+  });
   return p;
 }
 

@@ -30,6 +30,7 @@ try {
   await Promise.race([new Promise(resolve => proc.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 2000))]);
   if (proc.exitCode === null) proc.kill('SIGKILL');
   evidence.checkedAt = new Date().toISOString();
+  fs.mkdirSync('docs/audit/evidence/finance-rollout-20261017', { recursive: true });
   fs.writeFileSync('docs/audit/evidence/finance-rollout-20261017/production-smoke.json', JSON.stringify(evidence, null, 2) + '\n');
   console.log(JSON.stringify(evidence, null, 2));
   fs.rmSync(runtime, { recursive: true, force: true });

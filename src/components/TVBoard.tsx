@@ -1,6 +1,6 @@
 import React from "react";
 import { ngRcToSq, ngSqToRc } from "../gameLogic";
-export function BoardReplay({ board, lastMove, arrows = [], onSquare, showNumbers=false }: {
+export const BoardReplay = React.memo(function BoardReplay({ board, lastMove, arrows = [], onSquare, showNumbers=false }: {
     showNumbers?: boolean; arrows?: number[][];
     onSquare?: (square: number) => void;
     board: Record<number, string | null>;
@@ -29,4 +29,11 @@ export function BoardReplay({ board, lastMove, arrows = [], onSquare, showNumber
     </div>
     {arrows.length > 0 && <svg aria-label="Commentator arrows" className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100"><defs><marker id="tv-arrow-head" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4" fill="#f59e0b"/></marker></defs>{arrows.map(([from, to], i) => { const [r, c] = ngSqToRc(from), [rr, cc] = ngSqToRc(to); return <line key={i} x1={c * 10 + 5} y1={r * 10 + 5} x2={cc * 10 + 5} y2={rr * 10 + 5} stroke="#f59e0b" strokeWidth="1.4" markerEnd="url(#tv-arrow-head)"/>; })}</svg>}
   </div>;
-}
+}, (before, after) => {
+    if (before.onSquare !== after.onSquare || before.showNumbers !== after.showNumbers ||
+        before.lastMove?.from !== after.lastMove?.from || before.lastMove?.to !== after.lastMove?.to) return false;
+    const left = before.arrows || [], right = after.arrows || [];
+    if (left.length !== right.length || left.some((arrow, i) => arrow[0] !== right[i][0] || arrow[1] !== right[i][1])) return false;
+    for (let sq = 1; sq <= 50; sq++) if (before.board[sq] !== after.board[sq]) return false;
+    return true;
+});

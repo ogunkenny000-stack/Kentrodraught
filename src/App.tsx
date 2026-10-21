@@ -77,13 +77,13 @@ import { FloatingVideoCall } from "./components/game/FloatingVideoCall";
 import { useWebRTCCall } from "./lib/useWebRTCCall";
 import { MultiplayerPanel, VoiceCallState } from "./components/panels/MultiplayerPanel";
 import { GameSidebar } from "./components/panels/GameSidebar";
-import { AnalysisSidebar } from "./components/panels/AnalysisSidebar";
+const AnalysisSidebar = lazy(() => import("./components/panels/AnalysisSidebar").then(m => ({ default: m.AnalysisSidebar })));
 import { RulesModal } from "./components/modals/RulesModal";
 import { AppGuideModal } from "./components/modals/AppGuideModal";
 import { SettingsModal } from "./components/modals/SettingsModal";
 import { AnalysisSetupModal } from "./components/modals/AnalysisSetupModal";
 import { PdnImportModal } from "./components/modals/PdnImportModal";
-import { CoinsPurchaseModal } from "./components/modals/CoinsPurchaseModal";
+const CoinsPurchaseModal = lazy(() => import("./components/modals/CoinsPurchaseModal").then(m => ({ default: m.CoinsPurchaseModal })));
 import { ComputerConfigModal } from "./components/modals/ComputerConfigModal";
 import { GameOverModal } from "./components/modals/GameOverModal";
 import { SandboxPlayChoiceModal } from "./components/modals/SandboxPlayChoiceModal";
@@ -4109,7 +4109,7 @@ export default function App() {
   //                       replay. A game vs the AI is just a game.
   const sidebarContent = playMode === "Multiplayer" ? multiplayerPanelElement
     : playMode === "Analysis" || playMode === "Training" ? (
-    <AnalysisSidebar
+    <Suspense fallback={<div role="status" className="p-4 text-sm text-slate-400">Opening analysis…</div>}><AnalysisSidebar
       moveHistory={moveHistory}
       moveHistoryStrings={moveHistoryStrings}
       engineEval={engineEval}
@@ -4168,7 +4168,7 @@ export default function App() {
         setShowPdnImportModal(true);
         playClickSound(muted);
       }}
-    />
+    /></Suspense>
   ) : (
     <GameSidebar
       isComputerMode={isComputerMode}
@@ -5427,7 +5427,7 @@ export default function App() {
         onImport={handlePdnImport}
       />
 
-      <CoinsPurchaseModal
+      {showPurchaseModal && coinBackendReady && <Suspense fallback={<div role="status" className="fixed bottom-5 right-5 z-50 rounded-xl bg-slate-900 p-4 text-sm">Opening wallet…</div>}><CoinsPurchaseModal
         open={showPurchaseModal && coinBackendReady}
         onClose={() => setShowPurchaseModal(false)}
         coinBalance={coinBalance}
@@ -5459,7 +5459,7 @@ export default function App() {
         withdrawSubmitted={withdrawSubmitted}
         setWithdrawSubmitted={setWithdrawSubmitted}
         onSubmitWithdrawal={handleSubmitWithdrawal}
-      />
+      /></Suspense>}
 
       <ComputerConfigModal
         open={showComputerConfigModal}
