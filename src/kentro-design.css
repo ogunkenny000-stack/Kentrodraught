@@ -420,3 +420,5 @@ button:disabled { cursor:not-allowed; }
 .k-puzzles-page .text-slate-500{color:#a6b2c0;}
 .k-puzzles-page h1+p{color:#ddbd87;}
 .k-arena-lobby .text-slate-500{color:#a6b2c0;}
+
+@media (max-width: 600px) { .k-global-topnav .k-current-location { display: none; } }

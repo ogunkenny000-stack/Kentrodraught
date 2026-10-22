@@ -9,7 +9,6 @@ import type { User as SupabaseAuthUser } from "@supabase/supabase-js";
 import { AuthScreen } from "./AuthScreen";
 import { PasswordRecoveryScreen } from "./PasswordRecoveryScreen";
 import { apiGet, apiPost } from "./apiClient";
-import InstallAppPrompt from "./InstallAppPrompt";
 
 const AdminPanel = lazy(() => import("./AdminPanel"));
 import { 
@@ -4451,7 +4450,7 @@ export default function App() {
   // sign-in screen on reload, but if username is already known, do not block the UI.
   if (passwordRecovery) return <PasswordRecoveryScreen />;
 
-  if (offlineKen) return <OfflineKen onBack={() => { window.history.replaceState({}, "", window.location.pathname); setOfflineKen(false); }} />;
+  if (offlineKen) return <Suspense fallback={<div role="status" className="min-h-screen bg-slate-950 text-slate-200 p-8">Opening offline Ken…</div>}><OfflineKen onBack={() => { window.history.replaceState({}, "", window.location.pathname); setOfflineKen(false); }} /></Suspense>;
 
   if (playMode === "OfflineNearby") {
     return <OfflineNearby username={username || "Guest"} onBack={() => { window.history.replaceState({}, "", window.location.pathname); setPlayMode("Home"); }} />;
@@ -4473,7 +4472,7 @@ export default function App() {
   // auth effect above) already handles flipping authUser/username -- this
   // callback exists so AuthScreen doesn't need to know any of that.
   if (!authUser && !guestEnabled) {
-    return <AuthScreen onAuthenticated={() => {}} onPlayKenOffline={() => setOfflineKen(true)} onPlayOffline={() => setPlayMode("OfflineNearby")}
+    return <AuthScreen onAuthenticated={() => {}} onPlayKenOffline={() => { window.history.replaceState({}, "", "?offline=ken"); setOfflineKen(true); }} onPlayOffline={() => setPlayMode("OfflineNearby")}
       onContinueAsGuest={() => {
         setGuestActive(true);
         setGuestEnabled(true);
@@ -4535,7 +4534,6 @@ export default function App() {
     <AdminProfileProvider permissions={adminPermissions}>
     <div className={`k-app-shell fixed inset-0 text-slate-100 flex flex-col font-sans select-none overflow-hidden w-full h-full ${focusMode && isBoardScreenActive ? "k-focus-active" : ""} ${reducedMotion ? "k-motion-reduced" : ""}`}>
       <a className="k-skip-link" href="#kentro-main-content">Skip to main content</a>
-      <InstallAppPrompt />
       <ConnectionNotice/>
       <SaveStatus ownerId={authUser?.id}/>
       {guestMode && (
@@ -4800,6 +4798,7 @@ export default function App() {
               }}
               kenLevelId={kenLevelId}
               setKenLevelId={setKenLevelId}
+              onPlayKenOffline={() => { window.history.replaceState({}, "", "?offline=ken"); setOfflineKen(true); }}
               onOpenComputerModal={() => setShowComputerConfigModal(true)}
               onUnlockKenLevel={handleUnlockKenLevel}
               onOpenNotifications={() => setShowNotifications(true)}

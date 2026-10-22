@@ -62,20 +62,49 @@ const isDevEnv =
   self.location.hostname === "127.0.0.1" ||
   self.location.hostname.includes("-dev-");
 
-self.addEventListener("install", (event) => {
-  if (isDevEnv) {
-    self.skipWaiting();
-    return;
-  }
-  event.waitUntil(
-    Promise.all([
-      caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_URLS)).catch(() => {}),
-      // Entry/startup styles and nearby offline dependencies are prepared.
-      // Optional routes (TV, academy, tournaments, etc.) load on demand.
-      caches.open(ASSET_CACHE).then((cache) => cache.addAll(PRECACHE_ASSETS)).catch(() => {}),
-    ])
-  );
-  self.skipWaiting();
+async function offlineStatus() {
+  const [shell, assets] = await Promise.all([caches.open(SHELL_CACHE), caches.open(ASSET_CACHE)]);
+  const checks = await Promise.all([
+    ...SHELL_URLS.map(async url => !!(await shell.match(url))),
+    ...PRECACHE_ASSETS.map(async url => !!(await assets.match(url))),
+  ]);
+  const missing = checks.filter(found => !found).length;
+  return { ready: PRECACHE_ASSETS.length > 0 && missing === 0, missing };
+}
+let preparation;
+function prepareOffline() {
+  if (preparation) return preparation;
+  preparation = (async () => {
+    const [shell, assets] = await Promise.all([caches.open(SHELL_CACHE), caches.open(ASSET_CACHE)]);
+    const tasks = [...SHELL_URLS.map(url => ({ url, cache: shell })), ...PRECACHE_ASSETS.map(url => ({ url, cache: assets }))];
+    let next = 0;
+    await Promise.all(Array.from({ length: 4 }, async () => {
+      while (next < tasks.length) {
+        const { url, cache } = tasks[next++];
+        if (await cache.match(url)) continue;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 60_000);
+        try {
+          const response = await fetch(url, { signal: controller.signal, cache: 'reload' });
+          if (response.ok && !(/\.(js|css|wasm)$/.test(url) && /text\/html/i.test(response.headers.get('content-type') || ''))) await cache.put(url, response);
+        } catch { /* Preserve successful files; the missing ones can be retried. */ }
+        finally { clearTimeout(timer); }
+      }
+    }));
+    return offlineStatus();
+  })().finally(() => { preparation = undefined; });
+  return preparation;
+}
+self.addEventListener("install", event => {
+  if (isDevEnv) { self.skipWaiting(); return; }
+  event.waitUntil(prepareOffline().then(() => self.skipWaiting()).catch(() => self.skipWaiting()));
+});
+self.addEventListener("message", event => {
+  if (!['KENTRO_OFFLINE_STATUS', 'KENTRO_PREPARE_OFFLINE'].includes(event.data?.type)) return;
+  const port = event.ports[0];
+  if (!port) return;
+  event.waitUntil((event.data.type === 'KENTRO_PREPARE_OFFLINE' ? prepareOffline() : offlineStatus())
+    .then(status => port.postMessage(status)).catch(() => port.postMessage({ error: true })));
 });
 
 self.addEventListener("activate", (event) => {

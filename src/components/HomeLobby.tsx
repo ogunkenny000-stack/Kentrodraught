@@ -1,3 +1,4 @@
+import { OfflineReadyCard } from './OfflineReadyCard';
 import React, { useState } from "react";
 import { ArrowRight, Bell, BookOpen, Check, ChevronDown, ChevronRight, CirclePlay, Clock3, Compass, Cpu, Crown, Eye, Gamepad2, Globe2, GraduationCap, History, LogOut, Medal, MessageCircle, MonitorPlay, Radio, Settings2, Share2, ShieldCheck, Sparkles, Swords, Trophy, Users, Wifi, Zap } from "lucide-react";
 import { PlayMode, PlayerStats } from "../types";
@@ -8,6 +9,7 @@ import { KEN_LEVELS } from "../lib/constants";
 interface RecentGame { id: string; whitePlayer: string; blackPlayer: string; winner: string; playMode?: string; timestamp?: number }
 interface LiveRoom { roomId: string; white: string; black: string; gameTime: number; specialRule: string; spectatorCount: number }
 interface HomeLobbyProps {
+  onPlayKenOffline?: () => void;
   username: string; isGuest?: boolean; coinBalance: number; profileStats: PlayerStats; recentGames: RecentGame[];
   onSelectMode: (mode: PlayMode) => void; onOpenStore: () => void; onOpenProfile: () => void;
   liveGames: LiveRoom[]; communityGames: RecentGame[]; onWatchLive: (roomId: string) => void;
@@ -20,7 +22,7 @@ interface HomeLobbyProps {
 
 /** The main destination is intentionally calm: playing a game takes one clear tap. */
 export function HomeLobby({
-  username, isGuest = false, coinBalance, profileStats, recentGames, onSelectMode, onOpenStore,
+  onPlayKenOffline, username, isGuest = false, coinBalance, profileStats, recentGames, onSelectMode, onOpenStore,
   onOpenProfile, liveGames, communityGames, onWatchLive, onAnalyzeGame, onOpenAnalysis,
   onOpenPlayers, onOpenPastGamesModal, kenLevelId, setKenLevelId, onOpenComputerModal,
   onUnlockKenLevel, onSignOut, onOpenNotifications, onOpenKentroTV, unreadNotificationCount = 0,
@@ -63,6 +65,8 @@ export function HomeLobby({
         </div>
         <div className="k-hero-board" aria-hidden="true"><div className="k-hero-board-grid">{Array.from({length:100},(_,i) => { const row = Math.floor(i/10), col = i%10, dark = (row+col)%2 === 1; return <div key={i} className={dark ? "dark" : "light"}>{dark && (row < 4 || row > 5) && <span className={row<4 ? "piece-dark" : "piece-light"}/>}</div> })}</div></div>
       </section>
+
+      <OfflineReadyCard onPlay={onPlayKenOffline}/>
 
       {showAISetup && <section className="k-ai-config k-surface" aria-label="AI match setup">
         <div className="k-section-heading"><div><span className="k-overline">PRACTICE YOUR SKILLS</span><h3>Play against Ken</h3><p>Choose your side and difficulty to begin.</p></div><button className="k-icon-button" onClick={() => setShowAISetup(false)} aria-label="Close AI setup"><ChevronDown size={20}/></button></div>

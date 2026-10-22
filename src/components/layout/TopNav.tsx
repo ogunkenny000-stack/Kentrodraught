@@ -1,3 +1,4 @@
+import { InstallAppCard } from '../InstallAppCard';
 import React from "react";
 import { ArrowLeft, BookOpen, Crown, Menu, Settings2, Volume2, VolumeX, ChartNoAxesCombined, Shield } from "lucide-react";
 import { PlayMode } from "../../types";
@@ -30,6 +31,7 @@ export function TopNav({isMobile, playMode, isGameActive = false, moveHistory, m
       {playMode !== "Home" && <span className="k-current-location"><span className="k-location-slash">/</span> {names[playMode] || "Play"}</span>}
     </div>
     <div className="k-global-right">
+      <InstallAppCard variant="compact"/>
       {showAdmin && <button type="button" className="k-nav-icon k-admin-icon" aria-label="Admin panel" onClick={onOpenAdmin}><Shield size={19}/></button>}
       {!isBoard && <button type="button" className="k-nav-icon k-help-icon" aria-label="How to play" onClick={() => setShowAppGuideModal(true)}><BookOpen size={19}/></button>}
       <button type="button" className="k-nav-icon k-nav-sound" onClick={() => setMuted(!muted)} aria-label={muted ? "Enable sound" : "Mute sound"}>{muted ? <VolumeX size={19}/> : <Volume2 size={19}/>}</button>

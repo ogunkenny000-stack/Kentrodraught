@@ -1,3 +1,4 @@
+import { initializeInstallPrompt } from './lib/pwaInstall';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
@@ -5,6 +6,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { APP_BUILD } from "./lib/constants";
 import './index.css';
 import './kentro-design.css';
+
+initializeInstallPrompt();
 
 console.log(`%cKentro Draught build ${APP_BUILD}`, "color:#f59e0b;font-weight:bold");
 
@@ -48,18 +51,3 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-// Capture Chrome's install prompt the moment it fires -- it can arrive
-// BEFORE React mounts, and once missed it never fires again this page
-// load. The InstallAppCard component reads it from here.
-declare global {
-  interface Window { __kentroInstallPrompt?: any }
-}
-window.addEventListener("beforeinstallprompt", (e: Event) => {
-  e.preventDefault(); // keep it for our own Install button
-  window.__kentroInstallPrompt = e;
-  window.dispatchEvent(new CustomEvent("kentro-install-ready"));
-});
-window.addEventListener("appinstalled", () => {
-  window.__kentroInstallPrompt = undefined;
-  window.dispatchEvent(new CustomEvent("kentro-install-done"));
-});

@@ -1,3 +1,5 @@
+import { InstallAppCard } from './components/InstallAppCard';
+import { OfflineReadyCard } from './components/OfflineReadyCard';
 import React, { useState } from "react";
 import { Crown, Mail, Lock, User, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { signUpWithEmail, signInWithUsername, requestPasswordReset } from "./supabase";
@@ -166,6 +168,7 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
         <div className="k-auth-form-card">
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
+          <div className="self-end mb-3"><InstallAppCard variant="compact"/></div>
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-600 to-amber-400 flex items-center justify-center shadow-lg shadow-amber-500/20 mb-3">
             <Crown className="w-7 h-7 text-slate-950 stroke-[2.5]" />
           </div>
@@ -330,6 +333,7 @@ export function AuthScreen({ onAuthenticated, onPlayKenOffline, onPlayOffline, o
           </button>
         </form>
 
+        <div className="mt-4"><OfflineReadyCard/></div>
         {onPlayKenOffline && <button type="button" onClick={onPlayKenOffline} className="w-full mt-4 py-3 rounded-xl border border-amber-500/40 text-amber-300 bg-amber-500/10 text-sm font-bold">Play Ken Offline · Full Strength</button>}
         {onPlayOffline && <button type="button" onClick={onPlayOffline} className="w-full mt-4 py-3 rounded-xl border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-sm font-bold hover:bg-emerald-500/20">Play Nearby Offline — No Sign In</button>}
 

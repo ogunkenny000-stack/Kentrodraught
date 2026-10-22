@@ -1,3 +1,5 @@
+import { OfflineReadyCard } from '../OfflineReadyCard';
+import { InstallAppCard } from '../InstallAppCard';
 import React, { useEffect, useMemo, useState } from 'react';
 import { applyMove, captureClickTargets, checkGameEnd, createInitialBoard, generateLegalMoves, getCol, ngRcToSq, resolveCaptureClick } from '../../gameLogic';
 import type { Move } from '../../gameLogic';
@@ -37,7 +39,8 @@ export function OfflineKen({ onBack }: { onBack: () => void }) {
   };
   return <main className="min-h-screen bg-slate-950 text-slate-100 p-4 flex flex-col items-center gap-4">
     <div className="w-full max-w-xl flex justify-between items-center"><button onClick={onBack}>← Back</button><h1 className="font-bold text-xl">Ken Offline · Full Strength</h1></div>
-    <p className="max-w-xl text-sm text-slate-400">Local practice. Full evaluation, no handicap or artificial depth limit. No account, coins or ranked progression. Open online once to download offline files.</p>
+    <p className="max-w-xl text-sm text-slate-400">Local practice. Full evaluation, no handicap or artificial depth limit. No account, coins or ranked progression. Prepare the offline files once while connected.</p>
+    <div className="w-full max-w-xl space-y-3"><OfflineReadyCard/><InstallAppCard variant="menu"/></div>
     <label>Thinking time <select aria-label="Thinking time" value={seconds} onChange={e => setSeconds(Number(e.target.value))} className="bg-slate-800 rounded p-2 ml-2">
       <option value={5}>5 seconds</option><option value={15}>15 seconds</option><option value={30}>30 seconds · Maximum</option>
     </select></label>
