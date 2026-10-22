@@ -20,6 +20,7 @@ import { ClockText } from "../ChessClock";
 import type { ClockSnapshot } from "../../lib/useServerClock";
 
 export interface GameScreenProps {
+  offlinePractice?: boolean;
   playMode: PlayMode;
   roomId: string | null;
   multiplayerStarted: boolean;
@@ -518,6 +519,7 @@ export function GameScreen(props: GameScreenProps) {
             <div className="flex items-center gap-2 min-w-0">
               <div className="relative shrink-0">
                 <Avatar
+                  url={props.offlinePractice ? null : undefined}
                   name={topColor === "W" ? whiteName : blackName}
                   size={28}
                   className={turn === topColor && !isThinking && !activePuzzleId ? "ring-2 ring-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.6)]" : ""}
@@ -1138,6 +1140,7 @@ export function GameScreen(props: GameScreenProps) {
             <div className="flex items-center gap-2 min-w-0">
               <div className="relative shrink-0">
                 <Avatar
+                  url={props.offlinePractice ? null : undefined}
                   name={bottomColor === "W" ? whiteName : blackName}
                   size={28}
                   className={turn === bottomColor && !isThinking ? "ring-2 ring-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.6)]" : ""}
@@ -1187,7 +1190,7 @@ export function GameScreen(props: GameScreenProps) {
         {/* 5. SUB-BOARD COMPACT DOCK: MOVES, LAB, ARCHIVE, ENGINE, STATS, INFO, CHAT */}
         {/* ========================================================================= */}
         {!isEditorMode ? (
-          <MobileBoardDock
+          <React.Fragment>{(!props.offlinePractice || isMobile) && <MobileBoardDock
             playMode={playMode}
             initialTurn={props.initialTurn}
             turn={props.activeTurn ?? turn}
@@ -1224,7 +1227,7 @@ export function GameScreen(props: GameScreenProps) {
             onOpenActionMenu={() => setIsActionMenuOpen(true)}
             isAutoPlaying={isAutoPlaying}
             onToggleAutoPlay={toggleAutoPlay}
-          />
+          />}</React.Fragment>
         ) : (
           /* Editor Brush Tools Toolbar */
           <div className="w-full max-w-[min(96vw,520px)] bg-slate-900 border border-slate-800 rounded-2xl p-2 flex flex-col gap-2 shrink-0">
@@ -1481,7 +1484,7 @@ export function GameScreen(props: GameScreenProps) {
           onSelectMode={handleModeChange}
           onContinueFromHere={onContinueFromHistory}
           onOpenBoardEditor={() => handleModeChange("Editor")}
-          onOpenPuzzles={() => handleModeChange("Puzzles")}
+          onOpenPuzzles={props.offlinePractice ? undefined : () => handleModeChange("Puzzles")}
           onPracticeWithKen={() => handleModeChange("Human_vs_AI")}
           onOpenAnalysisBoard={() => handleModeChange("Analysis")}
           onToggleShowThreat={() => setShowThreatArrow(!showThreatArrow)}

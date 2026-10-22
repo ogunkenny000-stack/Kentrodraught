@@ -26,6 +26,10 @@ const SHELL_URLS = [
   "/manifest.json",
   "/icon-192.png",
   "/icon-512.png",
+  "/board/royal-wood/dark.webp",
+  "/board/royal-wood/light.webp",
+  "/board/royal-wood/black.webp",
+  "/board/royal-wood/gold.webp",
 ];
 
 // Replaced by scripts/inject-sw-assets.cjs after Vite has emitted its chunks.
@@ -86,7 +90,7 @@ function prepareOffline() {
         const timer = setTimeout(() => controller.abort(), 60_000);
         try {
           const response = await fetch(url, { signal: controller.signal, cache: 'reload' });
-          if (response.ok && !(/\.(js|css|wasm)$/.test(url) && /text\/html/i.test(response.headers.get('content-type') || ''))) await cache.put(url, response);
+          if (response.ok && !(/\.(js|css|wasm|webp)$/.test(url) && /text\/html/i.test(response.headers.get('content-type') || ''))) await cache.put(url, response);
         } catch { /* Preserve successful files; the missing ones can be retried. */ }
         finally { clearTimeout(timer); }
       }
@@ -196,6 +200,7 @@ self.addEventListener("fetch", (event) => {
 
   // Safe static asset types only (manifest, icons, audio, fonts)
   const isStaticFile =
+    url.pathname.endsWith(".webp") ||
     url.pathname.endsWith(".png") ||
     url.pathname.endsWith(".jpg") ||
     url.pathname.endsWith(".jpeg") ||

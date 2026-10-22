@@ -401,24 +401,24 @@ export function GameOverModal({
             </button>
           )}
 
-          <div className="grid grid-cols-2 gap-2">
-            <button
+          <div className={`grid ${onAnalyzeGame && onViewReplay ? "grid-cols-2" : "grid-cols-1"} gap-2`}>
+            {onAnalyzeGame && <button
               id="game-over-analyze-button"
               onClick={onAnalyzeGame}
               className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-2 cursor-pointer border border-slate-700/60 uppercase tracking-wider"
             >
               <Compass className="w-4 h-4 text-amber-400" />
               ANALYZE GAME
-            </button>
+            </button>}
 
-            <button
+            {onViewReplay && <button
               id="game-over-replay-button"
               onClick={onViewReplay}
               className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-2 cursor-pointer border border-slate-700/60 uppercase tracking-wider"
             >
               <Play className="w-4 h-4 text-sky-400" />
               VIEW REPLAY
-            </button>
+            </button>}
           </div>
 
           {!hideRematch && onRematch && rematchState.status !== "waiting" && rematchState.status !== "accepted" && (

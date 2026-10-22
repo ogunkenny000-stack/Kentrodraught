@@ -48,3 +48,17 @@ it('reuses a completed depth-30 position without creating another worker', async
   expect(FixtureWorker.latest).toBe(worker);
   expect(worker.postMessage).toHaveBeenCalledOnce();
 });
+
+import { offlineKenLevelMove } from './offlineKen';
+import { KEN_LEVELS } from '../lib/constants';
+it.each(KEN_LEVELS)('offline Ken $id uses the same search settings as Play vs Ken', async level => {
+  vi.stubGlobal('Worker',FixtureWorker);
+  const controller=new AbortController();
+  const result=offlineKenLevelMove(createInitialBoard(),'B',level.id,controller.signal);
+  const assertion=expect(result).rejects.toMatchObject({name:'AbortError'});
+  expect(FixtureWorker.latest.postMessage.mock.calls[0][0]).toMatchObject({seconds:level.moveTimeMs/1000,depth:level.depth,pst:level.pst});
+  controller.abort();await assertion;
+});
+it('rejects an invalid offline level instead of silently changing difficulty', async()=>{
+  await expect(offlineKenLevelMove(createInitialBoard(),'W',99)).rejects.toThrow('1 to 8');
+});

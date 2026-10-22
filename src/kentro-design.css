@@ -422,3 +422,13 @@ button:disabled { cursor:not-allowed; }
 .k-arena-lobby .text-slate-500{color:#a6b2c0;}
 
 @media (max-width: 600px) { .k-global-topnav .k-current-location { display: none; } }
+
+.k-offline-note{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 12px;background:#171e27;color:#d2d8e0;font-size:11px;flex-shrink:0;}
+.k-offline-note button{color:#e6b768;text-decoration:underline;margin-left:8px;}
+.k-offline-match .k-match-stage{width:var(--offline-board-size,min(100%,calc(100dvh - 320px)))!important;max-width:680px;}
+.k-offline-match .k-match-screen{min-height:0;}
+.k-offline-match .k-global-topnav>h1{white-space:nowrap;}
+@media(max-width:700px){.k-offline-match .k-global-topnav{padding:0 12px;gap:8px;}.k-offline-match .k-global-right{gap:4px;}.k-offline-match .k-offline-sound{display:none;}.k-offline-match .k-global-topnav>h1{font-size:12px;}}
+.k-offline-match.k-reduced-motion *{animation:none!important;transition:none!important;}
+
+@media(max-width:380px){.k-offline-match .k-global-right>button[aria-label="Install Kentro app"]{padding:8px;font-size:11px;gap:5px;}.k-offline-match .k-global-topnav>h1{white-space:normal;min-width:0;line-height:1.3;}}

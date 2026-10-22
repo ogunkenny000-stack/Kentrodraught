@@ -4450,7 +4450,7 @@ export default function App() {
   // sign-in screen on reload, but if username is already known, do not block the UI.
   if (passwordRecovery) return <PasswordRecoveryScreen />;
 
-  if (offlineKen) return <Suspense fallback={<div role="status" className="min-h-screen bg-slate-950 text-slate-200 p-8">Opening offline Ken…</div>}><OfflineKen onBack={() => { window.history.replaceState({}, "", window.location.pathname); setOfflineKen(false); }} /></Suspense>;
+  if (offlineKen) return <Suspense fallback={<div role="status" className="min-h-screen bg-slate-950 text-slate-200 p-8">Opening offline Ken…</div>}><OfflineKen initialLevel={kenLevelId} username={username || "You"} initialMode={playMode === "AI_vs_Human" ? "AI_vs_Human" : "Human_vs_AI"} onBack={() => { window.history.replaceState({}, "", window.location.pathname); setBoardTheme((safeStorage.getItem("lidraughts_board_theme") as BoardTheme) || "wood"); setCustomLightSquare(safeStorage.getItem("lidraughts_custom_light") || "#f8fafc"); setCustomDarkSquare(safeStorage.getItem("lidraughts_custom_dark") || "#1e293b"); setCustomBorder(safeStorage.getItem("lidraughts_custom_border") || "#0f172a"); setMuted(safeStorage.getItem("lidraughts_muted") === "true"); setShowSquareNumbers(safeStorage.getItem("kentro_show_square_numbers") === "true"); setReducedMotion(safeStorage.getItem("kentro_reduce_motion") === "true"); setOfflineKen(false); }} /></Suspense>;
 
   if (playMode === "OfflineNearby") {
     return <OfflineNearby username={username || "Guest"} onBack={() => { window.history.replaceState({}, "", window.location.pathname); setPlayMode("Home"); }} />;

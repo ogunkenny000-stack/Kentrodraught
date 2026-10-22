@@ -16,19 +16,22 @@ try {
   });
   await page.evaluateOnNewDocument("localStorage.setItem('kentro_splash_seen','true');sessionStorage.setItem('kentro_splash_seen','true');");
   await page.goto(`${APP_URL}/?offline=ken`, { waitUntil: 'domcontentloaded' });
-  await waitForText(page, 'Ken Offline · Full Strength');
+  await waitForText(page, 'Play vs Ken · Offline');
   await page.waitForFunction(async () => {
     const cached = await caches.match('/engine/scan.wasm');
     return !!cached && !!(await navigator.serviceWorker.getRegistration())?.active;
   }, { timeout: 60000 });
   await page.setOfflineMode(true);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await waitForText(page, 'Ken Offline · Full Strength');
+  await waitForText(page, 'Play vs Ken · Offline');
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.innerText.includes('Ken 8 ('))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent?.includes('Apply & Start'))?.click());
+  await page.waitForSelector('[role="dialog"]', { hidden: true });
   const first = generateLegalMoves(createInitialBoard(), 'W')[0];
-  await page.click(`[aria-label^="Square ${first.from} "]`);
-  await page.click(`[aria-label="Square ${first.to}"]`);
-  await waitForText(page, 'Ken is thinking locally');
-  await waitForText(page, 'Your turn — White', 30000);
+  await page.click(`#square-${first.from}`);
+  await page.click(`#square-${first.to}`);
+  await waitForText(page, 'Ken is thinking…');
+  await waitForText(page, 'Your turn — Gold', 30000);
   assert(await page.evaluate(() => !navigator.onLine), 'actual AI reply completed with browser networking disabled');
   // Exercise the real worker against evolving positions and mandatory captures,
   // independently validating every result with the existing game rules.
@@ -55,16 +58,19 @@ try {
     turn = turn === 'W' ? 'B' : 'W';
   }
   assert(captures > 0, 'real offline search exercised captures');
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent === 'New game')?.click());
-  await page.select('select[aria-label="Thinking time"]', '30');
-  await page.click(`[aria-label^="Square ${first.from} "]`);
-  await page.click(`[aria-label="Square ${first.to}"]`);
-  await waitForText(page, 'Ken is thinking locally (30s)');
-  // Cancel an actual long search, then ensure no stale move reaches the new game.
-  await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent === 'New game')?.click());
-  await waitForText(page, 'Your turn — White');
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  assert((await page.$('[aria-label="Square 26"]')) !== null, 'restart retained the initial board after cancelling search');
+  await page.click('[title="New Match"]');
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.innerText.includes('Ken 4 ('))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.innerText.trim() === 'As Black')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent?.includes('Apply & Start'))?.click());
+  await waitForText(page, 'Ken is thinking…');
+  // A new setup cancels the actual local search before starting a fresh game.
+  await page.evaluate(() => document.querySelector<HTMLButtonElement>('[title="New Match"]')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.innerText.trim() === 'As White')?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent?.includes('Apply & Start'))?.click());
+  await page.waitForSelector('[role="dialog"]', { hidden: true });
+  await waitForText(page, 'Your turn — Gold');
+  await new Promise(resolve => setTimeout(resolve, 1200));
+  assert(await page.$$eval('.kentro-royal-piece', pieces => pieces.length === 40), 'restart retained all forty initial pieces after cancelling search');
   assert(engineApiCalls === 0, 'offline practice never calls the engine API');
   console.log(`PASS: production offline reload, actual AI reply, 36 validated WASM plies (${captures} captures), restart, zero engine API calls.`);
 } finally { await browser.close(); }

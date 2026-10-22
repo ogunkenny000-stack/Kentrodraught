@@ -1,3 +1,4 @@
+import { KEN_LEVELS } from '../lib/constants';
 import { Board, boardToScanFen, generateLegalMoves, hubMoveStringToNigerian, movesAreEquivalent } from '../gameLogic';
 import type { KenResult } from '../lib/kenEngine';
 
@@ -44,4 +45,11 @@ export function offlineKenMove(board: Board, turn: 'W' | 'B', seconds = 5, depth
       fail(new Error('Offline engine could not start. Try again.'));
     }
   });
+}
+
+/** Keep local match settings aligned with Play vs Ken. */
+export function offlineKenLevelMove(board: Board, turn: 'W' | 'B', levelId: number, signal?: AbortSignal): Promise<KenResult> {
+  const level = KEN_LEVELS.find(candidate => candidate.id === levelId);
+  if (!level) return Promise.reject(new Error('Choose a Ken level from 1 to 8.'));
+  return offlineKenMove(board, turn, level.moveTimeMs / 1000, level.depth, level.pst, signal);
 }

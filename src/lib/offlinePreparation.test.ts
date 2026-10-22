@@ -16,15 +16,15 @@ function worker() {
  return {message,fetch,stores};
 }
 it('reports missing files before preparing and ready only after all files exist',async()=>{
- const w=worker();expect(await w.message('KENTRO_OFFLINE_STATUS')).toMatchObject({ready:false,missing:6});expect(await w.message('KENTRO_PREPARE_OFFLINE')).toEqual({ready:true,missing:0});expect(w.fetch).toHaveBeenCalledTimes(6);expect(await w.message('KENTRO_OFFLINE_STATUS')).toEqual({ready:true,missing:0});
+ const w=worker();expect(await w.message('KENTRO_OFFLINE_STATUS')).toMatchObject({ready:false,missing:10});expect(await w.message('KENTRO_PREPARE_OFFLINE')).toEqual({ready:true,missing:0});expect(w.fetch).toHaveBeenCalledTimes(10);expect(await w.message('KENTRO_OFFLINE_STATUS')).toEqual({ready:true,missing:0});
 });
 it('preserves partial downloads and retries only missing files',async()=>{
  const w=worker();w.fetch.mockImplementation(async(url?:any)=>{if(url==='/engine/scan.wasm')throw Error('offline');return new Response('file');});expect(await w.message('KENTRO_PREPARE_OFFLINE')).toEqual({ready:false,missing:1});
  w.fetch.mockClear().mockResolvedValue(new Response('wasm'));expect(await w.message('KENTRO_PREPARE_OFFLINE')).toEqual({ready:true,missing:0});expect(w.fetch).toHaveBeenCalledTimes(1);
 });
 it('does not treat an HTML fallback as a saved engine',async()=>{
- const w=worker();w.fetch.mockResolvedValue(new Response('<html>missing</html>',{headers:{'Content-Type':'text/html'}}));expect(await w.message('KENTRO_PREPARE_OFFLINE')).toEqual({ready:false,missing:2});
+ const w=worker();w.fetch.mockResolvedValue(new Response('<html>missing</html>',{headers:{'Content-Type':'text/html'}}));expect(await w.message('KENTRO_PREPARE_OFFLINE')).toEqual({ready:false,missing:6});
 });
 it('coalesces simultaneous preparation requests',async()=>{
- const w=worker();const result=await Promise.all([w.message('KENTRO_PREPARE_OFFLINE'),w.message('KENTRO_PREPARE_OFFLINE')]);expect(result.every(r=>r.ready)).toBe(true);expect(w.fetch).toHaveBeenCalledTimes(6);
+ const w=worker();const result=await Promise.all([w.message('KENTRO_PREPARE_OFFLINE'),w.message('KENTRO_PREPARE_OFFLINE')]);expect(result.every(r=>r.ready)).toBe(true);expect(w.fetch).toHaveBeenCalledTimes(10);
 });

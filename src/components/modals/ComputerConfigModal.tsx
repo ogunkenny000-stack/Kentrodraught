@@ -6,6 +6,7 @@ import { playClickSound } from "../../lib/audio";
 import { KentroCoin, CoinPriceTag } from "../ui/KentroCoin";
 
 interface ComputerConfigModalProps {
+  offlinePractice?: boolean;
   open: boolean;
   onClose: () => void;
   coinBalance: number;
@@ -26,7 +27,7 @@ interface ComputerConfigModalProps {
 }
 
 export function ComputerConfigModal({
-  open, onClose, coinBalance, coinsEnabled = false, profileStats, coinSettings, kenLevelId, setKenLevelId,
+  offlinePractice = false, open, onClose, coinBalance, coinsEnabled = false, profileStats, coinSettings, kenLevelId, setKenLevelId,
   setStatusMessage, muted, playMode, setPlayMode, purchaseSubmitted,
   onUnlockKenLevel, onOpenStore, onApplyStart, onOpenPastGamesModal,
 }: ComputerConfigModalProps) {
@@ -35,7 +36,7 @@ export function ComputerConfigModal({
       open={open}
       onClose={onClose}
       size="sm"
-      title="VS Computer Settings"
+      title={offlinePractice ? "Play vs Ken · Offline" : "VS Computer Settings"}
       icon={<Cpu className="w-5 h-5 text-amber-500 animate-pulse" />}
       footer={
         <button
@@ -48,20 +49,22 @@ export function ComputerConfigModal({
     >
       <div className="space-y-4 text-xs text-slate-300 pb-1">
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] text-amber-400/90 leading-relaxed">
-          <strong>Untimed Match:</strong> Games against the computer have <strong>no timer</strong>, allowing you to focus on tactical depth, strategy, and calculation. Ken runs the official Nigerian Draughts neural engine with full strength (Levels 1–8).
+          <strong>Untimed Match:</strong> Games against the computer have <strong>no timer</strong>, allowing you to focus on tactical depth, strategy, and calculation. Ken runs the official Nigerian Draughts neural engine (Levels 1–8).
         </div>
+
+        {offlinePractice && <p className="text-xs text-slate-300">Same Ken levels and Nigerian rules, running on your device. Offline practice does not change online ratings, coins or level unlocks.</p>}
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <label className="font-bold text-slate-300 font-sans uppercase tracking-wider text-[10px]">Select AI Level:</label>
-            <span className="text-[10px] text-amber-300 font-bold flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
+            {!offlinePractice && <span className="text-[10px] text-amber-300 font-bold flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
               <KentroCoin size="2xs" glow />
               {coinBalance.toLocaleString()}
-            </span>
+            </span>}
           </div>
           <div className="grid grid-cols-2 gap-1.5">
             {KEN_LEVELS.map((lvl) => {
-              const maxKen = Math.max(3, profileStats.maxUnlockedKenLevel || 1);
+              const maxKen = offlinePractice ? 8 : Math.max(3, profileStats.maxUnlockedKenLevel || 1);
               const isLocked = lvl.id > maxKen;
               return (
                 <div
@@ -113,7 +116,7 @@ export function ComputerConfigModal({
               );
             })}
           </div>
-          {!coinsEnabled && <p className="text-[10px] text-amber-300">Coin purchases are temporarily disabled until the wallet is ready. Ken 1–3 remain free.</p>}
+          {!offlinePractice && !coinsEnabled && <p className="text-[10px] text-amber-300">Coin purchases are temporarily disabled until the wallet is ready. Ken 1–3 remain free.</p>}
           {coinsEnabled && (profileStats.maxUnlockedKenLevel || 1) < 8 && (
             <div className="flex gap-1.5 mt-1">
               <button
