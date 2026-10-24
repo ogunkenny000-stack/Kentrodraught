@@ -1,0 +1,6 @@
+:root { color-scheme: dark; font: 16px system-ui,sans-serif; background:#101725; color:#ecf0f7; }
+body { max-width:1320px; margin:0 auto; padding:20px; } h1 { font-size:1.45rem; margin:.2em 0; }
+header p,footer { color:#b6c1d2; } .controls { display:flex; gap:10px; flex-wrap:wrap; margin:20px 0; }
+button { padding:10px 16px; border:1px solid #7895b7; border-radius:6px; background:#243c5b; color:white; cursor:pointer; } button:disabled { opacity:.45; cursor:default; }
+.address { padding:12px; border:1px solid #5e7592; overflow-wrap:anywhere; } #screen { display:block; width:100%; height:auto; background:#f5f6f8; border:2px solid #637a99; outline:none; } #screen:focus { border-color:#88c9ff; }
+#status { padding:10px; background:#172a41; } #security { color:#f5cc87; } footer { font-size:.85rem; margin:18px 0; }

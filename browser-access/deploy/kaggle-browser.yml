@@ -1,0 +1,41 @@
+name: Private ephemeral Kaggle browser
+
+on:
+  push:
+    branches:
+      - 'tools/kaggle-browser-access-*'
+    paths:
+      - 'browser-access/**'
+      - '.github/workflows/kaggle-browser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: private-kaggle-browser-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  browser:
+    if: startsWith(github.ref_name, 'tools/kaggle-browser-access-')
+    # Ubuntu22 avoids the newer host's AppArmor user-namespace restriction;
+    # the container's real namespace + seccomp browser smoke remains mandatory.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - name: Check out the reviewed browser source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Run isolated browser for at most two hours
+        env:
+          PYTHONUNBUFFERED: '1'
+          DOCKER_BUILDKIT: '1'
+        run: python3 browser-access/deploy/run_session.py --checkout "$GITHUB_WORKSPACE" --seconds 7200
+      - name: Clean up this run's two containers
+        if: always()
+        shell: bash
+        run: |
+          docker rm --force "kaggle-browser-${GITHUB_RUN_ID}-tunnel" "kaggle-browser-${GITHUB_RUN_ID}-app" >/dev/null 2>&1 || true

@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Private browser takeover</title><link rel="stylesheet" href="/viewer.css"></head>
+<body><header><h1>Private browser takeover</h1><p>Control the real remote browser. This page does not ask for your Google or Kaggle password.</p></header>
+<section class="controls"><button id="take">Take control</button><button id="kaggle" disabled>Open Kaggle</button><button id="signin" disabled>Open Kaggle sign-in</button><button id="release" disabled>Finish and return control</button></section>
+<section class="address"><strong>Remote browser address:</strong> <span id="url">Not connected</span></section>
+<p id="status" role="status">Open the private owner link supplied by your trusted operator.</p>
+<p id="security">Browser and connection readiness have not been verified.</p>
+<canvas id="screen" width="1280" height="800" tabindex="0" aria-label="Remote browser; click to focus, then use your keyboard"></canvas>
+<footer>Passwords go directly into the remote site's browser window. The relay transiently forwards input in memory. Use this service only on a host you trust. A static screenshot or loopback address in a different computer is not a sign-in connection.</footer>
+<script src="/viewer.js"></script></body></html>
