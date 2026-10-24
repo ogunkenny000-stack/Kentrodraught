@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "state": "ready",
+  "state": "closed",
   "url": "https://source-payment-workplace-jungle.trycloudflare.com",
   "repository": "ogunkenny000-stack/Kentrodraught",
   "branch": "tools/kaggle-browser-access-20261024",
