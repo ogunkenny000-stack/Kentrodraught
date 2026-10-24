@@ -1,0 +1,80 @@
+{
+  "started": 1792843548.8903322,
+  "network": false,
+  "image_pull": false,
+  "user": "1000:1000",
+  "cap_drop": "ALL",
+  "added_capabilities": [],
+  "no_new_privileges": true,
+  "privileged": false,
+  "full_browser_tested": false,
+  "tls_tested": false,
+  "results": [
+    {
+      "profile": "playwright-seccomp.json",
+      "kind": "namespace_chroot",
+      "exit_code": 1,
+      "stdout": "{\"kind\":\"chroot\",\"uid\":0,\"result\":-1,\"errno\":1}",
+      "stderr": "",
+      "profile_sha256": "cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849",
+      "probe": {
+        "kind": "chroot",
+        "uid": 0,
+        "result": -1,
+        "errno": 1
+      }
+    },
+    {
+      "profile": "browser-seccomp.json",
+      "kind": "namespace_chroot",
+      "exit_code": 0,
+      "stdout": "{\"kind\":\"chroot\",\"uid\":0,\"result\":0,\"errno\":0}",
+      "stderr": "",
+      "profile_sha256": "676dd527c77680bd3d38e013cc4eda8d4652ce630c7714761bd7ce1e46b14229",
+      "probe": {
+        "kind": "chroot",
+        "uid": 0,
+        "result": 0,
+        "errno": 0
+      }
+    },
+    {
+      "profile": "browser-seccomp.json",
+      "kind": "chroot",
+      "exit_code": 1,
+      "stdout": "{\"kind\":\"chroot\",\"uid\":1000,\"result\":-1,\"errno\":1}",
+      "stderr": "",
+      "profile_sha256": "676dd527c77680bd3d38e013cc4eda8d4652ce630c7714761bd7ce1e46b14229",
+      "probe": {
+        "kind": "chroot",
+        "uid": 1000,
+        "result": -1,
+        "errno": 1
+      }
+    },
+    {
+      "profile": "browser-seccomp.json",
+      "kind": "pthread",
+      "exit_code": 0,
+      "stdout": "{\"kind\":\"pthread\",\"result\":0}",
+      "stderr": "",
+      "profile_sha256": "676dd527c77680bd3d38e013cc4eda8d4652ce630c7714761bd7ce1e46b14229",
+      "probe": {
+        "kind": "pthread",
+        "result": 0
+      }
+    },
+    {
+      "profile": "browser-seccomp.json",
+      "kind": "namespace",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "profile_sha256": "676dd527c77680bd3d38e013cc4eda8d4652ce630c7714761bd7ce1e46b14229"
+    }
+  ],
+  "rootfs_tar_bytes": 2385920,
+  "derived_qualified": true,
+  "owned_image_removed": true,
+  "finished": 1792843550.1314058
+}

@@ -1,0 +1,25 @@
+{
+  "base_profile": "playwright-seccomp.json",
+  "base_source": "https://raw.githubusercontent.com/microsoft/playwright/b4695e3eb2e6736d1a7b1fd255c4e94f78553660/utils/docker/seccomp_profile.json",
+  "base_commit": "b4695e3eb2e6736d1a7b1fd255c4e94f78553660",
+  "base_sha256": "cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849",
+  "derived_profile": "browser-seccomp.json",
+  "derived_sha256": "676dd527c77680bd3d38e013cc4eda8d4652ce630c7714761bd7ce1e46b14229",
+  "only_change": {
+    "operation": "append_syscall_rule",
+    "rule": {
+      "names": [
+        "chroot"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [],
+      "includes": {},
+      "excludes": {},
+      "comment": "Allow Chromium to chroot inside its own user namespace; kernel capability checks remain enforced and no container capabilities are added."
+    }
+  },
+  "added_container_capabilities": [],
+  "privileged": false,
+  "no_new_privileges": true,
+  "explanation": "The original conditional chroot rule is omitted when CAP_SYS_CHROOT is dropped. This rule permits the syscall while the kernel still requires CAP_SYS_CHROOT in the calling user namespace."
+}

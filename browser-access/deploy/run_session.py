@@ -176,7 +176,7 @@ def smoke_report(browser_name):
         safe['http_status'] = raw['http_status']
     if raw.get('error_type') in {'RuntimeError', 'TimeoutError', 'Error', 'TargetClosedError', 'OSError'}:
         safe['error_type'] = raw['error_type']
-    if raw.get('failure_reason') in {'thread_creation_failed', 'namespace_creation_denied', 'sandbox_unavailable',
+    if raw.get('failure_reason') in {'thread_creation_failed', 'browser_sandbox_chroot_denied', 'namespace_creation_denied', 'sandbox_unavailable',
             'tls_certificate_rejected', 'configured_proxy_failed', 'browser_executable_missing',
             'shared_library_missing', 'kernel_permission_denied', 'unclassified_browser_failure'}:
         safe['failure_reason'] = raw['failure_reason']
@@ -321,7 +321,7 @@ def session(args):
         run(['docker', 'build', '--build-arg', f'BASE_IMAGE={PYTHON_IMAGE}', '--secret',
              f'id=proxy_ca,src={args.ca.resolve()}', '--tag', image, context], capture=True, bounded=True)
         stage = 'container_start'
-        run(browser_run_args(browser_name, image, ROOT / 'runtime' / 'playwright-seccomp.json', args.ca), capture=True)
+        run(browser_run_args(browser_name, image, ROOT / 'runtime' / 'browser-seccomp.json', args.ca), capture=True)
         # A real normal-TLS Chrome check with namespace + seccomp assertions. A failure
         # stops deployment; no unsandboxed or certificate-bypass fallback is offered.
         stage = 'browser_smoke'

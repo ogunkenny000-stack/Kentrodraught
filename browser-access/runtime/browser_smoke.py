@@ -58,6 +58,7 @@ async def main():
         # contain full command lines, so never publish their raw text.
         detail = str(error).lower()
         reasons = [('pthread_create', 'thread_creation_failed'),
+                   ('sys_chroot', 'browser_sandbox_chroot_denied'),
                    ('failed to move to new namespace', 'namespace_creation_denied'),
                    ('failed to enter new namespace', 'namespace_creation_denied'),
                    ('no usable sandbox', 'sandbox_unavailable'),
