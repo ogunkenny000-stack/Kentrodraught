@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "stage": "browser_smoke",
+  "error_class": "PreloginCommandError",
+  "returncode": 1,
+  "source_commit": "63f22842d092cc2450dcc80b67b194d64e9b368c",
+  "run_id": "40092183385",
+  "recorded_at": "2026-10-24T12:01:37.943503Z",
+  "smoke_command_tail": [
+    "{\"authenticated\": false, \"browser_tested\": false, \"tls_tested\": false, \"target\": \"https://www.kaggle.com/account/login\", \"ignore_https_errors\": false, \"chromium_sandbox\": true, \"setuid_helper_disabled\": true, \"state\": \"failed\", \"error_type\": \"TargetClosedError\", \"failure_reason\": \"unclassified_browser_failure\", \"message\": \"Normal sandbox or verified HTTPS smoke failed; no fallback was used.\"}"
+  ],
+  "smoke_command_tail_withheld": false,
+  "prelogin_container_tail": [],
+  "prelogin_container_tail_withheld": false,
+  "smoke": {
+    "authenticated": false,
+    "browser_tested": false,
+    "tls_tested": false,
+    "ignore_https_errors": false,
+    "chromium_sandbox": true,
+    "setuid_helper_disabled": true,
+    "state": "failed",
+    "error_type": "TargetClosedError",
+    "failure_reason": "unclassified_browser_failure"
+  }
+}
