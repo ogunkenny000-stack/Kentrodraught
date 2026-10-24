@@ -67,8 +67,16 @@ async def main():
                    ('error while loading shared libraries', 'shared_library_missing'),
                    ('operation not permitted', 'kernel_permission_denied')]
         reason = next((name for pattern, name in reasons if pattern in detail), 'unclassified_browser_failure')
+        # Before any account page has loaded, retain only browser stderr, never
+        # launch command lines, environment or arbitrary exception text.
+        stderr = re.findall(r'\[pid=\d+\]\[err\]\s*([^\r\n]{1,500})', str(error))[:12]
+        deny = re.compile(r'password|authorization|bearer\s|cookie|private.?key|token|https?://[^\s/@]+:[^\s/@]+@', re.I)
+        stderr = [line for line in stderr if not deny.search(line)]
+        exits = re.findall(r'signal=(SIG[A-Z]+)', str(error))
         result.update(state='failed', error_type=type(error).__name__,
                       failure_reason=reason,
+                      prelogin_browser_stderr=stderr,
+                      browser_exit_signal=exits[-1] if exits else None,
                       message='Normal sandbox or verified HTTPS smoke failed; no fallback was used.')
         output.write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result))

@@ -180,6 +180,12 @@ def smoke_report(browser_name):
             'tls_certificate_rejected', 'configured_proxy_failed', 'browser_executable_missing',
             'shared_library_missing', 'kernel_permission_denied', 'unclassified_browser_failure'}:
         safe['failure_reason'] = raw['failure_reason']
+    if raw.get('browser_exit_signal') in {'SIGTRAP', 'SIGABRT', 'SIGSEGV', 'SIGKILL', 'SIGILL', 'SIGSYS'}:
+        safe['browser_exit_signal'] = raw['browser_exit_signal']
+    stderr = raw.get('prelogin_browser_stderr')
+    if isinstance(stderr, list) and all(isinstance(line, str) for line in stderr):
+        lines, withheld = safe_prelogin_tail('\n'.join(stderr))
+        safe['prelogin_browser_stderr'], safe['prelogin_browser_stderr_withheld'] = lines, withheld
     return safe
 
 
