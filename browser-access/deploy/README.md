@@ -67,6 +67,16 @@ During operation both owned containers are checked and public HTTPS health is
 polled every fifteen seconds. Three consecutive failed polls stop the session
 even when a detached browser server has crashed inside an otherwise live container.
 
+Failures publish `.browser-access/diagnostics.json` with a fixed stage, exception
+class, numeric return code, run ID, source commit and time. Before the account
+server starts, bounded build/smoke output and initial trust/container messages may
+be included; any credential-like content causes the entire tail to be withheld.
+Only strictly allowed booleans/status from the independent unauthenticated smoke
+JSON are included. After server startup no server/container logs, page contents,
+request values or raw exception messages are captured. A fixed GitHub annotation
+still identifies the stage/class/code if writing the public diagnostic fails.
+The diagnostic path also remains outside the workflow's source trigger filter.
+
 ## Checks
 
 Run `python -m unittest discover -s deploy -p 'test_*.py'` from this project's root.

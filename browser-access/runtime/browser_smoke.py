@@ -54,7 +54,21 @@ async def main():
             finally:
                 await browser.close()
     except Exception as error:
+        # Only fixed classifications leave this process. Launch errors can
+        # contain full command lines, so never publish their raw text.
+        detail = str(error).lower()
+        reasons = [('pthread_create', 'thread_creation_failed'),
+                   ('failed to move to new namespace', 'namespace_creation_denied'),
+                   ('failed to enter new namespace', 'namespace_creation_denied'),
+                   ('no usable sandbox', 'sandbox_unavailable'),
+                   ('err_cert', 'tls_certificate_rejected'),
+                   ('err_tunnel_connection_failed', 'configured_proxy_failed'),
+                   ('executable doesn', 'browser_executable_missing'),
+                   ('error while loading shared libraries', 'shared_library_missing'),
+                   ('operation not permitted', 'kernel_permission_denied')]
+        reason = next((name for pattern, name in reasons if pattern in detail), 'unclassified_browser_failure')
         result.update(state='failed', error_type=type(error).__name__,
+                      failure_reason=reason,
                       message='Normal sandbox or verified HTTPS smoke failed; no fallback was used.')
         output.write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result))

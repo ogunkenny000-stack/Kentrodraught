@@ -4,6 +4,12 @@ This project gives an execution-capable assistant a persistent Playwright browse
 through a private Unix socket. It also provides ten MCP tools through a stdio
 adapter. It was created and exercised in the current cloud environment.
 
+The [takeover viewer](takeover/README.md) adds human mouse/keyboard control,
+encrypted owner pairing, and signed assistant requests. The [GitHub deployment
+recipe](deploy/README.md) hosts an expiring isolated browser outside this managed
+cloud. Its first real deployment failed before sign-in; runner diagnostics are
+being collected. A working public sign-in link and account access are unverified.
+
 ## Verified here
 
 - Chromium navigated to `https://www.kaggle.com/account/login` and rendered

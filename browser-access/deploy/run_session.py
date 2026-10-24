@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections import deque
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -29,10 +30,42 @@ TUNNEL_PATTERN = re.compile(r'https://([a-z0-9]+(?:-[a-z0-9]+)*\.trycloudflare\.
 BRANCH_PATTERN = re.compile(r'^tools/kaggle-browser-access-[A-Za-z0-9_-]+$')
 METADATA_FIELDS = {'schema_version', 'state', 'url', 'repository', 'branch', 'source_commit',
                    'run_id', 'run_url', 'started_at', 'expires_at', 'agent_key_fingerprint'}
+STAGES = {'staging', 'build', 'container_start', 'browser_smoke', 'tunnel_start',
+          'tunnel_discovery', 'server_start', 'public_health', 'publish_session', 'monitor'}
+DIAGNOSTIC_FIELDS = {'schema_version', 'stage', 'error_class', 'returncode', 'source_commit',
+                     'run_id', 'recorded_at', 'build_tail', 'build_tail_withheld', 'smoke',
+                     'prelogin_container_tail', 'prelogin_container_tail_withheld',
+                     'smoke_command_tail', 'smoke_command_tail_withheld'}
+CREDENTIAL_PATTERN = re.compile(r'password|passwd|authorization|bearer\s|cookie|private[ _-]?key|'
+    r'owner[ _-]?token|agent[ _-]?token|(?:access|refresh|api|github)[ _-]?token|'
+    r'\b(?:ghp_|github_pat_|gho_|gocspx-)[A-Za-z0-9_-]+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|'
+    r'https?://[^\s/@]+:[^\s/@]+@|(?:secret|credential)\s*[:=]', re.I)
 
 
-def run(argv, *, capture=False, check=True, cwd=None):
+class PreloginCommandError(subprocess.CalledProcessError):
+    """Bounded, never automatically printed output from a pre-login command."""
+    pass
+
+
+def run(argv, *, capture=False, check=True, cwd=None, bounded=False):
     """No shell expansion, no environment dumps, no inherited credential copies."""
+    if bounded:
+        if not capture:
+            raise ValueError('Bounded commands require capture')
+        process = subprocess.Popen([str(part) for part in argv], cwd=cwd, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        tail = deque(maxlen=30)
+        with process.stdout:
+            while True:
+                line = process.stdout.readline(4097)
+                if not line:
+                    break
+                tail.append(line[:1024])
+        status = process.wait()
+        output = ''.join(tail)[-16384:]
+        if check and status:
+            raise PreloginCommandError(status, [str(part) for part in argv], output=output)
+        return subprocess.CompletedProcess(argv, status, stdout=output, stderr='')
     return subprocess.run([str(part) for part in argv], check=check, cwd=cwd,
                           text=True, stdout=subprocess.PIPE if capture else None,
                           stderr=subprocess.PIPE if capture else None)
@@ -87,23 +120,99 @@ def publish_metadata(checkout, value):
     """Use Actions' scoped checkout credential; never read or print its value."""
     if set(value) != METADATA_FIELDS:
         raise ValueError('Unexpected session metadata fields')
+    publish_public_json(checkout, value['branch'], 'session.json', value)
+
+
+def publish_public_json(checkout, branch, filename, value):
     checkout = Path(checkout)
-    branch = value['branch']
+    if filename not in {'session.json', 'diagnostics.json'}:
+        raise ValueError('Only fixed public reporting paths are allowed')
     if not BRANCH_PATTERN.fullmatch(branch):
         raise ValueError('Refusing to push to a non-session branch')
-    path = checkout / '.browser-access' / 'session.json'
+    relative = '.browser-access/' + filename
+    path = checkout / relative
     path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(value, indent=2) + '\n')
-    run(['git', 'add', '--', '.browser-access/session.json'], cwd=checkout)
-    changed = run(['git', 'diff', '--cached', '--quiet', '--', '.browser-access/session.json'],
+    run(['git', 'add', '--', relative], cwd=checkout)
+    changed = run(['git', 'diff', '--cached', '--quiet', '--', relative],
                   cwd=checkout, check=False, capture=True)
     if changed.returncode == 0:
         return
     if changed.returncode != 1:
         raise RuntimeError('Could not inspect session metadata change')
     run(['git', '-c', 'user.name=Browser Session', '-c', 'user.email=browser-session@users.noreply.github.com',
-         'commit', '-m', 'Update public ephemeral browser status', '--', '.browser-access/session.json'], cwd=checkout)
+         'commit', '-m', 'Update public ephemeral browser status', '--', relative], cwd=checkout)
     run(['git', 'push', 'origin', f'HEAD:refs/heads/{branch}'], cwd=checkout)
+
+
+def safe_prelogin_tail(output):
+    """Reject a whole tail if credential-like content is present; never redact-and-hope."""
+    if not isinstance(output, str):
+        return [], False
+    if CREDENTIAL_PATTERN.search(output) or any(ord(char) < 32 and char not in '\n\r\t' for char in output):
+        return [], True
+    lines = output.splitlines()[-30:]
+    return [line[:512] for line in lines][-30:], False
+
+
+def smoke_report(browser_name):
+    """Read the independent pre-login smoke JSON, never a browser profile or page."""
+    result = run(['docker', 'exec', browser_name, 'cat', '/browser-state/browser-smoke.json'],
+                 capture=True, check=False, bounded=True)
+    if result.returncode:
+        return None
+    try:
+        raw = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict) or raw.get('authenticated') is not False:
+        return None
+    flags = {'authenticated', 'browser_tested', 'tls_tested', 'ignore_https_errors', 'chromium_sandbox',
+             'setuid_helper_disabled', 'namespace_sandbox_reported', 'seccomp_sandbox_reported'}
+    safe = {key: value for key, value in raw.items() if key in flags and type(value) is bool}
+    if raw.get('state') in {'passed', 'failed'}:
+        safe['state'] = raw['state']
+    if type(raw.get('http_status')) is int and 100 <= raw['http_status'] <= 599:
+        safe['http_status'] = raw['http_status']
+    if raw.get('error_type') in {'RuntimeError', 'TimeoutError', 'Error', 'TargetClosedError', 'OSError'}:
+        safe['error_type'] = raw['error_type']
+    if raw.get('failure_reason') in {'thread_creation_failed', 'namespace_creation_denied', 'sandbox_unavailable',
+            'tls_certificate_rejected', 'configured_proxy_failed', 'browser_executable_missing',
+            'shared_library_missing', 'kernel_permission_denied', 'unclassified_browser_failure'}:
+        safe['failure_reason'] = raw['failure_reason']
+    return safe
+
+
+def failure_diagnostics(stage, error, *, run_id, source_commit, smoke=None, container_tail=None):
+    if stage not in STAGES or not str(run_id).isdigit() or not re.fullmatch(r'[0-9a-f]{40}', source_commit):
+        raise ValueError('Invalid diagnostic provenance')
+    error_class = type(error).__name__
+    if error_class not in {'PreloginCommandError', 'CalledProcessError', 'RuntimeError', 'ValueError',
+                           'OSError', 'FileNotFoundError', 'PermissionError'}:
+        error_class = 'Exception'
+    code = getattr(error, 'returncode', None)
+    if type(code) is not int or not -255 <= code <= 255:
+        code = None
+    result = dict(schema_version=1, stage=stage, error_class=error_class, returncode=code,
+                  source_commit=source_commit, run_id=str(run_id), recorded_at=utcstamp(time.time()))
+    # Only fixed pre-login phases may contribute process output. Later exceptions
+    # expose stage/class/code only, never server logs or exception/request values.
+    if stage in {'build', 'browser_smoke'}:
+        tail, withheld = safe_prelogin_tail(getattr(error, 'output', None))
+        prefix = 'build' if stage == 'build' else 'smoke_command'
+        result[prefix + '_tail'], result[prefix + '_tail_withheld'] = tail, withheld
+    if stage in {'container_start', 'browser_smoke'} and container_tail is not None:
+        result['prelogin_container_tail'], result['prelogin_container_tail_withheld'] = safe_prelogin_tail(container_tail)
+    if smoke is not None:
+        # The caller supplies only smoke_report's strict field allowlist.
+        result['smoke'] = smoke
+    return result
+
+
+def publish_diagnostics(checkout, branch, value):
+    if set(value) - DIAGNOSTIC_FIELDS:
+        raise ValueError('Unexpected diagnostic fields')
+    publish_public_json(checkout, branch, 'diagnostics.json', value)
 
 
 def browser_run_args(name, image, seccomp, ca):
@@ -198,34 +307,62 @@ def session(args):
     context = Path(tempfile.mkdtemp(prefix='kaggle-browser-context-')) / 'build'
     origin = None
     record = None
+    stage = 'staging'
+    smoke = None
     try:
         run([sys.executable, ROOT / 'runtime' / 'prepare_build_context.py', '--destination', context])
+        stage = 'build'
         run(['docker', 'build', '--build-arg', f'BASE_IMAGE={PYTHON_IMAGE}', '--secret',
-             f'id=proxy_ca,src={args.ca.resolve()}', '--tag', image, context])
+             f'id=proxy_ca,src={args.ca.resolve()}', '--tag', image, context], capture=True, bounded=True)
+        stage = 'container_start'
         run(browser_run_args(browser_name, image, ROOT / 'runtime' / 'playwright-seccomp.json', args.ca), capture=True)
         # A real normal-TLS Chrome check with namespace + seccomp assertions. A failure
         # stops deployment; no unsandboxed or certificate-bypass fallback is offered.
-        run(['docker', 'exec', browser_name, 'python', '/app/runtime/browser_smoke.py'])
+        stage = 'browser_smoke'
+        run(['docker', 'exec', browser_name, 'python', '/app/runtime/browser_smoke.py'], capture=True, bounded=True)
+        smoke = smoke_report(browser_name)
+        stage = 'tunnel_start'
         run(tunnel_run_args(tunnel_name, browser_name, args.ca), capture=True)
         def locate():
             if not container_alive(tunnel_name):
                 raise RuntimeError('The tunnel exited before readiness')
             logs = run(['docker', 'logs', tunnel_name], capture=True)
             return tunnel_origin(logs.stdout + logs.stderr)
+        stage = 'tunnel_discovery'
         origin = bounded_wait(locate, 60)
+        stage = 'server_start'
         run(serve_args(browser_name, origin), capture=True)
+        stage = 'public_health'
         bounded_wait(lambda: public_health(origin), 60)
         started = time.time()
         record = metadata(state='ready', origin=origin, repository=repository, branch=branch,
                           source_commit=source_commit, run_id=run_id, fingerprint=fingerprint,
                           started=started, expires=started + args.seconds)
+        stage = 'publish_session'
         publish_metadata(checkout, record)
         print(json.dumps(record), flush=True)
+        stage = 'monitor'
         monitor_session(browser_name, tunnel_name, origin, args.seconds)
         record['state'] = 'closed'
-    except Exception:
+    except Exception as error:
         if record:
             record['state'] = 'failed'
+        summary = failure_diagnostics(stage, error, run_id=run_id, source_commit=source_commit)
+        print('::error title=Ephemeral browser deployment failed::'
+              f"stage={stage} error_class={summary['error_class']} returncode={summary['returncode']}", flush=True)
+        try:
+            container_tail = None
+            if stage in {'container_start', 'browser_smoke'}:
+                logs = run(['docker', 'logs', browser_name], capture=True, check=False, bounded=True)
+                container_tail = logs.stdout
+            if stage == 'browser_smoke' and smoke is None:
+                smoke = smoke_report(browser_name)
+            diagnostic = failure_diagnostics(stage, error, run_id=run_id, source_commit=source_commit,
+                                             smoke=smoke, container_tail=container_tail)
+            publish_diagnostics(checkout, branch, diagnostic)
+            print(json.dumps({'public_diagnostics': '.browser-access/diagnostics.json', 'stage': stage}), flush=True)
+        except Exception:
+            print('Public sanitized failure report could not be saved.', flush=True)
         raise
     finally:
         # Only deterministic, run-owned containers are touched. Profiles are not

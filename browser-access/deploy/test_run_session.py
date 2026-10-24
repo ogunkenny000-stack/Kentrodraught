@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -134,6 +135,7 @@ class DeploymentTests(unittest.TestCase):
         workflow = (Path(__file__).parent / 'kaggle-browser.yml').read_text()
         self.assertIn("- 'browser-access/**'", workflow)
         self.assertNotIn('.browser-access/session.json', workflow)
+        self.assertNotIn('.browser-access/diagnostics.json', workflow)
         self.assertNotIn('secrets.', workflow)
         self.assertIn('timeout-minutes: 150', workflow)
         self.assertIn('runs-on: ubuntu-22.04', workflow)
@@ -187,6 +189,66 @@ class DeploymentTests(unittest.TestCase):
                     deploy.session(args)
                 publish.assert_not_called()
         self.assertIn(['docker', 'rm', '--force', 'kaggle-browser-42-tunnel', 'kaggle-browser-42-app'], calls)
+
+    def test_build_failure_report_has_fixed_stage_and_bounded_tail(self):
+        error = deploy.PreloginCommandError(7, ['docker', 'build'], output='\n'.join(f'build line {i}' for i in range(100)))
+        value = deploy.failure_diagnostics('build', error, run_id='42', source_commit='a' * 40)
+        self.assertEqual(value['stage'], 'build')
+        self.assertEqual(value['returncode'], 7)
+        self.assertEqual(len(value['build_tail']), 30)
+        self.assertEqual(value['build_tail'][0], 'build line 70')
+        self.assertNotIn('message', value)
+
+    def test_sensitive_prelogin_output_is_withheld_entirely(self):
+        for text in ['password=hidden', 'Authorization: Bearer hidden', 'https://name:password@example.test/path',
+                     'owner_token: hidden', 'private_key: hidden', 'api_token=hidden', 'secret=hidden']:
+            tail, withheld = deploy.safe_prelogin_tail('normal line\n' + text)
+            self.assertEqual(tail, [])
+            self.assertTrue(withheld)
+
+    def test_late_failure_cannot_include_process_or_container_output(self):
+        error = deploy.PreloginCommandError(1, ['unpublished'], output='sensitive late browser output')
+        value = deploy.failure_diagnostics('monitor', error, run_id='42', source_commit='a' * 40,
+                                          container_tail='sensitive late container output')
+        self.assertNotIn('sensitive', json.dumps(value))
+        self.assertNotIn('prelogin_container_tail', value)
+        self.assertNotIn('smoke_command_tail', value)
+
+    def test_unknown_error_name_and_message_are_not_reported(self):
+        class SecretException(Exception): pass
+        value = deploy.failure_diagnostics('server_start', SecretException('hidden message'),
+                                          run_id='42', source_commit='a' * 40)
+        self.assertEqual(value['error_class'], 'Exception')
+        self.assertNotIn('hidden', json.dumps(value))
+
+    def test_smoke_report_allows_only_public_prelogin_flags(self):
+        raw = dict(authenticated=False, chromium_sandbox=True, state='failed', error_type='TargetClosedError',
+                   sandbox_diagnostic='untrusted text', owner_token='must not appear', http_status=200,
+                   title='never include titles', target='never include addresses')
+        with patch.object(deploy, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(raw))):
+            value = deploy.smoke_report('owned-app')
+        self.assertEqual(value, dict(authenticated=False, chromium_sandbox=True, state='failed',
+                                     error_type='TargetClosedError', http_status=200))
+        raw['authenticated'] = True
+        with patch.object(deploy, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(raw))):
+            self.assertIsNone(deploy.smoke_report('owned-app'))
+
+    def test_bounded_capture_keeps_only_last_thirty_lines(self):
+        result = deploy.run([sys.executable, '-c', 'for i in range(100): print(i)'], capture=True, bounded=True)
+        self.assertEqual(result.stdout.splitlines(), [str(i) for i in range(70, 100)])
+
+    def test_diagnostics_push_has_no_recursive_source_path(self):
+        value = deploy.failure_diagnostics('container_start', RuntimeError('do not publish this'),
+                                          run_id='42', source_commit='a' * 40)
+        calls = []
+        def fake(command, **kwargs):
+            calls.append(command)
+            return SimpleNamespace(returncode=1 if command[:3] == ['git', 'diff', '--cached'] else 0)
+        with tempfile.TemporaryDirectory() as directory, patch.object(deploy, 'run', fake):
+            deploy.publish_diagnostics(directory, 'tools/kaggle-browser-access-test', value)
+            self.assertTrue((Path(directory) / '.browser-access/diagnostics.json').is_file())
+        self.assertEqual(calls[0], ['git', 'add', '--', '.browser-access/diagnostics.json'])
+        self.assertEqual(calls[-1][-1], 'HEAD:refs/heads/tools/kaggle-browser-access-test')
 
 
 if __name__ == '__main__':
