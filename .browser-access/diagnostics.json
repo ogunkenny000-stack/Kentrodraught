@@ -3,11 +3,11 @@
   "stage": "browser_smoke",
   "error_class": "PreloginCommandError",
   "returncode": 1,
-  "source_commit": "63f22842d092cc2450dcc80b67b194d64e9b368c",
-  "run_id": "40092183385",
-  "recorded_at": "2026-10-24T12:01:37.943503Z",
+  "source_commit": "3112d2a6d9295b4cdc7cdb47af2f1e2fe0ed60cc",
+  "run_id": "40092348235",
+  "recorded_at": "2026-10-24T12:03:57.673895Z",
   "smoke_command_tail": [
-    "{\"authenticated\": false, \"browser_tested\": false, \"tls_tested\": false, \"target\": \"https://www.kaggle.com/account/login\", \"ignore_https_errors\": false, \"chromium_sandbox\": true, \"setuid_helper_disabled\": true, \"state\": \"failed\", \"error_type\": \"TargetClosedError\", \"failure_reason\": \"unclassified_browser_failure\", \"message\": \"Normal sandbox or verified HTTPS smoke failed; no fallback was used.\"}"
+    "{\"authenticated\": false, \"browser_tested\": false, \"tls_tested\": false, \"target\": \"https://www.kaggle.com/account/login\", \"ignore_https_errors\": false, \"chromium_sandbox\": true, \"setuid_helper_disabled\": true, \"state\": \"failed\", \"error_type\": \"TargetClosedError\", \"failure_reason\": \"unclassified_browser_failure\", \"prelogin_browser_stderr\": [\"Check failed: sys_chroot(\\\"/proc/self/fdinfo/\\\") == 0\", \"[98:98:1024/120357.227237:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:251] Zygote process exited "
   ],
   "smoke_command_tail_withheld": false,
   "prelogin_container_tail": [],
@@ -21,6 +21,18 @@
     "setuid_helper_disabled": true,
     "state": "failed",
     "error_type": "TargetClosedError",
-    "failure_reason": "unclassified_browser_failure"
+    "failure_reason": "unclassified_browser_failure",
+    "browser_exit_signal": "SIGABRT",
+    "prelogin_browser_stderr": [
+      "Check failed: sys_chroot(\"/proc/self/fdinfo/\") == 0",
+      "[98:98:1024/120357.227237:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:251] Zygote process exited prematurely with exit code -1",
+      "[1024/120357.239512:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)",
+      "[1024/120357.239579:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)",
+      "Check failed: sys_chroot(\"/proc/self/fdinfo/\") == 0",
+      "[98:98:1024/120357.227237:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:251] Zygote process exited prematurely with exit code -1",
+      "[1024/120357.239512:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)",
+      "[1024/120357.239579:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)"
+    ],
+    "prelogin_browser_stderr_withheld": false
   }
 }
