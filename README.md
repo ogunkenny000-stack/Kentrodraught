@@ -6,6 +6,8 @@ Read [HANDOFF.md](HANDOFF.md) first. It contains the exact next-conversation pro
 
 ## Downloads
 
+- [Engine-only ZIP (12.79 MB)](https://raw.githubusercontent.com/ogunkenny000-stack/Kentrodraught/kaggle-handoff-2026-10-25/downloads/Kentrodraught-Engine-Only.zip): Linux executable, corresponding Rust engine source and current weights.
+
 - [Compact Kaggle starter ZIP (~45MiB)](https://raw.githubusercontent.com/ogunkenny000-stack/Kentrodraught/kaggle-handoff-2026-10-25/downloads/Kentrodraught-Kaggle-Starter.zip): model, engine/C++/trainer source, prepared native corpus, notebook and evidence. Upload as a private Kaggle dataset in the receiving conversation.
 - [Notebook](Kaggle_Rust_Training.ipynb): defaults to preflight, without repeating completed training.
 - Full research checkpoint (~552MiB in14parts): run [download_research.py](download_research.py). Its verified multipart download includes22000full-material game archives,500gamehandicapcurriculum, preparedTD/dense data, source/provenance and the unfinishednextdeeptraining experiment. The split avoids GitHub's individual-file size limit.
