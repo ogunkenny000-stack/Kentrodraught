@@ -1,0 +1,77 @@
+{
+  "archive_name": "Kentrodraught-Research-Checkpoint.zip",
+  "bytes": 579094186,
+  "sha256": "8e6837dd5eddee8d1fcac8e643e729bc756b82ba04c939adf596f1e0fd587308",
+  "parts": [
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part001",
+      "bytes": 41943040,
+      "sha256": "88468f16b7a16dcf1ab49836d994c4b2f7bba29dd4401040b18c2957a657ac7f"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part002",
+      "bytes": 41943040,
+      "sha256": "90e46d13a795a540ec7666623546adea607bd9b8d19a42ed15fc9ee6e07357bf"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part003",
+      "bytes": 41943040,
+      "sha256": "8b33dead89ac1abaa7179f974aa4b0ca1be32a2b1f1b541116cf7dfa4c2056ac"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part004",
+      "bytes": 41943040,
+      "sha256": "345ec7481df680f03ab7b06a97fdb76fa5dae9f73fcb97d2ab70592be7c5d312"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part005",
+      "bytes": 41943040,
+      "sha256": "27a933572327624ab46901054786e6cae8b1e2c4853204a717812a0e1d5cf1ec"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part006",
+      "bytes": 41943040,
+      "sha256": "ba6d57659cd953d105cc304ba43c214376201f9b84540cd7be6dc2260af09276"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part007",
+      "bytes": 41943040,
+      "sha256": "ab40cdf85420aefd7896f727a36cafbfb1bc1896029e004f9b3a7b01801223fa"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part008",
+      "bytes": 41943040,
+      "sha256": "20ff674bacfd886e3ab2337703de9ece6cbdcc708d8ac956433ac6528a152b05"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part009",
+      "bytes": 41943040,
+      "sha256": "3844e1c12e5402a36c13564059a15e6a0ee38f69d4c212530685ceb6e1736ff4"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part010",
+      "bytes": 41943040,
+      "sha256": "ab056e482018212592ff7953fef42c2aa6f26c6f37471dc8453f052c6c9b6e89"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part011",
+      "bytes": 41943040,
+      "sha256": "9ec696dec70cbb140f8b0b6632c5af3ce17b65abef4dd8ef3eab167b55f4d992"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part012",
+      "bytes": 41943040,
+      "sha256": "b9fd737ff5cfc74fbb48a9c81b3e3ba757d19ea64185f4d4a3fd86fd46ba6d90"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part013",
+      "bytes": 41943040,
+      "sha256": "3b0a696fbb664b0aa91607e256450f56a3f3818d47df6a2da40034a56eb36425"
+    },
+    {
+      "name": "Kentrodraught-Research-Checkpoint.zip.part014",
+      "bytes": 33834666,
+      "sha256": "b0b684ca915974c13119ea321bc9b160970fff37995ce6edbec8545b16851446"
+    }
+  ]
+}

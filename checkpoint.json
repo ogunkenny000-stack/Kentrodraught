@@ -1,0 +1,25 @@
+{
+  "local_state": "paused_for_external_candidate",
+  "completed_rounds": 13,
+  "full_games": 22000,
+  "handicap_games": 500,
+  "champion": {
+    "record": "/workspace/rust-draughts/strength-v05/king-curriculum/broad-strength/warm-learning/round-012/validation/status.json",
+    "record_sha256": "4abf1b8a85db2cfcac79f4520e1cd472cdce3b18338573b55eea2f6c0649e4ef",
+    "binary": "/workspace/rust-draughts/strength-v05/king-curriculum/broad-strength/warm-learning/round-012/engine-check/target/release/scan_nigerian",
+    "binary_sha256": "1593f67bd0c158ef7ba4dbb9541eec93944ad7a8427f0c391090fe3c4e0bc26b",
+    "source": "/workspace/rust-draughts/strength-v05/king-curriculum/broad-strength/warm-learning/round-012/source"
+  },
+  "confirmation": {
+    "candidate_wins": 0,
+    "opponent_wins": 0,
+    "draws": 10,
+    "unresolved": 0,
+    "rule_draws": 9,
+    "move_limit_draws": 1
+  },
+  "round013_completed_trials": 4,
+  "round013_eligible_trials": 0,
+  "seven_win_target_achieved": false,
+  "transfer_requested_at": "2026-10-25T14:09:32.462295+00:00"
+}
