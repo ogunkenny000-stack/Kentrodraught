@@ -1,6 +1,6 @@
 # WrongHint2 research return
 
-Private development evidence. Two candidate control pairs passed; the six-task gate did not pass. Do not launch inference from this package. The results ZIP includes the audit, limitations, provenance, controls and logs. The source archive ZIP contains evaluator-only original sources. See `RETURN_MANIFEST.json` for sizes, SHA-256 hashes and reconstruction commands.
+Public copy of development evidence. Two candidate control pairs passed; the six-task gate did not pass. Do not launch inference from this package. The results ZIP includes the audit, limitations, provenance, controls and logs. The source archive ZIP contains evaluator-only original sources. See `RETURN_MANIFEST.json` for sizes, SHA-256 hashes and reconstruction commands.
 
 Download all parts of each ZIP to the same folder and reconstruct with:
 
