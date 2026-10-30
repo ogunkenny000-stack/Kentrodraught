@@ -1,0 +1,58 @@
+{
+  "WrongHint2_Fresh_Controls_and_Inputs.zip": {
+    "whole_file": "WrongHint2_Fresh_Controls_and_Inputs.zip",
+    "size": 39642554,
+    "sha256": "b7e77ac530a08ef4f26756f33d2a11a65d4072dbe2dfc36abe3ee3c8aae7561a",
+    "parts": [
+      {
+        "file": "WrongHint2_Fresh_Controls_and_Inputs.zip.part001",
+        "size": 29360128,
+        "sha256": "ca7b95138d177be6bb57d8e8a884f1ebbe8d29f5618180f2e375f94de9c2d947"
+      },
+      {
+        "file": "WrongHint2_Fresh_Controls_and_Inputs.zip.part002",
+        "size": 10282426,
+        "sha256": "50c8ce66f91ee701351a505b6702b2a01f5f10bd340ec882a8631423a4669487"
+      }
+    ],
+    "reassemble": "cat WrongHint2_Fresh_Controls_and_Inputs.zip.part001 WrongHint2_Fresh_Controls_and_Inputs.zip.part002 > WrongHint2_Fresh_Controls_and_Inputs.zip"
+  },
+  "WrongHint2_Original_Source_Archives.zip": {
+    "whole_file": "WrongHint2_Original_Source_Archives.zip",
+    "size": 167264076,
+    "sha256": "f048610ad21af19937f522d3c379eaa836f6927ac768d60f7d9e376d4c51222e",
+    "parts": [
+      {
+        "file": "WrongHint2_Original_Source_Archives.zip.part001",
+        "size": 29360128,
+        "sha256": "a51d8f6a8a4add5ceebad0c2c8e88296956d114665302f6a1d18d8239ffa0c37"
+      },
+      {
+        "file": "WrongHint2_Original_Source_Archives.zip.part002",
+        "size": 29360128,
+        "sha256": "de3178dd962607b83a5b2b165595eb9f3fd2c1a7a910bf4c47cb68098d4d10c9"
+      },
+      {
+        "file": "WrongHint2_Original_Source_Archives.zip.part003",
+        "size": 29360128,
+        "sha256": "6f7514730248ef772c73a71bc89a30f1c7dd1d187cd9691cd1f70dc5df79668d"
+      },
+      {
+        "file": "WrongHint2_Original_Source_Archives.zip.part004",
+        "size": 29360128,
+        "sha256": "367e3cf6e89230d1de12ea13184f3a1aebbe529335b4b8213d55c936f8f6572c"
+      },
+      {
+        "file": "WrongHint2_Original_Source_Archives.zip.part005",
+        "size": 29360128,
+        "sha256": "8292dc0522b6e478b3e45baa56f5b3c562547c596f6d012caeefdebc795c891f"
+      },
+      {
+        "file": "WrongHint2_Original_Source_Archives.zip.part006",
+        "size": 20463436,
+        "sha256": "083cdc1841008c315110d4b3e0a300002afed6bcf85d49cd8146c96bb2f0aa47"
+      }
+    ],
+    "reassemble": "cat WrongHint2_Original_Source_Archives.zip.part001 WrongHint2_Original_Source_Archives.zip.part002 WrongHint2_Original_Source_Archives.zip.part003 WrongHint2_Original_Source_Archives.zip.part004 WrongHint2_Original_Source_Archives.zip.part005 WrongHint2_Original_Source_Archives.zip.part006 > WrongHint2_Original_Source_Archives.zip"
+  }
+}
