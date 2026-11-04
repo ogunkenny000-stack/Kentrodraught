@@ -1,0 +1,1 @@
+<resources><string name="app_name">Kentro Browser Bridge</string><string name="accessibility_desc">When explicitly enabled, lets your authorized ChatGPT workflow read and operate Chrome. Disable access in Settings at any time. Never stores Google passwords.</string></resources>
