@@ -1,0 +1,50 @@
+name: Build isolated Kentro Phone Bridge APK
+on:
+  push:
+    branches: [kentro-phone-bridge-build-v091]
+    paths:
+      - 'tools/kentro-phone-bridge/**'
+      - '.github/workflows/kentro-phone-bridge-apk.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          filter: blob:none
+          sparse-checkout: |
+            tools/kentro-phone-bridge
+            .github/workflows/kentro-phone-bridge-apk.yml
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Compile pure Java safety tests
+        run: |
+          mkdir -p /tmp/kentro-java-tests
+          javac -d /tmp/kentro-java-tests tools/kentro-phone-bridge/android/app/src/main/java/com/kentro/browserbridge/SafetyRules.java tools/kentro-phone-bridge/tests/SafetyRulesTest.java
+          java -cp /tmp/kentro-java-tests SafetyRulesTest
+      - name: Build Android APK
+        working-directory: tools/kentro-phone-bridge/android
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Record checksum
+        working-directory: tools/kentro-phone-bridge/android
+        run: sha256sum app/build/outputs/apk/debug/app-debug.apk | tee app/build/outputs/apk/debug/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KentroPhoneBridge-v0.9.1-debug-apk
+          path: |
+            tools/kentro-phone-bridge/android/app/build/outputs/apk/debug/app-debug.apk
+            tools/kentro-phone-bridge/android/app/build/outputs/apk/debug/SHA256SUMS.txt
+          retention-days: 14
+          if-no-files-found: error
